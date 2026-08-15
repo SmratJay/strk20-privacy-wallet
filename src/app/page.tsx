@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, ArrowUpRight, ArrowDownLeft, ArrowLeftRight, History, Sparkles, Key, Lock, EyeOff } from 'lucide-react';
+import { Shield, ArrowUpRight, ArrowDownLeft, ArrowLeftRight, History, Sparkles, Key, Lock, EyeOff, Layers, FileText, QrCode } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { PrivacyBanner } from '@/components/PrivacyBanner';
 import { BalanceCards } from '@/components/BalanceCards';
@@ -11,8 +11,11 @@ import { ShieldTab } from '@/components/tabs/ShieldTab';
 import { SendTab } from '@/components/tabs/SendTab';
 import { UnshieldTab } from '@/components/tabs/UnshieldTab';
 import { SwapTab } from '@/components/tabs/SwapTab';
+import { RequestTab } from '@/components/tabs/RequestTab';
+import { NoteScannerTab } from '@/components/tabs/NoteScannerTab';
 import { HistoryTab } from '@/components/tabs/HistoryTab';
 import { PublishAddressModal } from '@/components/PublishAddressModal';
+import { AuditorExportModal } from '@/components/AuditorExportModal';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { MAINNET_TOKENS, TokenInfo, STRK20_POOL_ADDRESS } from '@/config/tokens';
 import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/privacyService';
@@ -21,8 +24,10 @@ import { useToast } from '@/components/Toast';
 export default function Home() {
   const wallet = useStarknetWallet();
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'SHIELD' | 'SEND' | 'UNSHIELD' | 'SWAP' | 'HISTORY'>('SHIELD');
+  const [activeTab, setActiveTab] = useState<'SHIELD' | 'SEND' | 'REQUEST' | 'UNSHIELD' | 'SWAP' | 'SCANNER' | 'HISTORY'>('SHIELD');
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
+  const [isAuditorModalOpen, setIsAuditorModalOpen] = useState(false);
+  
   const [balances, setBalances] = useState<ShieldedBalance[]>(
     MAINNET_TOKENS.map((token) => ({
       token,
@@ -169,6 +174,7 @@ export default function Home() {
       <Header
         wallet={wallet}
         onOpenPublishModal={() => setIsPublishModalOpen(true)}
+        onOpenAuditorModal={() => setIsAuditorModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -191,64 +197,88 @@ export default function Home() {
         />
 
         {/* Tab Navigation */}
-        <div className="flex items-center justify-center gap-1.5 p-1 bg-surface-elevated border border-surface-border rounded-2xl max-w-xl mx-auto mb-6 shadow-lg overflow-x-auto">
+        <div className="flex items-center justify-center gap-1.5 p-1.5 bg-surface-elevated border border-surface-border rounded-2xl max-w-2xl mx-auto mb-6 shadow-lg overflow-x-auto">
           <button
             onClick={() => setActiveTab('SHIELD')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
               activeTab === 'SHIELD'
                 ? 'bg-sky-600 text-white shadow-md'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
             }`}
           >
-            <Shield className="w-4 h-4" />
-            <span>Shield (Deposit)</span>
+            <Shield className="w-3.5 h-3.5" />
+            <span>Shield</span>
           </button>
 
           <button
             onClick={() => setActiveTab('SEND')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
               activeTab === 'SEND'
                 ? 'bg-emerald-600 text-white shadow-md'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
             }`}
           >
-            <ArrowUpRight className="w-4 h-4" />
-            <span>Send Privately</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+            <span>Send</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('REQUEST')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+              activeTab === 'REQUEST'
+                ? 'bg-teal-600 text-white shadow-md'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
+            }`}
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            <span>Invoice</span>
           </button>
 
           <button
             onClick={() => setActiveTab('UNSHIELD')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
               activeTab === 'UNSHIELD'
                 ? 'bg-amber-600 text-white shadow-md'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
             }`}
           >
-            <ArrowDownLeft className="w-4 h-4" />
+            <ArrowDownLeft className="w-3.5 h-3.5" />
             <span>Unshield</span>
           </button>
 
           <button
             onClick={() => setActiveTab('SWAP')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
               activeTab === 'SWAP'
                 ? 'bg-purple-600 text-white shadow-md'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
             }`}
           >
-            <Sparkles className="w-4 h-4" />
-            <span>Private Swap</span>
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Swap</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('SCANNER')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+              activeTab === 'SCANNER'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>UTXO Scanner</span>
           </button>
 
           <button
             onClick={() => setActiveTab('HISTORY')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
               activeTab === 'HISTORY'
                 ? 'bg-zinc-700 text-white shadow-md'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface'
             }`}
           >
-            <History className="w-4 h-4" />
+            <History className="w-3.5 h-3.5" />
             <span>History</span>
           </button>
         </div>
@@ -271,6 +301,12 @@ export default function Home() {
             />
           )}
 
+          {activeTab === 'REQUEST' && (
+            <RequestTab
+              wallet={wallet}
+            />
+          )}
+
           {activeTab === 'UNSHIELD' && (
             <UnshieldTab
               balances={balances}
@@ -284,6 +320,12 @@ export default function Home() {
               balances={balances}
               wallet={wallet}
               onSuccess={handleSwapSuccess}
+            />
+          )}
+
+          {activeTab === 'SCANNER' && (
+            <NoteScannerTab
+              wallet={wallet}
             />
           )}
 
@@ -340,6 +382,15 @@ export default function Home() {
         <PublishAddressModal
           isOpen={isPublishModalOpen}
           onClose={() => setIsPublishModalOpen(false)}
+          accountAddress={wallet.address}
+        />
+      )}
+
+      {/* Selective Disclosure & Auditor Modal */}
+      {wallet.address && (
+        <AuditorExportModal
+          isOpen={isAuditorModalOpen}
+          onClose={() => setIsAuditorModalOpen(false)}
           accountAddress={wallet.address}
         />
       )}

@@ -1,16 +1,17 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Shield, Key, ChevronDown, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Shield, Key, ChevronDown, CheckCircle2, AlertCircle, ExternalLink, FileText } from 'lucide-react';
 import { shortenAddress } from '@/utils/formatters';
 import { STRK20_POOL_ADDRESS } from '@/config/tokens';
 
 interface HeaderProps {
   wallet: any;
   onOpenPublishModal: () => void;
+  onOpenAuditorModal: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal }) => {
+export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOpenAuditorModal }) => {
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
 
   return (
@@ -47,6 +48,18 @@ export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal }) =>
 
         {/* Right: Actions & Wallet */}
         <div className="flex items-center gap-2.5">
+          {/* Compliance Proof Trigger */}
+          {wallet.isConnected && (
+            <button
+              onClick={onOpenAuditorModal}
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-purple-300 bg-purple-950/40 border border-purple-500/30 rounded-lg hover:bg-purple-900/40 transition-all"
+              title="View Selective Disclosure Escrow Record"
+            >
+              <FileText className="w-3.5 h-3.5 text-purple-400" />
+              <span>Compliance</span>
+            </button>
+          )}
+
           {/* Publish Address Button */}
           {wallet.isConnected && (
             <button

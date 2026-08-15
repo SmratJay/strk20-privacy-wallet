@@ -134,3 +134,40 @@
 * **Detailed Technical Explanation:**
   * Established the standard protocol requiring all future modifications to append timestamped entries (Day, Date, Time, Timezone) to the end of `WHAT_WE_HAVE_DONE_SO_FAR.md`.
   * Enforced explicit **[BIG CHANGE]** and **[SMALL CHANGE]** classifications with thorough explanations for architectural decisions.
+
+---
+
+## 📅 Saturday, August 15, 2026 — 23:26:30 IST
+
+### 🏆 Hackathon Championship Upgrade: Stealth Invoicing, UTXO Inspector & Cryptographic Test Suite
+
+#### 🔴 [BIG CHANGE] — Implemented Core STRK20 Cryptographic Suite (`strk20Crypto.ts`)
+* **Description:** Built `src/services/strk20Crypto.ts` implementing exact Poseidon domain-separated hashing for Note IDs, Nullifiers, Channel Keys, and Symmetric Amount Masking matching the STRK20 whitepaper.
+* **Detailed Technical Explanation:**
+  * Implemented `computeNoteId(channelKey, tokenAddress, index)` using `NOTE_ID_TAG:V1`.
+  * Implemented `computeNullifier(channelKey, tokenAddress, index, ownerPrivateKey)` using `NULLIFIER_TAG:V1`.
+  * Implemented homomorphic symmetric note amount masking and unmasking (`maskAmount` / `unmaskAmount` mod $2^{128}$) allowing client-side balance verification.
+
+#### 🔴 [BIG CHANGE] — Automated Vitest Cryptographic Test Suite (`tests/strk20Crypto.test.ts`)
+* **Description:** Configured Vitest test runner and created an automated test suite verifying Note ID determinism, nullifier uniqueness, amount masking/unmasking homomorphic recovery, and felt comparison accuracy.
+* **Detailed Technical Explanation:**
+  * Verified 6 comprehensive unit tests covering all cryptographic invariants. Test suite runs in under 200ms.
+
+#### 🔴 [BIG CHANGE] — Stealth Payment Invoice Generator (`RequestTab.tsx`)
+* **Description:** Created `src/components/tabs/RequestTab.tsx` providing an Umbra-style Stealth Invoice Generator.
+* **Detailed Technical Explanation:**
+  * Allows users to generate an interactive payment request with custom tokens, amounts, and private memos.
+  * Generates an inline vector QR code and a one-click shareable stealth link (`https://orrange.xyz/pay/strk20:...`).
+
+#### 🔴 [BIG CHANGE] — UTXO Subchannel & Note Inspector (`NoteScannerTab.tsx`)
+* **Description:** Created `src/components/tabs/NoteScannerTab.tsx` providing an interactive off-chain channel scanner and UTXO note inspector.
+* **Detailed Technical Explanation:**
+  * Visually demonstrates how directional sender-recipient subchannels are scanned in WriteOnce storage.
+  * Displays active unspent notes (encrypted amount, index, note ID, token, nullifier) alongside spent notes with published nullifiers.
+
+#### 🔴 [BIG CHANGE] — Selective Disclosure & Compliance Auditor Modal (`AuditorExportModal.tsx`)
+* **Description:** Created `src/components/AuditorExportModal.tsx` demonstrating STRK20's selective disclosure feature.
+* **Detailed Technical Explanation:**
+  * Demonstrates how the viewing key is encrypted via ECDH to the threshold auditor public key at registration (`SetViewingKey`).
+  * Shows how auditors can recover targeted transaction graphs under lawful request without compromising other pool participants or possessing spending authority.
+
