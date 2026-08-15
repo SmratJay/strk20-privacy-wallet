@@ -1,5 +1,5 @@
-import { getQuotes, Quote } from '@avnu/avnu-sdk';
-import { TokenInfo } from '@/config/tokens';
+import { getQuotes, Quote, quoteToCalls, executeSwap } from '@avnu/avnu-sdk';
+import { TokenInfo, STRK20_POOL_ADDRESS } from '@/config/tokens';
 import { parseTokenAmount } from '@/utils/formatters';
 
 export interface SwapQuoteResult {
@@ -13,12 +13,13 @@ export interface SwapQuoteResult {
 
 export class AvnuService {
   /**
-   * Fetch real-time DEX aggregation quote for private swaps
+   * Fetch real-time DEX aggregation quote for private or standard swaps
    */
   async getPrivateSwapQuote(
     sellToken: TokenInfo,
     buyToken: TokenInfo,
-    amountStr: string
+    amountStr: string,
+    takerAddress?: string
   ): Promise<SwapQuoteResult | null> {
     if (!amountStr || parseFloat(amountStr) <= 0) return null;
 
@@ -29,7 +30,7 @@ export class AvnuService {
         sellTokenAddress: sellToken.address,
         buyTokenAddress: buyToken.address,
         sellAmount: sellAmountBigInt,
-        takerAddress: '0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a', // STRK20 pool router
+        takerAddress: takerAddress || STRK20_POOL_ADDRESS,
       });
 
       if (quotes && quotes.length > 0) {
@@ -44,16 +45,16 @@ export class AvnuService {
           sellAmount: amountStr,
           buyAmount: buyAmountNum.toFixed(4),
           priceRatio,
-          routes,
-          estimatedGasFeeStrk: '0.005',
+          routes: routes.length > 0 ? routes : ['Ekubo', 'Jediswap'],
+          estimatedGasFeeStrk: (Number(best.gasFees || 5000000000000000n) / 1e18).toFixed(4),
           rawQuote: best,
         };
       }
     } catch (err) {
-      console.warn('Live AVNU quote fallback:', err);
+      console.warn('Live AVNU quote error:', err);
     }
 
-    // Fallback market estimation if public API is rate-limited
+    // Fallback market estimation if rate limited
     const mockRates: Record<string, Record<string, number>> = {
       STRK: { USDC: 0.38, USDT: 0.38, ETH: 0.00014 },
       ETH: { STRK: 7140, USDC: 2715, USDT: 2715 },
@@ -68,10 +69,37 @@ export class AvnuService {
       sellAmount: amountStr,
       buyAmount: output,
       priceRatio: rate,
-      routes: ['Ekubo', 'Jediswap Private Route'],
+      routes: ['Ekubo Multi-Hop Router'],
       estimatedGasFeeStrk: '0.004',
       rawQuote: null,
     };
+  }
+
+  /**
+   * Execute real swap via AVNU SDK and connected wallet
+   */
+  async executeRealSwap(
+    walletAccount: any,
+    quote: Quote,
+    slippage: number = 0.01 // 1% default slippage
+  ): Promise<{ txHash: string }> {
+    if (!walletAccount) throw new Error('Wallet not connected');
+
+    // 1. Build swap calls through AVNU router
+    const callsResponse = await quoteToCalls({
+      quoteId: quote.quoteId,
+      slippage,
+      takerAddress: walletAccount.address,
+      executeApprove: true,
+    });
+
+    if (!callsResponse || !callsResponse.calls || callsResponse.calls.length === 0) {
+      throw new Error('Could not generate swap calls from AVNU router');
+    }
+
+    // 2. Submit multi-call transaction via connected wallet account
+    const tx = await walletAccount.execute(callsResponse.calls);
+    return { txHash: tx.transaction_hash };
   }
 }
 

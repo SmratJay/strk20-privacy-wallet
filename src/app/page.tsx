@@ -364,7 +364,16 @@ export default function Home() {
             >
               Jai Bhati
             </a>{' '}
-            ([@popexenon](https://t.me/popexenon)) — Founder of{' '}
+            (
+            <a
+              href="https://t.me/popexenon"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:underline"
+            >
+              @popexenon
+            </a>
+            ) — Founder of{' '}
             <a
               href="https://orrange.xyz"
               target="_blank"

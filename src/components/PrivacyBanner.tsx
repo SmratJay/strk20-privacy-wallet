@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Lock, EyeOff, ShieldCheck, Zap, Info } from 'lucide-react';
-import { NOTE_MATURITY_BLOCKS, DEFAULT_POOL_FEE_STRK } from '@/config/tokens';
+import { NOTE_MATURITY_BLOCKS } from '@/config/tokens';
 
 export const PrivacyBanner: React.FC = () => {
   return (

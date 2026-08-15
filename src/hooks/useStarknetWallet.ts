@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { RpcProvider, constants } from 'starknet';
-import { ALCHEMY_RPC_URL } from '@/config/tokens';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { constants } from 'starknet';
+import { createStore, Store } from '@starknet-io/get-starknet-discovery';
 
 export interface WalletState {
   isConnected: boolean;
@@ -33,17 +33,46 @@ export function useStarknetWallet() {
 
   const [availableWallets, setAvailableWallets] = useState<any[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
+  const storeRef = useRef<Store | null>(null);
 
-  // Discover installed Starknet wallets in the browser
+  // Initialize discovery store and discover installed Starknet wallets
   const scanWallets = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
     try {
       const discovered: any[] = [];
-      
-      // Standard window.starknet / injected discovery
+      const seenIds = new Set<string>();
+
+      // 1. Official get-starknet-discovery store
+      if (!storeRef.current) {
+        try {
+          storeRef.current = createStore();
+        } catch (e) {
+          console.warn('Could not create discovery store', e);
+        }
+      }
+
+      if (storeRef.current) {
+        const wallets = storeRef.current.getWallets();
+        if (wallets && wallets.length > 0) {
+          for (const w of wallets) {
+            const id = (w as any).id || (w as any).name || 'wallet';
+            seenIds.add(id);
+            discovered.push({
+              id,
+              name: (w as any).name || 'Starknet Wallet',
+              icon: (w as any).icon || '🛡️',
+              provider: w,
+              isPrivacyNative: id === 'ready' || ((w as any).name && (w as any).name.toLowerCase().includes('ready')),
+            });
+          }
+        }
+      }
+
+      // 2. Injected window object fallbacks
       const windowObj = window as any;
-      if (windowObj.starknet_ready) {
+      if (windowObj.starknet_ready && !seenIds.has('ready')) {
+        seenIds.add('ready');
         discovered.push({
           id: 'ready',
           name: 'Ready Wallet',
@@ -52,7 +81,8 @@ export function useStarknetWallet() {
           isPrivacyNative: true,
         });
       }
-      if (windowObj.starknet_argentX) {
+      if (windowObj.starknet_argentX && !seenIds.has('argentX')) {
+        seenIds.add('argentX');
         discovered.push({
           id: 'argentX',
           name: 'Argent X',
@@ -61,7 +91,8 @@ export function useStarknetWallet() {
           isPrivacyNative: false,
         });
       }
-      if (windowObj.starknet_braavos) {
+      if (windowObj.starknet_braavos && !seenIds.has('braavos')) {
+        seenIds.add('braavos');
         discovered.push({
           id: 'braavos',
           name: 'Braavos',
@@ -70,10 +101,11 @@ export function useStarknetWallet() {
           isPrivacyNative: false,
         });
       }
-      if (windowObj.starknet && !discovered.some(w => w.provider === windowObj.starknet)) {
+      if (windowObj.starknet && !seenIds.has('starknet_default')) {
+        seenIds.add('starknet_default');
         discovered.push({
           id: 'starknet_default',
-          name: windowObj.starknet.name || 'Starknet Wallet',
+          name: windowObj.starknet.name || 'Starknet Injected Wallet',
           icon: '⚡',
           provider: windowObj.starknet,
           isPrivacyNative: false,
@@ -88,7 +120,7 @@ export function useStarknetWallet() {
 
   useEffect(() => {
     scanWallets();
-    const timer = setTimeout(scanWallets, 1000);
+    const timer = setTimeout(scanWallets, 1200);
     return () => clearTimeout(timer);
   }, [scanWallets]);
 
@@ -106,7 +138,7 @@ export function useStarknetWallet() {
       }
 
       if (!targetProvider) {
-        throw new Error('No Starknet wallet detected. Please install Ready Wallet or Argent X.');
+        throw new Error('No Starknet wallet detected. Please install Ready Wallet, Argent X, or Braavos.');
       }
 
       // Request connection
@@ -114,11 +146,10 @@ export function useStarknetWallet() {
         const accounts = await targetProvider.enable({ showModal: true });
         const selectedAddress = accounts?.[0] || targetProvider.selectedAddress;
 
-        // Check STRK20 Privacy Capability
+        // Check STRK20 Privacy Capability via least privilege version query
         let isPrivacySupported = false;
         let walletApiVersion = '0.0.0';
 
-        // Capability check: query supported specs/APIs without reading private balances
         if (targetProvider.supportedSpecs) {
           const specs = Array.isArray(targetProvider.supportedSpecs)
             ? targetProvider.supportedSpecs
@@ -133,9 +164,6 @@ export function useStarknetWallet() {
           isPrivacySupported = true;
           walletApiVersion = '0.10.3';
         }
-
-        // Initialize Starknet RPC provider
-        const rpcProvider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
 
         setState({
           isConnected: true,

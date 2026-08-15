@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2, Check } from 'lucide-react';
-import { MAINNET_TOKENS, TokenInfo, DEFAULT_POOL_FEE_STRK } from '@/config/tokens';
+import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
 import { viewingKeyService, SavedContact } from '@/services/viewingKeyService';

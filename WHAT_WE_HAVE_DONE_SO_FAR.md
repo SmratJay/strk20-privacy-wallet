@@ -171,3 +171,46 @@
   * Demonstrates how the viewing key is encrypted via ECDH to the threshold auditor public key at registration (`SetViewingKey`).
   * Shows how auditors can recover targeted transaction graphs under lawful request without compromising other pool participants or possessing spending authority.
 
+---
+
+## 📅 Saturday, August 15, 2026 — 23:47:30 IST
+
+### 🛠️ Production-Grade Remediation & Real Protocol Execution Upgrade
+
+#### 🔴 [BIG CHANGE] — Real On-Chain AVNU DEX Swap Routing & Multi-Call Execution (`SwapTab.tsx` & `avnuService.ts`)
+* **Description:** Eliminated all mocked timeouts and synthetic transaction hashes in `SwapTab.tsx`. Wired real Starknet DEX multi-call execution via `@avnu/avnu-sdk` (`quoteToCalls` + `walletAccount.execute`).
+* **Detailed Technical Explanation:**
+  * Replaced mock execution with live AVNU route serialization into native Starknet `Call[]`.
+  * Connected wallet signs and submits the exact aggregated DEX calls, returning real on-chain transaction hashes.
+  * Added dynamic slippage management (1.0% default) and real gas fee estimation.
+
+#### 🔴 [BIG CHANGE] — Cryptographically Sound STARK ECDH Channel Derivation (`strk20Crypto.ts`)
+* **Description:** Refactored `deriveChannelKeyECDH` to use STARK curve elliptic-curve Diffie-Hellman point multiplication (`ec.starkCurve.getSharedSecret`) combined with `CHANNEL_KEY_TAG:V1` Poseidon domain separation.
+* **Detailed Technical Explanation:**
+  * Eliminated dangerous raw private key hashing.
+  * Derives shared secret scalar on Stark curve $P = d_{sender} \cdot Q_{recipient}$ before hashing with sender and recipient addresses.
+  * Implemented real `computeAuditorEscrowCommitment` using `AUDITOR_ESCROW_TAG:V1` for selective disclosure records.
+
+#### 🔴 [BIG CHANGE] — Real On-Chain RPC Event Scanner for UTXO Notes (`NoteScannerTab.tsx`)
+* **Description:** Replaced hardcoded dummy notes and fake timers with live Starknet RPC scanning using `RpcProvider.getBlock` and local session history note commitments.
+* **Detailed Technical Explanation:**
+  * Discovers actual pool note interactions for the connected account address.
+  * Derives real Poseidon Note IDs and Nullifiers on-the-fly.
+  * Displays honest empty states when no unspent notes exist rather than displaying fabricated data.
+
+#### 🔴 [BIG CHANGE] — Dynamic Scannable Vector QR Code Engine (`RequestTab.tsx` & `PublishAddressModal.tsx`)
+* **Description:** Integrated `qrcode.react` (`QRCodeSVG`) to replace static decorative SVG mockups with 100% genuine, dynamically encoded QR codes.
+* **Detailed Technical Explanation:**
+  * QR codes dynamically re-render on amount, token, memo, or address changes.
+  * Scannable by any mobile camera or Starknet wallet extension.
+
+#### 🟢 [SMALL CHANGE] — Robust Starknet.js v10 u256 Deserialization (`privacyService.ts`)
+* **Description:** Implemented `parseU256Result` helper handling all serialization shapes (`bigint`, `{ balance: { low, high } }`, `{ low, high }`, `[low, high]`, number, string).
+* **Detailed Technical Explanation:**
+  * Prevents balance queries from returning 0 for funded wallets due to type mismatches across RPC nodes.
+  * Added `waitForTxWithTimeout` ceiling to prevent UI lockup on delayed paymaster relay.
+
+#### 🟢 [SMALL CHANGE] — WalletStandard Discovery Integration & UI Fixes (`useStarknetWallet.ts`, `Header.tsx`, `page.tsx`)
+* **Description:** Integrated `@starknet-io/get-starknet-discovery` (`createStore`), added click-outside/escape-key listeners to the Header dropdown, and fixed Markdown rendering in the page footer.
+
+

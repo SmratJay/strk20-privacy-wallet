@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Key, ChevronDown, CheckCircle2, AlertCircle, ExternalLink, FileText } from 'lucide-react';
 import { shortenAddress } from '@/utils/formatters';
 import { STRK20_POOL_ADDRESS } from '@/config/tokens';
@@ -13,6 +13,32 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOpenAuditorModal }) => {
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside or escape key
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setWalletDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWalletDropdownOpen(false);
+      }
+    };
+
+    if (walletDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [walletDropdownOpen]);
 
   return (
     <header className="border-b border-surface-border bg-surface/80 backdrop-blur-md sticky top-0 z-40">
@@ -73,7 +99,7 @@ export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOp
           )}
 
           {/* Wallet Connection */}
-          <div className="relative">
+          <div className="relative" ref={dropdownRef}>
             {wallet.isConnected ? (
               <div className="flex items-center gap-1.5 bg-surface-elevated border border-surface-border rounded-xl p-1 pr-3">
                 <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-zinc-900 text-xs font-mono text-zinc-200">
@@ -124,7 +150,7 @@ export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOp
                 </button>
 
                 {walletDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-64 p-2 bg-surface-elevated border border-surface-border rounded-xl shadow-2xl z-50">
+                  <div className="absolute right-0 mt-2 w-64 p-2 bg-surface-elevated border border-surface-border rounded-xl shadow-2xl z-50 animate-in fade-in">
                     <p className="text-[11px] font-semibold text-zinc-400 px-2 py-1 uppercase tracking-wider">
                       Select Wallet
                     </p>

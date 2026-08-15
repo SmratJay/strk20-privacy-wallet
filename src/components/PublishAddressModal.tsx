@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Copy, Check, ShieldCheck, QrCode, Info, ExternalLink, Share2, Sparkles } from 'lucide-react';
+import { X, Copy, Check, ShieldCheck, QrCode, Info, ExternalLink, Share2 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { shortenAddress } from '@/utils/formatters';
 import { STRK20_POOL_ADDRESS } from '@/config/tokens';
 
@@ -159,45 +160,20 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
               </div>
             </>
           ) : (
-            /* QR View */
+            /* Real Dynamic QR View */
             <div className="p-6 text-center space-y-4">
               <div className="inline-block p-4 rounded-2xl bg-white shadow-2xl border-4 border-emerald-500/30">
-                {/* Visual SVG QR Representation */}
-                <svg className="w-44 h-44" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect width="100" height="100" fill="white"/>
-                  {/* Outer corner markers */}
-                  <rect x="10" y="10" width="24" height="24" fill="black"/>
-                  <rect x="14" y="14" width="16" height="16" fill="white"/>
-                  <rect x="18" y="18" width="8" height="8" fill="black"/>
-
-                  <rect x="66" y="10" width="24" height="24" fill="black"/>
-                  <rect x="70" y="14" width="16" height="16" fill="white"/>
-                  <rect x="74" y="18" width="8" height="8" fill="black"/>
-
-                  <rect x="10" y="66" width="24" height="24" fill="black"/>
-                  <rect x="14" y="70" width="16" height="16" fill="white"/>
-                  <rect x="18" y="74" width="8" height="8" fill="black"/>
-
-                  {/* Data patterns */}
-                  <rect x="40" y="12" width="6" height="6" fill="black"/>
-                  <rect x="52" y="18" width="6" height="6" fill="black"/>
-                  <rect x="40" y="28" width="6" height="6" fill="black"/>
-                  <rect x="48" y="38" width="8" height="8" fill="#10b981"/>
-                  <rect x="14" y="44" width="8" height="8" fill="black"/>
-                  <rect x="30" y="48" width="6" height="6" fill="black"/>
-                  <rect x="62" y="44" width="6" height="6" fill="black"/>
-                  <rect x="76" y="52" width="8" height="8" fill="black"/>
-                  <rect x="44" y="60" width="6" height="6" fill="black"/>
-                  <rect x="58" y="68" width="8" height="8" fill="black"/>
-                  <rect x="72" y="74" width="6" height="6" fill="black"/>
-                  <rect x="40" y="80" width="8" height="8" fill="black"/>
-                  <rect x="84" y="84" width="6" height="6" fill="black"/>
-                </svg>
+                <QRCodeSVG
+                  value={shareablePaymentLink}
+                  size={180}
+                  level="M"
+                  includeMargin={false}
+                />
               </div>
 
               <div>
                 <p className="text-xs font-mono text-zinc-300 break-all">{shortenAddress(privacyReceiveAddress, 10)}</p>
-                <p className="text-[11px] text-zinc-500 mt-1">Scan with any STRK20 or Starknet mobile camera</p>
+                <p className="text-[11px] text-zinc-500 mt-1">Scan with any Starknet or STRK20 camera</p>
               </div>
 
               <button

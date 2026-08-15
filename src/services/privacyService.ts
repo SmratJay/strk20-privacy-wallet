@@ -1,7 +1,7 @@
 import { Contract, RpcProvider, num, uint256 } from 'starknet';
-import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, MAINNET_TOKENS, TokenInfo, DEFAULT_POOL_FEE_STRK } from '@/config/tokens';
+import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
 
-const ERC20_ABI = [
+export const ERC20_ABI = [
   {
     name: 'balanceOf',
     type: 'function',
@@ -10,10 +10,30 @@ const ERC20_ABI = [
     state_mutability: 'view',
   },
   {
+    name: 'allowance',
+    type: 'function',
+    inputs: [
+      { name: 'owner', type: 'core::starknet::contract_address::ContractAddress' },
+      { name: 'spender', type: 'core::starknet::contract_address::ContractAddress' },
+    ],
+    outputs: [{ name: 'remaining', type: 'core::integer::u256' }],
+    state_mutability: 'view',
+  },
+  {
     name: 'approve',
     type: 'function',
     inputs: [
       { name: 'spender', type: 'core::starknet::contract_address::ContractAddress' },
+      { name: 'amount', type: 'core::integer::u256' },
+    ],
+    outputs: [{ name: 'success', type: 'core::bool' }],
+    state_mutability: 'external',
+  },
+  {
+    name: 'transfer',
+    type: 'function',
+    inputs: [
+      { name: 'recipient', type: 'core::starknet::contract_address::ContractAddress' },
       { name: 'amount', type: 'core::integer::u256' },
     ],
     outputs: [{ name: 'success', type: 'core::bool' }],
@@ -49,6 +69,31 @@ export class PrivacyService {
   }
 
   /**
+   * Robust parsing of Starknet u256 / felt return shapes from contract calls
+   */
+  parseU256Result(res: any): bigint {
+    if (typeof res === 'bigint') {
+      return res;
+    }
+    if (typeof res === 'number') {
+      return BigInt(res);
+    }
+    if (typeof res === 'string') {
+      return BigInt(res);
+    }
+    if (res && typeof res.balance !== 'undefined') {
+      return this.parseU256Result(res.balance);
+    }
+    if (res && typeof res.low !== 'undefined' && typeof res.high !== 'undefined') {
+      return uint256.uint256ToBN(res);
+    }
+    if (Array.isArray(res) && res.length >= 2) {
+      return uint256.uint256ToBN({ low: res[0], high: res[1] });
+    }
+    return 0n;
+  }
+
+  /**
    * Fetches both public and shielded STRK20 balances for a given account
    */
   async fetchBalances(accountAddress: string, walletAccount?: any): Promise<ShieldedBalance[]> {
@@ -58,7 +103,7 @@ export class PrivacyService {
       let publicBalance = 0n;
       let shieldedBalance = 0n;
 
-      // 1. Fetch public ERC20 balance
+      // 1. Fetch public ERC20 balance with robust shape normalization
       try {
         const contract = new Contract({
           abi: ERC20_ABI,
@@ -66,16 +111,12 @@ export class PrivacyService {
           providerOrAccount: this.rpcProvider,
         });
         const res: any = await contract.call('balanceOf', [accountAddress]);
-        if (res && res.balance) {
-          publicBalance = uint256.uint256ToBN(res.balance);
-        } else if (typeof res === 'bigint') {
-          publicBalance = res;
-        }
+        publicBalance = this.parseU256Result(res);
       } catch (err) {
         console.warn(`Could not fetch public balance for ${token.symbol}:`, err);
       }
 
-      // 2. Fetch shielded balance via WalletAccountV6 if available
+      // 2. Query shielded balance via WalletAccountV6 if supported by wallet
       if (walletAccount && typeof walletAccount.strk20Balances === 'function') {
         try {
           const shieldedRes = await walletAccount.strk20Balances([token.address]);
@@ -99,9 +140,23 @@ export class PrivacyService {
   }
 
   /**
+   * Safe transaction wait with ceiling timeout per Wallet API gotchas
+   */
+  async waitForTxWithTimeout(txHash: string, timeoutMs = 15000): Promise<boolean> {
+    try {
+      const waitPromise = this.rpcProvider.waitForTransaction(txHash);
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), timeoutMs));
+      const res = await Promise.race([waitPromise, timeoutPromise]);
+      return res !== 'TIMEOUT';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Step 1 + 2: Shield tokens into the STRK20 Privacy Pool
    * 1. ERC20 Approve pool
-   * 2. Pool deposit / shield invocation
+   * 2. Pool deposit invocation
    */
   async executeShield(
     walletAccount: any,
@@ -113,7 +168,7 @@ export class PrivacyService {
 
     const u256Amount = uint256.bnToUint256(amountBigInt);
 
-    // If wallet supports native STRK20 shield action
+    // If wallet natively supports STRK20 shield action
     if (typeof walletAccount.strk20Shield === 'function') {
       onStepChange?.('PROVING');
       const res = await walletAccount.strk20Shield({

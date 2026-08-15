@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, ShieldAlert, Check, Copy, FileText, Lock, Key, ExternalLink, Info } from 'lucide-react';
+import { X, Check, Copy, FileText, Info, ExternalLink } from 'lucide-react';
 import { shortenAddress } from '@/utils/formatters';
 import { STRK20_POOL_ADDRESS } from '@/config/tokens';
+import { strk20Crypto } from '@/services/strk20Crypto';
 
 interface AuditorExportModalProps {
   isOpen: boolean;
@@ -20,7 +21,11 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const escrowedBlob = `0x0471a8f9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0_${accountAddress.slice(2, 10)}`;
+  // Derive real domain-separated Poseidon commitment for auditor key escrow
+  const escrowedBlob = strk20Crypto.computeAuditorEscrowCommitment(
+    accountAddress,
+    STRK20_POOL_ADDRESS
+  );
 
   const handleCopy = () => {
     navigator.clipboard.writeText(escrowedBlob);
@@ -38,8 +43,8 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Selective Disclosure & Compliance</h3>
-              <p className="text-xs text-zinc-400 font-mono">STRK20 Escrowed Auditor Key Record</p>
+              <h3 className="text-base font-bold text-white">Selective Disclosure Protocol</h3>
+              <p className="text-xs text-zinc-400 font-mono">STRK20 Viewing Key Escrow Commitment</p>
             </div>
           </div>
           <button
@@ -55,36 +60,54 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
           <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/20 text-xs text-purple-200/90 flex items-start gap-2.5">
             <Info className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
             <p>
-              STRK20 uses selective disclosure. At registration (`SetViewingKey`), your private viewing key is encrypted via ECDH to the threshold auditor public key. An auditor can only decrypt transactions for a specific user under lawful request — no mass surveillance is cryptographically possible.
+              STRK20 supports selective disclosure: the pool is confidential by default and can disclose the information needed to respond to a legitimate regulatory request without exposing unrelated users. At registration (<code>SetViewingKey</code>), your viewing key is encrypted via ECDH to the threshold auditor public key.
             </p>
           </div>
 
           <div className="space-y-1.5 font-mono">
-            <label className="text-xs font-semibold text-zinc-400">On-Chain Auditor Escrow Blob</label>
+            <label className="text-xs font-semibold text-zinc-400">
+              Auditor Escrow Commitment (Poseidon Domain Hashed)
+            </label>
             <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface border border-surface-border text-xs text-zinc-300 break-all">
               <span className="flex-1 truncate">{escrowedBlob}</span>
               <button
                 onClick={handleCopy}
-                className="p-1.5 rounded-lg bg-surface-border hover:bg-zinc-700 text-zinc-200 shrink-0"
+                className="p-1.5 rounded-lg bg-surface-border hover:bg-zinc-700 text-zinc-200 shrink-0 transition-colors"
+                title="Copy commitment hash"
               >
                 {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
-          {/* Properties */}
-          <div className="p-3 rounded-xl bg-surface border border-surface-border text-xs space-y-2">
-            <div className="font-semibold text-zinc-200">Compliance & Cryptographic Invariants:</div>
+          {/* Protocol Invariants */}
+          <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs space-y-2">
+            <div className="font-semibold text-zinc-200">Cryptographic Guarantees:</div>
             <ul className="text-zinc-400 space-y-1.5 list-disc list-inside text-[11px]">
-              <li><strong className="text-zinc-300">Auditors cannot spend:</strong> Viewing keys allow read-only history recovery; spending requires your account signature.</li>
-              <li><strong className="text-zinc-300">Zero Mass Surveillance:</strong> Auditor keys open only single targeted viewing keys, leaving all other pool participants private.</li>
-              <li><strong className="text-zinc-300">Screening Invariant:</strong> FPI screens all deposits before they enter the pool.</li>
+              <li>
+                <strong className="text-zinc-300">Auditors cannot spend:</strong> Viewing keys provide read-only history decryption; signing spend transactions requires account authority.
+              </li>
+              <li>
+                <strong className="text-zinc-300">Targeted isolation:</strong> Unsealing an escrow record decrypts only the specific target user's notes, preserving privacy for all other pool participants.
+              </li>
+              <li>
+                <strong className="text-zinc-300">On-Chain Screening:</strong> Deposits are screened by protocol FPI before acceptance.
+              </li>
             </ul>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-surface-border bg-surface flex justify-end">
+        <div className="p-4 border-t border-surface-border bg-surface flex justify-between items-center">
+          <a
+            href="https://strk20-by-example.org/compliance"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-purple-400 hover:underline flex items-center gap-1 font-mono"
+          >
+            <span>strk20-by-example.org/compliance</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
           <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors"

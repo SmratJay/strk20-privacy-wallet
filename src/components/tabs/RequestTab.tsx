@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { QrCode, Copy, Check, Share2, Sparkles, UserCheck, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Copy, Check, Share2, Sparkles } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
 import { shortenAddress } from '@/utils/formatters';
 import { useToast } from '@/components/Toast';
@@ -17,7 +18,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
   const [memo, setMemo] = useState('Payment for Dev Services');
   const [copied, setCopied] = useState(false);
 
-  const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x0471...938d';
+  const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
   const paymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?token=${selectedToken.symbol}&amount=${amount}&memo=${encodeURIComponent(memo)}`;
 
   const handleCopyLink = () => {
@@ -39,7 +40,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
           <span>Stealth Payment Request (Invoice)</span>
         </h2>
         <p className="text-xs text-zinc-400">
-          Generate an invoice with custom amount. Anyone paying deposits directly into your encrypted pool notes.
+          Generate a dynamic QR invoice. Payments deposit directly into your STRK20 encrypted pool channel.
         </p>
       </div>
 
@@ -88,28 +89,15 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
           </div>
         </div>
 
-        {/* Live Generated Payment Card & QR Preview */}
+        {/* Live Generated Real QR Invoice */}
         <div className="p-5 rounded-xl bg-gradient-to-br from-surface-elevated via-surface to-emerald-950/20 border border-emerald-500/30 text-center space-y-3">
           <div className="inline-block p-3 rounded-2xl bg-white shadow-xl border-2 border-emerald-500/40">
-            <svg className="w-36 h-36" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100" height="100" fill="white"/>
-              <rect x="10" y="10" width="24" height="24" fill="black"/>
-              <rect x="14" y="14" width="16" height="16" fill="white"/>
-              <rect x="18" y="18" width="8" height="8" fill="black"/>
-              <rect x="66" y="10" width="24" height="24" fill="black"/>
-              <rect x="70" y="14" width="16" height="16" fill="white"/>
-              <rect x="74" y="18" width="8" height="8" fill="black"/>
-              <rect x="10" y="66" width="24" height="24" fill="black"/>
-              <rect x="14" y="70" width="16" height="16" fill="white"/>
-              <rect x="18" y="74" width="8" height="8" fill="black"/>
-              <rect x="40" y="12" width="6" height="6" fill="black"/>
-              <rect x="52" y="18" width="6" height="6" fill="black"/>
-              <rect x="44" y="44" width="12" height="12" fill="#10b981"/>
-              <rect x="62" y="44" width="6" height="6" fill="black"/>
-              <rect x="76" y="52" width="8" height="8" fill="black"/>
-              <rect x="40" y="70" width="8" height="8" fill="black"/>
-              <rect x="80" y="80" width="8" height="8" fill="black"/>
-            </svg>
+            <QRCodeSVG
+              value={paymentLink}
+              size={150}
+              level="M"
+              includeMargin={false}
+            />
           </div>
 
           <div>

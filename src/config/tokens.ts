@@ -50,4 +50,8 @@ export const ALCHEMY_RPC_URL =
   'https://starknet-mainnet.public.blastapi.io';
 
 export const NOTE_MATURITY_BLOCKS = 10;
-export const DEFAULT_POOL_FEE_STRK = '4'; // Flat fee in STRK for private operations
+
+/**
+ * Estimated pool fee in STRK for private operations
+ */
+export const ESTIMATED_POOL_FEE_STRK = '4';
