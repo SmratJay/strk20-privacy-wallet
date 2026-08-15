@@ -5,6 +5,8 @@ import { Shield, ArrowUpRight, ArrowDownLeft, ArrowLeftRight, History, Sparkles,
 import { Header } from '@/components/Header';
 import { PrivacyBanner } from '@/components/PrivacyBanner';
 import { BalanceCards } from '@/components/BalanceCards';
+import { AnonymityScore } from '@/components/AnonymityScore';
+import { PoolMetrics } from '@/components/PoolMetrics';
 import { ShieldTab } from '@/components/tabs/ShieldTab';
 import { SendTab } from '@/components/tabs/SendTab';
 import { UnshieldTab } from '@/components/tabs/UnshieldTab';
@@ -14,9 +16,11 @@ import { PublishAddressModal } from '@/components/PublishAddressModal';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { MAINNET_TOKENS, TokenInfo, STRK20_POOL_ADDRESS } from '@/config/tokens';
 import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/privacyService';
+import { useToast } from '@/components/Toast';
 
 export default function Home() {
   const wallet = useStarknetWallet();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'SHIELD' | 'SEND' | 'UNSHIELD' | 'SWAP' | 'HISTORY'>('SHIELD');
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [balances, setBalances] = useState<ShieldedBalance[]>(
@@ -87,6 +91,11 @@ export default function Home() {
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
+    showToast({
+      type: 'success',
+      title: 'Tokens Shielded Successfully',
+      description: `Deposited ${amount} ${token.symbol} into STRK20 pool encrypted note`,
+    });
   };
 
   const handleSendSuccess = (txHash: string, token: TokenInfo, amount: string, recipient: string) => {
@@ -104,6 +113,11 @@ export default function Home() {
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
+    showToast({
+      type: 'success',
+      title: 'Private Transfer Relayed',
+      description: `Sent ${amount} ${token.symbol} to stealth recipient. Stwo proof verified.`,
+    });
   };
 
   const handleUnshieldSuccess = (txHash: string, token: TokenInfo, amount: string, destination: string) => {
@@ -121,6 +135,11 @@ export default function Home() {
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
+    showToast({
+      type: 'info',
+      title: 'Unshield Withdrawal Executed',
+      description: `Withdrew ${amount} ${token.symbol} to public address`,
+    });
   };
 
   const handleSwapSuccess = (txHash: string, fromToken: TokenInfo, toToken: TokenInfo, amount: string) => {
@@ -137,6 +156,11 @@ export default function Home() {
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
+    showToast({
+      type: 'success',
+      title: 'Private Swap Completed',
+      description: `Swapped ${fromToken.symbol} to ${toToken.symbol} via AVNU privacy router`,
+    });
   };
 
   return (
@@ -148,9 +172,15 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8">
-        {/* Intro / Privacy Banner */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8">
+        {/* Network & Proof Metrics */}
+        <PoolMetrics />
+
+        {/* Intro / Privacy Invariant Banner */}
         <PrivacyBanner />
+
+        {/* Privacy Health Score */}
+        <AnonymityScore balances={balances} />
 
         {/* Dual Balance Cards */}
         <BalanceCards

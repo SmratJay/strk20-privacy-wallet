@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
-import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2, Check } from 'lucide-react';
 import { MAINNET_TOKENS, TokenInfo, DEFAULT_POOL_FEE_STRK } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
-import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
+import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
+import { viewingKeyService, SavedContact } from '@/services/viewingKeyService';
 
 interface SendTabProps {
   balances: ShieldedBalance[];
@@ -19,6 +20,16 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
   const [step, setStep] = useState<'IDLE' | 'PREPARING' | 'PROVING' | 'SUBMITTING'>('IDLE');
   const [error, setError] = useState<string | null>(null);
 
+  // Address book states
+  const [contacts, setContacts] = useState<SavedContact[]>([]);
+  const [showAddressBook, setShowAddressBook] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [isAddingContact, setIsAddingContact] = useState(false);
+
+  useEffect(() => {
+    setContacts(viewingKeyService.getContacts());
+  }, []);
+
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
   const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
 
@@ -26,6 +37,20 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
     if (shieldedBal > 0n) {
       setAmount(formatTokenAmount(shieldedBal, selectedToken.decimals, 6));
     }
+  };
+
+  const handleSaveCurrentContact = () => {
+    if (!newContactName.trim() || !recipient.trim()) return;
+    const saved = viewingKeyService.saveContact(newContactName, recipient);
+    setContacts(viewingKeyService.getContacts());
+    setNewContactName('');
+    setIsAddingContact(false);
+  };
+
+  const handleDeleteContact = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    viewingKeyService.deleteContact(id);
+    setContacts(viewingKeyService.getContacts());
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -89,7 +114,82 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
             Transfer shielded funds with zero on-chain sender, recipient, or amount trail
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAddressBook(!showAddressBook)}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-elevated border border-surface-border hover:border-emerald-500/40 text-zinc-300 text-xs transition-colors"
+        >
+          <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Address Book ({contacts.length})</span>
+        </button>
       </div>
+
+      {/* Address Book Modal / Dropdown */}
+      {showAddressBook && (
+        <div className="mb-4 p-3.5 rounded-xl bg-surface-elevated border border-emerald-500/30 space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-white">Saved Privacy Contacts</span>
+            <button
+              onClick={() => setIsAddingContact(!isAddingContact)}
+              className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Add Current</span>
+            </button>
+          </div>
+
+          {isAddingContact && (
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Contact Name (e.g. Alice, Treasury)"
+                value={newContactName}
+                onChange={(e) => setNewContactName(e.target.value)}
+                className="flex-1 bg-surface border border-surface-border text-white text-xs rounded-lg px-2.5 py-1.5 outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleSaveCurrentContact}
+                disabled={!newContactName || !recipient}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {contacts.length === 0 ? (
+              <p className="text-xs text-zinc-500 py-1">No contacts saved yet.</p>
+            ) : (
+              contacts.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => {
+                    setRecipient(c.privacyAddress);
+                    setShowAddressBook(false);
+                  }}
+                  className="flex items-center justify-between p-2 rounded-lg bg-surface hover:bg-zinc-800 cursor-pointer border border-surface-border text-xs text-zinc-200 transition-colors"
+                >
+                  <div>
+                    <span className="font-semibold text-white">{c.name}</span>
+                    <span className="font-mono text-zinc-400 text-[10px] ml-2">
+                      {shortenAddress(c.privacyAddress, 4)}
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteContact(c.id, e)}
+                    className="p-1 text-zinc-500 hover:text-rose-400"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSend} className="space-y-4">
         {/* Recipient Privacy Address */}

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ToastProvider } from '@/components/Toast';
 
 export const metadata: Metadata = {
   title: 'STRK20 Privacy Wallet | Starknet Confidential Payments',
@@ -23,7 +24,9 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased selection:bg-emerald-500/30 selection:text-emerald-200">
-        {children}
+        <ToastProvider>
+          {children}
+        </ToastProvider>
       </body>
     </html>
   );
