@@ -213,4 +213,11 @@
 #### 🟢 [SMALL CHANGE] — WalletStandard Discovery Integration & UI Fixes (`useStarknetWallet.ts`, `Header.tsx`, `page.tsx`)
 * **Description:** Integrated `@starknet-io/get-starknet-discovery` (`createStore`), added click-outside/escape-key listeners to the Header dropdown, and fixed Markdown rendering in the page footer.
 
+#### 🟢 [SMALL CHANGE] — Comprehensive Enterprise Documentation Upgrade (`README.md`)
+* **Description:** Updated `README.md` with complete architectural diagrams, comparative matrix (STRK20 vs Umbra), cryptographic formulas, test suite instructions, and dependency manifests.
+* **Detailed Technical Explanation:**
+  * Documented the complete 8-tab feature suite, live mainnet pool address, and Poseidon domain separation tags.
+  * Formatted mathematical LaTeX expressions for Note ID, Nullifier, and Homomorphic Masking computations.
+
+
 
