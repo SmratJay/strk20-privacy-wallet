@@ -1,0 +1,206 @@
+'use client';
+
+import React, { useState } from 'react';
+import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, ShieldCheck } from 'lucide-react';
+import { MAINNET_TOKENS, TokenInfo, DEFAULT_POOL_FEE_STRK } from '@/config/tokens';
+import { ShieldedBalance, privacyService } from '@/services/privacyService';
+import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
+
+interface SendTabProps {
+  balances: ShieldedBalance[];
+  wallet: any;
+  onSuccess: (txHash: string, token: TokenInfo, amount: string, recipient: string) => void;
+}
+
+export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess }) => {
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(MAINNET_TOKENS[0]);
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [step, setStep] = useState<'IDLE' | 'PREPARING' | 'PROVING' | 'SUBMITTING'>('IDLE');
+  const [error, setError] = useState<string | null>(null);
+
+  const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
+  const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
+
+  const handleMax = () => {
+    if (shieldedBal > 0n) {
+      setAmount(formatTokenAmount(shieldedBal, selectedToken.decimals, 6));
+    }
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!wallet.isConnected) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    if (!recipient.trim()) {
+      setError('Please enter a recipient privacy address or Starknet address');
+      return;
+    }
+
+    const amountBigInt = parseTokenAmount(amount, selectedToken.decimals);
+    if (amountBigInt <= 0n) {
+      setError('Enter a valid amount');
+      return;
+    }
+
+    if (amountBigInt > shieldedBal) {
+      setError(`Insufficient shielded ${selectedToken.symbol} balance`);
+      return;
+    }
+
+    setError(null);
+    setStep('PREPARING');
+
+    // Clean recipient string (strip strk20: prefix if present)
+    const cleanedRecipient = recipient.replace(/^strk20:/i, '').trim();
+
+    try {
+      const { txHash } = await privacyService.executePrivateTransfer(
+        wallet.walletAccount,
+        selectedToken,
+        cleanedRecipient,
+        amountBigInt,
+        (currentStep) => setStep(currentStep)
+      );
+
+      onSuccess(txHash, selectedToken, amount, recipient);
+      setAmount('');
+      setRecipient('');
+      setStep('IDLE');
+    } catch (err: any) {
+      console.error('Private transfer error:', err);
+      setError(err.message || 'Private transfer failed');
+      setStep('IDLE');
+    }
+  };
+
+  return (
+    <div className="max-w-xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl">
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Lock className="w-5 h-5 text-emerald-400" />
+            <span>Private Transfer (Encrypted UTXO)</span>
+          </h2>
+          <p className="text-xs text-zinc-400">
+            Transfer shielded funds with zero on-chain sender, recipient, or amount trail
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSend} className="space-y-4">
+        {/* Recipient Privacy Address */}
+        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-2">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>Recipient Address / Viewing Key</span>
+            <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
+              <UserCheck className="w-3 h-3" />
+              <span>Umbra Stealth Compatible</span>
+            </span>
+          </div>
+          <input
+            type="text"
+            placeholder="strk20:0x... or 0x..."
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            disabled={step !== 'IDLE'}
+            className="w-full bg-surface border border-surface-border text-white text-xs font-mono rounded-xl px-3 py-2.5 outline-none focus:border-emerald-500 transition-colors"
+          />
+        </div>
+
+        {/* Asset & Amount */}
+        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-3">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>Asset & Shielded Amount</span>
+            <span>
+              Shielded Balance:{' '}
+              <strong className="text-emerald-400 font-mono">
+                {formatTokenAmount(shieldedBal, selectedToken.decimals)} {selectedToken.symbol}
+              </strong>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Token Selector */}
+            <select
+              value={selectedToken.symbol}
+              onChange={(e) => {
+                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                if (found) setSelectedToken(found);
+              }}
+              className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-emerald-500 transition-colors"
+            >
+              {MAINNET_TOKENS.map((t) => (
+                <option key={t.symbol} value={t.symbol}>
+                  {t.icon} {t.symbol}
+                </option>
+              ))}
+            </select>
+
+            {/* Amount input */}
+            <div className="relative flex-1">
+              <input
+                type="number"
+                step="any"
+                placeholder="0.0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                disabled={step !== 'IDLE'}
+                className="w-full bg-surface border border-surface-border text-white text-base font-mono rounded-xl px-3 py-2 outline-none focus:border-emerald-500 transition-colors"
+              />
+              <button
+                type="button"
+                onClick={handleMax}
+                disabled={step !== 'IDLE'}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20"
+              >
+                MAX
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Relay & Gas Badge */}
+        <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-xs text-emerald-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span>Paymaster Relayed (No gas link to your address)</span>
+          </div>
+          <span className="font-mono text-[11px] text-emerald-400">Gas Sponsored</span>
+        </div>
+
+        {error && (
+          <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={step !== 'IDLE' || !amount || !recipient}
+          className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all"
+        >
+          {step !== 'IDLE' ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>
+                {step === 'PREPARING' && 'Deriving ECDH Channel Keys...'}
+                {step === 'PROVING' && 'Generating Stwo Zero-Knowledge Proof (~25-30s)...'}
+                {step === 'SUBMITTING' && 'Relaying Private Transfer...'}
+              </span>
+            </>
+          ) : (
+            <>
+              <ArrowUpRight className="w-4 h-4" />
+              <span>Send Privately</span>
+            </>
+          )}
+        </button>
+      </form>
+    </div>
+  );
+};

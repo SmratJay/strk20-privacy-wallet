@@ -21,6 +21,8 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+tsconfig.tsbuildinfo
+.next/
 
 # Logs
 *.log
