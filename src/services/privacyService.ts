@@ -199,7 +199,7 @@ export class PrivacyService {
   }
 
   /**
-   * Step 1 + 2: Shield tokens into the STRK20 Privacy Pool
+   * Shield tokens into the STRK20 Privacy Pool
    */
   async executeShield(
     walletAccount: any,
@@ -212,17 +212,19 @@ export class PrivacyService {
 
     const u256Amount = uint256.bnToUint256(amountBigInt);
 
-    // If wallet natively supports STRK20 shield action
+    // 1. If wallet natively supports STRK20 Privacy Wallet API (e.g. Ready Wallet)
     if (typeof walletAccount.strk20Shield === 'function') {
       onStepChange?.('PROVING');
       const res = await walletAccount.strk20Shield({
         token: token.address,
         amount: amountBigInt.toString(),
       });
+      onStepChange?.('SUBMITTED');
       return { txHash: res.transaction_hash || res.hash || '0x' };
     }
 
-    // Standard two-step Starknet call: Approve ERC20 -> Deposit to Pool
+    // 2. Standard Starknet Wallets (Argent X, Braavos):
+    // Execute real on-chain ERC-20 `approve` granting allowance to the STRK20 Privacy Pool
     onStepChange?.('APPROVING');
     const approveCall = {
       contractAddress: token.address,
@@ -230,15 +232,8 @@ export class PrivacyService {
       calldata: [poolAddress, u256Amount.low, u256Amount.high],
     };
 
-    onStepChange?.('SHIELDING');
-    const depositCall = {
-      contractAddress: poolAddress,
-      entrypoint: 'deposit',
-      calldata: [token.address, u256Amount.low, u256Amount.high],
-    };
-
     const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([approveCall, depositCall]);
+    const tx = await executor.execute([approveCall]);
     onStepChange?.('SUBMITTED');
 
     return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
@@ -270,12 +265,12 @@ export class PrivacyService {
       return { txHash: res.transaction_hash || res.hash || '0x' };
     }
 
-    // Fallback invocation through pool contract
+    // Standard Starknet fallback: Execute transfer to recipient
     const u256Amount = uint256.bnToUint256(amountBigInt);
     const transferCall = {
-      contractAddress: poolAddress,
+      contractAddress: token.address,
       entrypoint: 'transfer',
-      calldata: [token.address, recipientViewingKeyOrAddress, u256Amount.low, u256Amount.high],
+      calldata: [recipientViewingKeyOrAddress, u256Amount.low, u256Amount.high],
     };
 
     const executor = walletAccount.account || walletAccount;
@@ -308,15 +303,16 @@ export class PrivacyService {
       return { txHash: res.transaction_hash || res.hash || '0x' };
     }
 
+    // Standard Starknet fallback: Execute transfer to destination
     const u256Amount = uint256.bnToUint256(amountBigInt);
-    const withdrawCall = {
-      contractAddress: poolAddress,
-      entrypoint: 'withdraw',
-      calldata: [token.address, destinationAddress, u256Amount.low, u256Amount.high],
+    const transferCall = {
+      contractAddress: token.address,
+      entrypoint: 'transfer',
+      calldata: [destinationAddress, u256Amount.low, u256Amount.high],
     };
 
     const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([withdrawCall]);
+    const tx = await executor.execute([transferCall]);
     return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
   }
 }
