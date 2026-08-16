@@ -219,5 +219,45 @@
   * Documented the complete 8-tab feature suite, live mainnet pool address, and Poseidon domain separation tags.
   * Formatted mathematical LaTeX expressions for Note ID, Nullifier, and Homomorphic Masking computations.
 
+---
+
+### Sunday, August 16, 2026 — 08:35 IST
+
+#### 🔴 [BIG CHANGE] — Critical 5-Bug Audit Remediation (All P0/P1/P2 Issues Fixed)
+
+**Context:** A thorough second-pass audit by Claude Sonnet 4.6 identified 5 real, judge-visible bugs. All 5 have been fixed in a single commit (`a92788d`).
+
+---
+
+#### 🔴 [BIG CHANGE] — RPC Fallback Chain for Reliable Balance Fetching (`privacyService.ts`)
+* **Description:** Replaced single-RPC `Contract.call('balanceOf')` with a direct `provider.callContract()` approach using a 3-node fallback chain: Alchemy → Nethermind → BlastAPI.
+* **Why it matters:** The Alchemy API key `0VWGVHSuDBh88uowT1r49` had Starknet Mainnet disabled on the dashboard, causing all balance fetches to fail. Using `provider.callContract()` directly (no ABI parse layer) also eliminates starknet.js shape-mismatch bugs.
+* **Detailed Technical Explanation:**
+  * `fetchERC20Balance(tokenAddress, accountAddress)` iterates `RPC_FALLBACK_CHAIN`, catches errors per-RPC, and returns the first successful result.
+  * Returns `uint256.uint256ToBN({ low: result[0], high: result[1] })` for Cairo 2's `[low, high]` u256 array shape.
+  * No longer imports `Contract` at all — removed the broken import.
+
+#### 🔴 [BIG CHANGE] — Honest Shielded Balance Display for Non-Ready Wallets (`BalanceCards.tsx`, `privacyService.ts`)
+* **Description:** Added `privacyApiSupported: boolean` field to `ShieldedBalance` interface. When false (Argent X, Braavos), the shielded pool card shows an honest "Shielded balance requires Ready Wallet" panel with a link to ready.app, instead of misleadingly displaying `0.000 STRK`.
+* **Why it matters:** ~95% of judges will use Argent X. Showing `0.000` for all shielded balances makes it look like the feature is broken.
+
+#### 🟠 [BIG CHANGE] — AVNU Swap walletAccount Address Resolution (`avnuService.ts`)
+* **Description:** Fixed the `executeRealSwap` function to resolve the signer address from `walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress`. Added `executor = walletAccount.account || walletAccount` so `.execute()` is always called on an object that has it.
+* **Why it matters:** The wallet hook stores `targetProvider.account || targetProvider` as `walletAccount`. The `.address` and `.execute()` methods may live on different levels depending on the connected wallet.
+
+#### 🔴 [BIG CHANGE] — Real Viewing Key Derivation Flow (`NoteScannerTab.tsx` — complete rewrite)
+* **Description:** Complete rewrite of the Note Scanner tab to add a proper one-time viewing key setup step before note discovery is possible.
+* **Detailed Technical Explanation:**
+  * User sees a "Sign to Derive Viewing Key" button when no key exists.
+  * Calls `wallet_signTypedData` → uses `signature[0]` as entropy → `viewingKeyService.deriveViewingKeyFromSignature()` → stores `{ privateKey, publicKey }` in `localStorage` per-address key.
+  * Falls back to `signer.signMessage` if the typed-data API isn't available, and finally falls back to the address itself as entropy.
+  * Viewing key badge shown when active; "Clear Key" button removes it from localStorage.
+
+#### 🔴 [BIG CHANGE] — Correct ECDH Channel Key Derivation in Note Scanner (`NoteScannerTab.tsx`)
+* **Description:** Replaced the incorrect `deriveChannelKeyECDH(wallet.address, STRK20_POOL_ADDRESS, ...)` call (which passed a public address as a private key scalar) with `deriveChannelKeyECDH(vk.privateKey, vk.publicKey, wallet.address, STRK20_POOL_ADDRESS)`.
+* **Why it matters:** The ECDH function requires a private key scalar as the first argument. Passing a public address string caused the STARK curve multiplication to either throw or silently fall through to the deterministic fallback, producing Note IDs that never match real pool notes.
+
+
+
 
 
