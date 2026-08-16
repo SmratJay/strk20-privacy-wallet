@@ -54,7 +54,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
     }
 
     setError(null);
-    setStep('APPROVING');
+    setStep('SHIELDING');
 
     try {
       const { txHash } = await privacyService.executeShield(
@@ -153,20 +153,20 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
           
           <div className="grid grid-cols-2 gap-2 text-[11px]">
             <div className={`p-2 rounded-lg border flex items-center gap-2 ${
-              step === 'APPROVING' 
+              step === 'SHIELDING' 
                 ? 'bg-sky-500/10 border-sky-500 text-sky-300' 
                 : 'bg-surface border-surface-border text-zinc-400'
             }`}>
-              {step === 'APPROVING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-zinc-500 flex items-center justify-center text-[9px]">1</div>}
-              <span>1. ERC-20 Approve</span>
+              {step === 'SHIELDING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-zinc-500 flex items-center justify-center text-[9px]">1</div>}
+              <span>1. Transfer to Pool</span>
             </div>
 
             <div className={`p-2 rounded-lg border flex items-center gap-2 ${
-              step === 'SHIELDING' || step === 'PROVING' || step === 'SUBMITTED'
+              step === 'PROVING' || step === 'SUBMITTED'
                 ? 'bg-emerald-500/10 border-emerald-500 text-emerald-300'
                 : 'bg-surface border-surface-border text-zinc-400'
             }`}>
-              {step === 'SHIELDING' || step === 'PROVING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-zinc-500 flex items-center justify-center text-[9px]">2</div>}
+              {step === 'PROVING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-zinc-500 flex items-center justify-center text-[9px]">2</div>}
               <span>2. Encrypted UTXO Note</span>
             </div>
           </div>
@@ -201,9 +201,8 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>
-                {step === 'APPROVING' && 'Waiting for Approval signature...'}
-                {step === 'SHIELDING' && 'Creating Encrypted UTXO Note...'}
-                {step === 'PROVING' && 'Generating Zero-Knowledge Proof...'}
+                {step === 'SHIELDING' && 'Signing on-chain pool deposit...'}
+                {step === 'PROVING' && 'Creating Encrypted UTXO Note...'}
                 {step === 'SUBMITTED' && 'Shielded Successfully!'}
               </span>
             </>

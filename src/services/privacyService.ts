@@ -241,20 +241,20 @@ export class PrivacyService {
     }
 
     // 2. Braavos / Argent X Universal Umbra Client Route:
-    // Execute on-chain ERC-20 approval to the STRK20 Pool
-    onStepChange?.('APPROVING');
-    const approveCall = {
+    // Transfer tokens directly to the STRK20 Privacy Pool contract address on-chain
+    onStepChange?.('SHIELDING');
+    const transferCall = {
       contractAddress: token.address,
-      entrypoint: 'approve',
+      entrypoint: 'transfer',
       calldata: [poolAddress, u256Amount.low, u256Amount.high],
     };
 
     const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([approveCall]);
+    const tx = await executor.execute([transferCall]);
     const txHash = tx?.transaction_hash || tx?.hash || tx?.transactionHash;
 
     // Generate Encrypted UTXO Note in client-side vault
-    onStepChange?.('SHIELDING');
+    onStepChange?.('PROVING');
     if (address && txHash) {
       vaultService.addNote(
         address,
