@@ -34,6 +34,7 @@ export default function Home() {
       publicBalance: 0n,
       shieldedBalance: 0n,
       pendingNotesCount: 0,
+      privacyApiSupported: false,
     }))
   );
   const [isLoadingBalances, setIsLoadingBalances] = useState(false);

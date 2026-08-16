@@ -85,11 +85,22 @@ export class AvnuService {
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
+    // Resolve the signer address — wallet providers expose it differently across versions
+    const takerAddress: string =
+      walletAccount.address ||
+      walletAccount.account?.address ||
+      walletAccount.selectedAddress;
+
+    if (!takerAddress) {
+      throw new Error('Could not resolve wallet address for swap execution');
+    }
+
     // 1. Build swap calls through AVNU router
+    // quoteToCalls takes QuoteToCallsParams: { quoteId, slippage, takerAddress, executeApprove }
     const callsResponse = await quoteToCalls({
       quoteId: quote.quoteId,
       slippage,
-      takerAddress: walletAccount.address,
+      takerAddress,
       executeApprove: true,
     });
 
@@ -98,8 +109,17 @@ export class AvnuService {
     }
 
     // 2. Submit multi-call transaction via connected wallet account
-    const tx = await walletAccount.execute(callsResponse.calls);
-    return { txHash: tx.transaction_hash };
+    // The execute method lives on the account object (may be nested)
+    const executor = walletAccount.account || walletAccount;
+    if (typeof executor.execute !== 'function') {
+      throw new Error('Connected wallet does not support transaction execution');
+    }
+
+    const tx = await executor.execute(callsResponse.calls);
+    const txHash = tx?.transaction_hash || tx?.transactionHash || tx?.hash;
+    if (!txHash) throw new Error('Swap submitted but no transaction hash returned');
+
+    return { txHash };
   }
 }
 

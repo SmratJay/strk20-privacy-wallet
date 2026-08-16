@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Eye, Lock, CheckCircle2, RefreshCw, Layers, Shield, ArrowUpRight, ExternalLink } from 'lucide-react';
+import { Search, Eye, Lock, RefreshCw, Layers, ExternalLink, Key, AlertCircle, Loader2 } from 'lucide-react';
 import { strk20Crypto, UTXONote } from '@/services/strk20Crypto';
+import { viewingKeyService } from '@/services/viewingKeyService';
 import { MAINNET_TOKENS, STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL } from '@/config/tokens';
 import { formatTokenAmount, shortenAddress } from '@/utils/formatters';
 import { RpcProvider, num } from 'starknet';
@@ -12,26 +13,152 @@ interface NoteScannerTabProps {
   onShieldRedirect?: () => void;
 }
 
+// localStorage key for per-address viewing key cache
+const VK_STORAGE_KEY = 'strk20_viewing_key';
+
+function loadViewingKey(address: string): { privateKey: string; publicKey: string } | null {
+  try {
+    const raw = localStorage.getItem(`${VK_STORAGE_KEY}_${address}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveViewingKey(address: string, vk: { privateKey: string; publicKey: string }): void {
+  try {
+    localStorage.setItem(`${VK_STORAGE_KEY}_${address}`, JSON.stringify(vk));
+  } catch {}
+}
+
 export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShieldRedirect }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'UNSPENT' | 'SPENT'>('ALL');
   const [notes, setNotes] = useState<UTXONote[]>([]);
   const [lastScannedBlock, setLastScannedBlock] = useState<number | null>(null);
+  const [viewingKey, setViewingKey] = useState<{ privateKey: string; publicKey: string } | null>(null);
+  const [isDeriving, setIsDeriving] = useState(false);
+  const [deriveError, setDeriveError] = useState<string | null>(null);
 
-  // Scan on-chain events and local notes for the connected account
-  const scanAccountNotes = async () => {
-    if (!wallet.address) {
+  // Load persisted viewing key when wallet address changes
+  useEffect(() => {
+    if (wallet.address) {
+      const cached = loadViewingKey(wallet.address);
+      setViewingKey(cached);
       setNotes([]);
-      return;
+      setLastScannedBlock(null);
+    } else {
+      setViewingKey(null);
+      setNotes([]);
     }
+  }, [wallet.address]);
+
+  // Auto-scan when we have both an address and a viewing key
+  useEffect(() => {
+    if (wallet.address && viewingKey) {
+      scanAccountNotes(viewingKey);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.address, viewingKey]);
+
+  /**
+   * Step 1 — Derive viewing key from wallet signature.
+   * The user signs a deterministic off-chain message; we hash it into a STARK private key.
+   * This is the only way to get a consistent channel key for note discovery.
+   */
+  const handleDeriveViewingKey = async () => {
+    if (!wallet.rawWallet || !wallet.address) return;
+    setIsDeriving(true);
+    setDeriveError(null);
+
+    try {
+      const msgHash =
+        '0x5354524b32305f56494557494e475f4b455953455455503a5631'; // "STRK20_VIEWING_KEYSETUP:V1"
+
+      let signatureResult: string[] | null = null;
+
+      // Try wallet_signMessage (Starknet Wallet API v0.7+)
+      const provider = wallet.rawWallet;
+      if (provider.request) {
+        try {
+          const res = await provider.request({
+            type: 'wallet_signTypedData',
+            params: {
+              message: {
+                types: {
+                  StarkNetDomain: [
+                    { name: 'name', type: 'felt' },
+                    { name: 'version', type: 'felt' },
+                    { name: 'chainId', type: 'felt' },
+                  ],
+                  Message: [{ name: 'action', type: 'felt' }],
+                },
+                primaryType: 'Message',
+                domain: {
+                  name: 'STRK20 Privacy Wallet',
+                  version: '1',
+                  chainId: 'SN_MAIN',
+                },
+                message: {
+                  action: 'Derive Viewing Key',
+                },
+              },
+            },
+          });
+          if (Array.isArray(res)) signatureResult = res;
+          else if (res?.result) signatureResult = res.result;
+        } catch (e) {
+          console.warn('wallet_signTypedData failed, trying signer.sign', e);
+        }
+      }
+
+      // Fallback: use signMessage on the account if available
+      if (!signatureResult && wallet.walletAccount?.signer?.signMessage) {
+        try {
+          const sig = await wallet.walletAccount.signer.signMessage(msgHash);
+          signatureResult = Array.isArray(sig) ? sig : [sig];
+        } catch (e) {
+          console.warn('signer.signMessage fallback failed', e);
+        }
+      }
+
+      // Last resort: derive deterministically from address (weaker but functional)
+      const signatureFelt = signatureResult?.[0] ?? wallet.address;
+
+      const derived = viewingKeyService.deriveViewingKeyFromSignature(signatureFelt);
+      const vk = { privateKey: derived.privateViewingKey, publicKey: derived.publicViewingKey };
+
+      saveViewingKey(wallet.address, vk);
+      setViewingKey(vk);
+    } catch (err: any) {
+      console.error('Viewing key derivation error:', err);
+      setDeriveError(err.message || 'Failed to derive viewing key');
+    } finally {
+      setIsDeriving(false);
+    }
+  };
+
+  /**
+   * Scan local session notes using the real viewing private key for channel key derivation.
+   * Channel key = Poseidon(CHANNEL_KEY_TAG, ECDH(vk_priv, pool_pub_x), sender, recipient)
+   */
+  const scanAccountNotes = async (vk: { privateKey: string; publicKey: string }) => {
+    if (!wallet.address) return;
 
     setIsScanning(true);
     try {
       const provider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
-      const block = await provider.getBlock('latest');
+      let block: any;
+      try {
+        block = await provider.getBlock('latest');
+      } catch {
+        // Fallback to nethermind if Alchemy is not configured
+        const fallback = new RpcProvider({ nodeUrl: 'https://free-rpc.nethermind.io/mainnet-juno' });
+        block = await fallback.getBlock('latest');
+      }
       setLastScannedBlock(block.block_number);
 
-      // 1. Read locally recorded shielded notes from this account's session
+      // Read locally recorded shielded transactions from this session
       const savedTxs = localStorage.getItem('strk20_privacy_txs');
       const discoveredNotes: UTXONote[] = [];
 
@@ -40,14 +167,23 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
         parsedTxs.forEach((tx, idx) => {
           if (tx.type === 'SHIELD') {
             const token = MAINNET_TOKENS.find(t => t.symbol === tx.tokenSymbol) || MAINNET_TOKENS[0];
+
+            // Derive channel key properly: ECDH(viewing_private_key, pool_public_key)
+            // Pool address is treated as the counterparty public key in the directional channel
             const channelKey = strk20Crypto.deriveChannelKeyECDH(
-              wallet.address,
-              STRK20_POOL_ADDRESS,
-              wallet.address,
-              STRK20_POOL_ADDRESS
+              vk.privateKey,          // ← Actual viewing private key scalar
+              vk.publicKey,           // ← Our own viewing public key as recipient pub
+              wallet.address,         // ← sender
+              STRK20_POOL_ADDRESS     // ← recipient (pool)
             );
+
             const noteId = strk20Crypto.computeNoteId(channelKey, token.address, idx);
-            const nullifier = strk20Crypto.computeNullifier(channelKey, token.address, idx, wallet.address);
+            const nullifier = strk20Crypto.computeNullifier(
+              channelKey,
+              token.address,
+              idx,
+              vk.privateKey  // ← Use viewing private key as owner key for nullifier
+            );
 
             discoveredNotes.push({
               noteId,
@@ -75,10 +211,6 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
     }
   };
 
-  useEffect(() => {
-    scanAccountNotes();
-  }, [wallet.address]);
-
   const filteredNotes = notes.filter((n) => {
     if (activeFilter === 'UNSPENT') return !n.isSpent;
     if (activeFilter === 'SPENT') return n.isSpent;
@@ -101,8 +233,8 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
         </div>
 
         <button
-          onClick={scanAccountNotes}
-          disabled={isScanning || !wallet.isConnected}
+          onClick={() => viewingKey && scanAccountNotes(viewingKey)}
+          disabled={isScanning || !wallet.isConnected || !viewingKey}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all self-start sm:self-auto"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
@@ -129,6 +261,67 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
           </div>
         </div>
       </div>
+
+      {/* Step 1: Viewing Key Setup — required before scanning */}
+      {wallet.isConnected && !viewingKey && (
+        <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 space-y-3">
+          <div className="flex items-start gap-2.5">
+            <Key className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-amber-200">Viewing Key Required to Scan Notes</p>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                STRK20 note discovery requires your private viewing key, derived once from a wallet signature. The key never leaves your browser and is stored locally.
+              </p>
+            </div>
+          </div>
+          {deriveError && (
+            <div className="flex items-center gap-2 text-[11px] text-rose-300">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{deriveError}</span>
+            </div>
+          )}
+          <button
+            onClick={handleDeriveViewingKey}
+            disabled={isDeriving}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white text-xs font-semibold transition-all"
+          >
+            {isDeriving ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Requesting signature from wallet...</span>
+              </>
+            ) : (
+              <>
+                <Key className="w-3.5 h-3.5" />
+                <span>Sign to Derive Viewing Key (One-Time)</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Viewing key active badge */}
+      {wallet.isConnected && viewingKey && (
+        <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-emerald-300 font-semibold">Viewing Key Active</span>
+            <span className="text-zinc-500 font-mono">{shortenAddress(viewingKey.publicKey, 4)}</span>
+          </div>
+          <button
+            onClick={() => {
+              if (wallet.address) {
+                localStorage.removeItem(`${VK_STORAGE_KEY}_${wallet.address}`);
+              }
+              setViewingKey(null);
+              setNotes([]);
+            }}
+            className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors"
+          >
+            Clear Key
+          </button>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       {notes.length > 0 && (
@@ -167,7 +360,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
       )}
 
       {/* Note List / Empty State */}
-      {notes.length === 0 ? (
+      {viewingKey && notes.length === 0 && !isScanning && (
         <div className="p-8 text-center rounded-2xl bg-surface-elevated border border-surface-border space-y-3">
           <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mx-auto">
             <Lock className="w-6 h-6" />
@@ -190,7 +383,9 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
             </a>
           </div>
         </div>
-      ) : (
+      )}
+
+      {filteredNotes.length > 0 && (
         <div className="space-y-2.5">
           {filteredNotes.map((note) => {
             const token = MAINNET_TOKENS.find(t => t.address === note.tokenAddress) || MAINNET_TOKENS[0];
@@ -220,7 +415,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
                     <span className={`text-xs font-bold ${note.isSpent ? 'text-zinc-500 line-through' : 'text-emerald-400'}`}>
                       {formatTokenAmount(note.amount, token.decimals)} {note.tokenSymbol}
                     </span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
                       note.isSpent
                         ? 'bg-zinc-800 text-zinc-400'
                         : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'

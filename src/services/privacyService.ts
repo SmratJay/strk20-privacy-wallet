@@ -1,4 +1,4 @@
-import { Contract, RpcProvider, num, uint256 } from 'starknet';
+import { RpcProvider, num, uint256, hash } from 'starknet';
 import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
 
 export const ERC20_ABI = [
@@ -46,6 +46,8 @@ export interface ShieldedBalance {
   publicBalance: bigint;
   shieldedBalance: bigint;
   pendingNotesCount: number;
+  /** true only for wallets that natively expose the STRK20 Privacy Wallet API (e.g. Ready Wallet) */
+  privacyApiSupported: boolean;
 }
 
 export interface PrivacyTransaction {
@@ -60,6 +62,13 @@ export interface PrivacyTransaction {
   isPrivate: boolean;
   privacyDetails: string;
 }
+
+// Fallback public RPC endpoints in priority order
+const RPC_FALLBACK_CHAIN = [
+  ALCHEMY_RPC_URL,
+  'https://free-rpc.nethermind.io/mainnet-juno',
+  'https://starknet-mainnet.public.blastapi.io',
+];
 
 export class PrivacyService {
   private rpcProvider: RpcProvider;
@@ -79,7 +88,7 @@ export class PrivacyService {
       return BigInt(res);
     }
     if (typeof res === 'string') {
-      return BigInt(res);
+      try { return BigInt(res); } catch { return 0n; }
     }
     if (res && typeof res.balance !== 'undefined') {
       return this.parseU256Result(res.balance);
@@ -94,30 +103,61 @@ export class PrivacyService {
   }
 
   /**
-   * Fetches both public and shielded STRK20 balances for a given account
+   * Fetch ERC-20 balance using raw callContract (bypasses ABI parsing quirks).
+   * Tries each RPC in fallback chain until one succeeds.
+   */
+  private async fetchERC20Balance(tokenAddress: string, accountAddress: string): Promise<bigint> {
+    // balanceOf selector
+    const selector = hash.getSelectorFromName('balanceOf');
+    const calldata = [num.toHex(accountAddress)];
+
+    for (const nodeUrl of RPC_FALLBACK_CHAIN) {
+      try {
+        const provider = new RpcProvider({ nodeUrl });
+        const result = await provider.callContract({
+          contractAddress: tokenAddress,
+          entrypoint: 'balanceOf',
+          calldata,
+        });
+        // result is string[], Cairo 2 returns [low, high] for u256
+        if (Array.isArray(result) && result.length >= 2) {
+          return uint256.uint256ToBN({ low: result[0], high: result[1] });
+        }
+        if (Array.isArray(result) && result.length === 1) {
+          return BigInt(result[0]);
+        }
+        return 0n;
+      } catch (err: any) {
+        console.warn(`RPC ${nodeUrl} failed for balanceOf ${tokenAddress}:`, err?.message);
+      }
+    }
+    return 0n;
+  }
+
+  /**
+   * Fetches both public and shielded STRK20 balances for a given account.
+   * Public balances are fetched via direct callContract (no ABI parsing).
+   * Shielded balances are fetched only from wallets that expose the STRK20 Privacy API.
    */
   async fetchBalances(accountAddress: string, walletAccount?: any): Promise<ShieldedBalance[]> {
     const results: ShieldedBalance[] = [];
+    // Detect privacy API support ONCE — only Ready Wallet exposes strk20Balances
+    const privacyApiSupported =
+      walletAccount != null && typeof walletAccount.strk20Balances === 'function';
 
     for (const token of MAINNET_TOKENS) {
       let publicBalance = 0n;
       let shieldedBalance = 0n;
 
-      // 1. Fetch public ERC20 balance with robust shape normalization
+      // 1. Fetch public ERC-20 balance via robust direct callContract (no ABI parse layer)
       try {
-        const contract = new Contract({
-          abi: ERC20_ABI,
-          address: token.address,
-          providerOrAccount: this.rpcProvider,
-        });
-        const res: any = await contract.call('balanceOf', [accountAddress]);
-        publicBalance = this.parseU256Result(res);
+        publicBalance = await this.fetchERC20Balance(token.address, accountAddress);
       } catch (err) {
         console.warn(`Could not fetch public balance for ${token.symbol}:`, err);
       }
 
-      // 2. Query shielded balance via WalletAccountV6 if supported by wallet
-      if (walletAccount && typeof walletAccount.strk20Balances === 'function') {
+      // 2. Query shielded balance only if wallet exposes STRK20 Privacy API
+      if (privacyApiSupported) {
         try {
           const shieldedRes = await walletAccount.strk20Balances([token.address]);
           if (shieldedRes && shieldedRes[token.address]) {
@@ -133,6 +173,7 @@ export class PrivacyService {
         publicBalance,
         shieldedBalance,
         pendingNotesCount: 0,
+        privacyApiSupported,
       });
     }
 

@@ -45,32 +45,54 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
           </button>
         </div>
 
-        {/* Shielded Token Rows */}
-        <div className="space-y-2.5">
-          {balances.map((b) => (
-            <div
-              key={b.token.symbol}
-              className="flex items-center justify-between p-3 rounded-xl bg-surface/80 border border-surface-border/60 hover:border-emerald-500/30 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-xl">{b.token.icon}</span>
-                <div>
-                  <div className="text-sm font-semibold text-white">{b.token.symbol}</div>
-                  <div className="text-[11px] text-zinc-400">{b.token.name}</div>
-                </div>
-              </div>
-
-              <div className="text-right">
-                <div className="text-sm font-mono font-bold text-emerald-400">
-                  {formatTokenAmount(b.shieldedBalance, b.token.decimals)} {b.token.symbol}
-                </div>
-                <div className="text-[10px] text-zinc-400 font-mono">
-                  {b.shieldedBalance > 0n ? '🔒 100% Shielded' : 'No shielded notes'}
-                </div>
-              </div>
+        {/* Privacy API not available — honest empty state */}
+        {balances.length > 0 && !balances[0].privacyApiSupported ? (
+          <div className="flex flex-col items-center justify-center py-5 gap-2 text-center">
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <Lock className="w-5 h-5" />
             </div>
-          ))}
-        </div>
+            <p className="text-xs font-semibold text-zinc-200">Shielded balance requires Ready Wallet</p>
+            <p className="text-[11px] text-zinc-500 max-w-[200px]">
+              Install <span className="text-amber-400 font-mono">Ready Wallet</span> to query your encrypted UTXO notes directly. Other wallets (Argent X, Braavos) do not expose the STRK20 Privacy API.
+            </p>
+            <a
+              href="https://ready.app"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 text-[11px] text-emerald-400 hover:underline font-mono"
+            >
+              Get Ready Wallet →
+            </a>
+          </div>
+        ) : (
+          /* Shielded Token Rows */
+          <div className="space-y-2.5">
+            {balances.map((b) => (
+              <div
+                key={b.token.symbol}
+                className="flex items-center justify-between p-3 rounded-xl bg-surface/80 border border-surface-border/60 hover:border-emerald-500/30 transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">{b.token.icon}</span>
+                  <div>
+                    <div className="text-sm font-semibold text-white">{b.token.symbol}</div>
+                    <div className="text-[11px] text-zinc-400">{b.token.name}</div>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <div className="text-sm font-mono font-bold text-emerald-400">
+                    {formatTokenAmount(b.shieldedBalance, b.token.decimals)} {b.token.symbol}
+                  </div>
+                  <div className="text-[10px] text-zinc-400 font-mono">
+                    {b.shieldedBalance > 0n ? '🔒 100% Shielded' : 'No shielded notes'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
 
         {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-2 mt-4">
