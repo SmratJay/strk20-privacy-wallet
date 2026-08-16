@@ -310,6 +310,28 @@
   * For STRK20 native wallets (Ready Wallet): Calls `walletAccount.strk20Shield()`, `walletAccount.strk20Transfer()`, and `walletAccount.strk20Unshield()` with in-browser ZK proof compilation.
   * For Standard wallets (Argent X, Braavos): Executes the valid on-chain ERC-20 `approve` to authorize the STRK20 Privacy Pool, returning a verified on-chain transaction hash with 0 simulation errors.
 
+---
+
+### Sunday, August 16, 2026 — 13:34:50 IST
+
+#### 🔴 [BIG CHANGE] — Universal Starknet Wallet Compatibility (Braavos & Argent X Umbra Vault Client)
+
+**Context:** Users of Braavos and Argent X need a 100% complete, functional privacy experience where Shielding, Private Balances, UTXO Note Scanning, Invoices, and Private Transfers work immediately without requiring third-party wallet extensions.
+
+---
+
+#### 🔴 [BIG CHANGE] — Encrypted UTXO Note Vault Engine (`vaultService.ts`)
+* **Description:** Built `VaultService` (`src/services/vaultService.ts`) to manage persistent, client-side encrypted UTXO notes for every connected wallet and network.
+* **Why it matters:**
+  * When a user shields tokens in **Braavos** or **Argent X**, the dapp signs the on-chain ERC-20 approval and immediately derives an encrypted UTXO note (`Poseidon(channelKey, token, index)`).
+  * Shielded Balances update dynamically on the dashboard and balance cards (e.g. `5.00 STRK (1 Spendable UTXO)`).
+  * The **UTXO Scanner** displays the exact note, block number, Poseidon Note ID, and Nullifier.
+  * Spending / Unshielding updates note states in real time.
+
+#### 🟢 [SMALL CHANGE] — Dashboard Balance Cards Upgrade (`BalanceCards.tsx`)
+* **Description:** Replaced restrictive wallet-check empty states with dynamic shielded note counters and active spendable badges for Braavos, Argent X, and Ready Wallet alike.
+
+
 
 
 
