@@ -277,6 +277,25 @@
 #### 🟢 [SMALL CHANGE] — Seamless Component-Level Dynamic Network Integration
 * **Description:** Rewired all tabs (`ShieldTab`, `SendTab`, `UnshieldTab`, `SwapTab`, `RequestTab`, `NoteScannerTab`), modals (`PublishAddressModal`, `AuditorExportModal`), and Header with dynamic network parameters, tokens, and block explorers.
 
+---
+
+### Sunday, August 16, 2026 — 11:15:20 IST
+
+#### 🔴 [BIG CHANGE] — Real Self-Referential Invoice Deep-Links & Cartridge RPC Overhaul
+
+**Context:** Addressed user feedback regarding external URL routing in QR invoices and Sepolia balance accuracy. Replaced dead external domain redirects with live application deep links, updated official Sepolia token contracts (native Circle USDC), and switched to Cartridge high-throughput RPC infrastructure.
+
+---
+
+#### 🔴 [BIG CHANGE] — Self-Referential Invoice Payment Links (`RequestTab.tsx`, `PublishAddressModal.tsx`, `page.tsx`, `SendTab.tsx`)
+* **Description:** Completely eliminated external `orrange.xyz` payment links. Invoices and stealth payment links now use `window.location.origin` (e.g. `https://strk20-privacy.vercel.app/?tab=SEND&to=strk20:0x...&amount=25&token=STRK&network=sepolia&memo=...`).
+* **Why it matters:** Scanning or sharing an invoice now directly loads the wallet with the **Send Tab** pre-populated with recipient, token, amount, and private memo banner, ready for 1-click execution.
+
+#### 🔴 [BIG CHANGE] — Cartridge High-Throughput RPCs & Verified Sepolia Token Contracts (`networks.ts`)
+* **Description:** Switched primary RPCs to `https://api.cartridge.gg/x/starknet/mainnet` and `https://api.cartridge.gg/x/starknet/sepolia`. Updated Sepolia USDC to Circle's canonical contract `0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343`.
+* **Why it matters:** Resolved dead BlastAPI RPC failures and missing contract errors on Sepolia, restoring live, accurate balance displays for STRK, ETH, and USDC.
+
+
 
 
 
