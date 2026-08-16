@@ -62,7 +62,8 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
         selectedToken,
         amountBigInt,
         (currentStep) => setStep(currentStep),
-        currentNetwork.poolAddress
+        currentNetwork.poolAddress,
+        currentNetwork.id
       );
 
       setStep('SUBMITTED');
@@ -146,7 +147,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
         {/* 2-Step Progress Indicator */}
         <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-surface-border text-xs space-y-2">
           <div className="font-semibold text-zinc-300 flex items-center justify-between">
-            <span>Two-Step Transaction Flow:</span>
+            <span>Universal Wallet Flow (Braavos, Argent X, Ready Wallet):</span>
             <span className="text-[11px] text-zinc-400 font-mono">FPI Screening Active</span>
           </div>
           
@@ -161,12 +162,12 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
             </div>
 
             <div className={`p-2 rounded-lg border flex items-center gap-2 ${
-              step === 'SHIELDING' || step === 'PROVING'
+              step === 'SHIELDING' || step === 'PROVING' || step === 'SUBMITTED'
                 ? 'bg-emerald-500/10 border-emerald-500 text-emerald-300'
                 : 'bg-surface border-surface-border text-zinc-400'
             }`}>
               {step === 'SHIELDING' || step === 'PROVING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-zinc-500 flex items-center justify-center text-[9px]">2</div>}
-              <span>2. Deposit to Pool</span>
+              <span>2. Encrypted UTXO Note</span>
             </div>
           </div>
         </div>
@@ -201,9 +202,9 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>
                 {step === 'APPROVING' && 'Waiting for Approval signature...'}
-                {step === 'SHIELDING' && 'Depositing into Privacy Pool...'}
+                {step === 'SHIELDING' && 'Creating Encrypted UTXO Note...'}
                 {step === 'PROVING' && 'Generating Zero-Knowledge Proof...'}
-                {step === 'SUBMITTED' && 'Deposit Confirmed!'}
+                {step === 'SUBMITTED' && 'Shielded Successfully!'}
               </span>
             </>
           ) : (

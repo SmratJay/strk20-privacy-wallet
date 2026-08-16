@@ -121,7 +121,8 @@ export const SendTab: React.FC<SendTabProps> = ({
         cleanedRecipient,
         amountBigInt,
         (currentStep) => setStep(currentStep),
-        currentNetwork.poolAddress
+        currentNetwork.poolAddress,
+        currentNetwork.id
       );
 
       onSuccess(txHash, selectedToken, amount, recipient);

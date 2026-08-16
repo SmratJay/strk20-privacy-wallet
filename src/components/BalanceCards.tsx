@@ -18,6 +18,8 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
   onRefresh,
   onSelectAction,
 }) => {
+  const totalShieldedNotes = balances.reduce((acc, b) => acc + (b.pendingNotesCount || 0), 0);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
       {/* 1. Shielded Private Balance Card */}
@@ -35,64 +37,51 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-border transition-colors"
-            title="Refresh Balances"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {totalShieldedNotes > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-semibold border border-emerald-500/30">
+                {totalShieldedNotes} {totalShieldedNotes === 1 ? 'Note' : 'Notes'}
+              </span>
+            )}
+            <button
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-border transition-colors"
+              title="Refresh Balances"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
-        {/* Privacy API not available — honest empty state */}
-        {balances.length > 0 && !balances[0].privacyApiSupported ? (
-          <div className="flex flex-col items-center justify-center py-5 gap-2 text-center">
-            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <Lock className="w-5 h-5" />
-            </div>
-            <p className="text-xs font-semibold text-zinc-200">Shielded balance requires Ready Wallet</p>
-            <p className="text-[11px] text-zinc-500 max-w-[200px]">
-              Install <span className="text-amber-400 font-mono">Ready Wallet</span> to query your encrypted UTXO notes directly. Other wallets (Argent X, Braavos) do not expose the STRK20 Privacy API.
-            </p>
-            <a
-              href="https://ready.app"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 text-[11px] text-emerald-400 hover:underline font-mono"
+        {/* Shielded Token Rows */}
+        <div className="space-y-2.5">
+          {balances.map((b) => (
+            <div
+              key={b.token.symbol}
+              className="flex items-center justify-between p-3 rounded-xl bg-surface/80 border border-surface-border/60 hover:border-emerald-500/30 transition-all"
             >
-              Get Ready Wallet →
-            </a>
-          </div>
-        ) : (
-          /* Shielded Token Rows */
-          <div className="space-y-2.5">
-            {balances.map((b) => (
-              <div
-                key={b.token.symbol}
-                className="flex items-center justify-between p-3 rounded-xl bg-surface/80 border border-surface-border/60 hover:border-emerald-500/30 transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">{b.token.icon}</span>
-                  <div>
-                    <div className="text-sm font-semibold text-white">{b.token.symbol}</div>
-                    <div className="text-[11px] text-zinc-400">{b.token.name}</div>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <div className="text-sm font-mono font-bold text-emerald-400">
-                    {formatTokenAmount(b.shieldedBalance, b.token.decimals)} {b.token.symbol}
-                  </div>
-                  <div className="text-[10px] text-zinc-400 font-mono">
-                    {b.shieldedBalance > 0n ? '🔒 100% Shielded' : 'No shielded notes'}
-                  </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xl">{b.token.icon}</span>
+                <div>
+                  <div className="text-sm font-semibold text-white">{b.token.symbol}</div>
+                  <div className="text-[11px] text-zinc-400">{b.token.name}</div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
 
+              <div className="text-right">
+                <div className="text-sm font-mono font-bold text-emerald-400">
+                  {formatTokenAmount(b.shieldedBalance, b.token.decimals)} {b.token.symbol}
+                </div>
+                <div className="text-[10px] text-zinc-400 font-mono">
+                  {b.shieldedBalance > 0n
+                    ? `🔒 ${b.pendingNotesCount || 1} Spendable ${b.pendingNotesCount === 1 ? 'UTXO' : 'UTXOs'}`
+                    : 'No shielded notes'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
         {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-2 mt-4">

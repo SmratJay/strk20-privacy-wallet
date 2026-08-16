@@ -13,7 +13,11 @@ interface UnshieldTabProps {
   onSuccess: (txHash: string, token: TokenInfo, amount: string, destination: string) => void;
 }
 
-export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSuccess }) => {
+export const UnshieldTab: React.FC<UnshieldTabProps> = ({
+  balances,
+  wallet,
+  onSuccess,
+}) => {
   const { currentNetwork } = useNetwork();
   const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [destination, setDestination] = useState('');
@@ -21,7 +25,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSu
   const [step, setStep] = useState<'IDLE' | 'PROVING' | 'SUBMITTING'>('IDLE');
   const [error, setError] = useState<string | null>(null);
 
-  // Sync token selection when network changes
+  // Sync selected token when network changes
   useEffect(() => {
     const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
     setSelectedToken(matching);
@@ -75,7 +79,8 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSu
         destination.trim(),
         amountBigInt,
         (currentStep) => setStep(currentStep),
-        currentNetwork.poolAddress
+        currentNetwork.poolAddress,
+        currentNetwork.id
       );
 
       onSuccess(txHash, selectedToken, amount, destination);

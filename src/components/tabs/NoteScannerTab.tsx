@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { Lock, RefreshCw, Layers, ExternalLink, Key, AlertCircle, Loader2 } from 'lucide-react';
-import { strk20Crypto, UTXONote } from '@/services/strk20Crypto';
+import { UTXONote } from '@/services/strk20Crypto';
 import { viewingKeyService } from '@/services/viewingKeyService';
+import { vaultService } from '@/services/vaultService';
 import { formatTokenAmount, shortenAddress } from '@/utils/formatters';
-import { RpcProvider, num } from 'starknet';
+import { RpcProvider } from 'starknet';
 import { useNetwork } from '@/context/NetworkContext';
 
 interface NoteScannerTabProps {
@@ -40,18 +41,19 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
   const [isDeriving, setIsDeriving] = useState(false);
   const [deriveError, setDeriveError] = useState<string | null>(null);
 
-  // Load persisted viewing key when wallet address changes
+  // Load persisted viewing key and notes when wallet address changes
   useEffect(() => {
     if (wallet.address) {
       const cached = loadViewingKey(wallet.address);
       setViewingKey(cached);
-      setNotes([]);
+      const vaultNotes = vaultService.getNotes(wallet.address, currentNetwork.id);
+      setNotes(vaultNotes);
       setLastScannedBlock(null);
     } else {
       setViewingKey(null);
       setNotes([]);
     }
-  }, [wallet.address]);
+  }, [wallet.address, currentNetwork.id]);
 
   // Auto-scan when we have both an address and a viewing key, or when network changes
   useEffect(() => {
@@ -147,50 +149,9 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
         setLastScannedBlock(block.block_number);
       }
 
-      // Read locally recorded shielded transactions from this session
-      const savedTxs = localStorage.getItem('strk20_privacy_txs');
-      const discoveredNotes: UTXONote[] = [];
-
-      if (savedTxs) {
-        const parsedTxs: any[] = JSON.parse(savedTxs);
-        parsedTxs.forEach((tx, idx) => {
-          if (tx.type === 'SHIELD') {
-            const token = currentNetwork.tokens.find(t => t.symbol === tx.tokenSymbol) || currentNetwork.tokens[0];
-
-            const channelKey = strk20Crypto.deriveChannelKeyECDH(
-              vk.privateKey,
-              vk.publicKey,
-              wallet.address,
-              currentNetwork.poolAddress
-            );
-
-            const noteId = strk20Crypto.computeNoteId(channelKey, token.address, idx);
-            const nullifier = strk20Crypto.computeNullifier(
-              channelKey,
-              token.address,
-              idx,
-              vk.privateKey
-            );
-
-            discoveredNotes.push({
-              noteId,
-              channelKey,
-              tokenAddress: token.address,
-              tokenSymbol: token.symbol,
-              index: idx,
-              salt: num.toHex(idx * 7919 + 13),
-              amount: BigInt(Math.floor(parseFloat(tx.amount || '0') * (10 ** token.decimals))),
-              nullifier,
-              isSpent: false,
-              blockNumber: (block?.block_number || 1000) - idx,
-              timestamp: tx.timestamp || Date.now(),
-              txHash: tx.txHash,
-            });
-          }
-        });
-      }
-
-      setNotes(discoveredNotes);
+      // Load all notes from client-side encrypted vault
+      const vaultNotes = vaultService.getNotes(wallet.address, currentNetwork.id);
+      setNotes(vaultNotes);
     } catch (err) {
       console.warn('Note scanning RPC error:', err);
     } finally {
