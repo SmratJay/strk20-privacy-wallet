@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { X, Copy, Check, ShieldCheck, QrCode, Info, ExternalLink, Share2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { shortenAddress } from '@/utils/formatters';
-import { STRK20_POOL_ADDRESS } from '@/config/tokens';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface PublishAddressModalProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
   onClose,
   accountAddress,
 }) => {
+  const { currentNetwork } = useNetwork();
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [activeView, setActiveView] = useState<'CARD' | 'QR'>('CARD');
@@ -24,7 +25,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
   if (!isOpen) return null;
 
   const privacyReceiveAddress = `strk20:${accountAddress}`;
-  const shareablePaymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}`;
+  const shareablePaymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?network=${currentNetwork.id}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(privacyReceiveAddress);
@@ -49,7 +50,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white">Publish Privacy Address</h3>
-              <p className="text-xs text-zinc-400 font-mono">Umbra UX: Publish once, receive privately</p>
+              <p className="text-xs text-zinc-400 font-mono">Umbra UX: Publish once, receive privately ({currentNetwork.label})</p>
             </div>
           </div>
           <button
@@ -93,7 +94,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
               <div className="p-3 rounded-xl bg-zinc-900/60 border border-surface-border flex items-start gap-2.5 text-xs text-zinc-300">
                 <Info className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
                 <p>
-                  Share this address anywhere. When anyone pays you, the STRK20 pool creates an encrypted UTXO note directly in your channel. Observers see zero link to your identity.
+                  Share this address anywhere. When anyone pays you on {currentNetwork.name}, the STRK20 pool creates an encrypted UTXO note directly in your channel. Observers see zero link to your identity.
                 </p>
               </div>
 
@@ -137,7 +138,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
                   <span className="text-xs font-medium text-emerald-300">Viewing Key Registered in Pool</span>
                 </div>
                 <a
-                  href={`https://voyager.online/contract/${STRK20_POOL_ADDRESS}`}
+                  href={`${currentNetwork.explorerUrl}/contract/${currentNetwork.poolAddress}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 font-mono"
@@ -173,7 +174,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
 
               <div>
                 <p className="text-xs font-mono text-zinc-300 break-all">{shortenAddress(privacyReceiveAddress, 10)}</p>
-                <p className="text-[11px] text-zinc-500 mt-1">Scan with any Starknet or STRK20 camera</p>
+                <p className="text-[11px] text-zinc-500 mt-1">Scan with any Starknet or STRK20 camera ({currentNetwork.label})</p>
               </div>
 
               <button

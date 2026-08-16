@@ -1,5 +1,5 @@
 import { RpcProvider, num, uint256, hash } from 'starknet';
-import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
+import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, MAINNET_TOKENS, TokenInfo, NetworkConfig, NETWORKS } from '@/config/tokens';
 
 export const ERC20_ABI = [
   {
@@ -63,18 +63,11 @@ export interface PrivacyTransaction {
   privacyDetails: string;
 }
 
-// Fallback public RPC endpoints in priority order
-const RPC_FALLBACK_CHAIN = [
-  ALCHEMY_RPC_URL,
-  'https://free-rpc.nethermind.io/mainnet-juno',
-  'https://starknet-mainnet.public.blastapi.io',
-];
-
 export class PrivacyService {
-  private rpcProvider: RpcProvider;
+  private defaultRpcProvider: RpcProvider;
 
   constructor() {
-    this.rpcProvider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
+    this.defaultRpcProvider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
   }
 
   /**
@@ -106,12 +99,15 @@ export class PrivacyService {
    * Fetch ERC-20 balance using raw callContract (bypasses ABI parsing quirks).
    * Tries each RPC in fallback chain until one succeeds.
    */
-  private async fetchERC20Balance(tokenAddress: string, accountAddress: string): Promise<bigint> {
-    // balanceOf selector
+  private async fetchERC20Balance(
+    tokenAddress: string,
+    accountAddress: string,
+    rpcUrls: string[]
+  ): Promise<bigint> {
     const selector = hash.getSelectorFromName('balanceOf');
     const calldata = [num.toHex(accountAddress)];
 
-    for (const nodeUrl of RPC_FALLBACK_CHAIN) {
+    for (const nodeUrl of rpcUrls) {
       try {
         const provider = new RpcProvider({ nodeUrl });
         const result = await provider.callContract({
@@ -119,7 +115,7 @@ export class PrivacyService {
           entrypoint: 'balanceOf',
           calldata,
         });
-        // result is string[], Cairo 2 returns [low, high] for u256
+        // Cairo 2 returns [low, high] for u256
         if (Array.isArray(result) && result.length >= 2) {
           return uint256.uint256ToBN({ low: result[0], high: result[1] });
         }
@@ -136,22 +132,29 @@ export class PrivacyService {
 
   /**
    * Fetches both public and shielded STRK20 balances for a given account.
-   * Public balances are fetched via direct callContract (no ABI parsing).
-   * Shielded balances are fetched only from wallets that expose the STRK20 Privacy API.
+   * Dynamically adapts to the active network (Mainnet or Sepolia).
    */
-  async fetchBalances(accountAddress: string, walletAccount?: any): Promise<ShieldedBalance[]> {
+  async fetchBalances(
+    accountAddress: string,
+    walletAccount?: any,
+    network?: NetworkConfig
+  ): Promise<ShieldedBalance[]> {
+    const activeNetwork = network || NETWORKS.mainnet;
+    const tokens = activeNetwork.tokens;
+    const rpcUrls = activeNetwork.rpcUrls;
     const results: ShieldedBalance[] = [];
+
     // Detect privacy API support ONCE — only Ready Wallet exposes strk20Balances
     const privacyApiSupported =
       walletAccount != null && typeof walletAccount.strk20Balances === 'function';
 
-    for (const token of MAINNET_TOKENS) {
+    for (const token of tokens) {
       let publicBalance = 0n;
       let shieldedBalance = 0n;
 
-      // 1. Fetch public ERC-20 balance via robust direct callContract (no ABI parse layer)
+      // 1. Fetch public ERC-20 balance via direct callContract with fallback RPCs
       try {
-        publicBalance = await this.fetchERC20Balance(token.address, accountAddress);
+        publicBalance = await this.fetchERC20Balance(token.address, accountAddress, rpcUrls);
       } catch (err) {
         console.warn(`Could not fetch public balance for ${token.symbol}:`, err);
       }
@@ -183,9 +186,10 @@ export class PrivacyService {
   /**
    * Safe transaction wait with ceiling timeout per Wallet API gotchas
    */
-  async waitForTxWithTimeout(txHash: string, timeoutMs = 15000): Promise<boolean> {
+  async waitForTxWithTimeout(txHash: string, timeoutMs = 15000, rpcUrl?: string): Promise<boolean> {
     try {
-      const waitPromise = this.rpcProvider.waitForTransaction(txHash);
+      const provider = rpcUrl ? new RpcProvider({ nodeUrl: rpcUrl }) : this.defaultRpcProvider;
+      const waitPromise = provider.waitForTransaction(txHash);
       const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), timeoutMs));
       const res = await Promise.race([waitPromise, timeoutPromise]);
       return res !== 'TIMEOUT';
@@ -196,14 +200,13 @@ export class PrivacyService {
 
   /**
    * Step 1 + 2: Shield tokens into the STRK20 Privacy Pool
-   * 1. ERC20 Approve pool
-   * 2. Pool deposit invocation
    */
   async executeShield(
     walletAccount: any,
     token: TokenInfo,
     amountBigInt: bigint,
-    onStepChange?: (step: 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED') => void
+    onStepChange?: (step: 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED') => void,
+    poolAddress: string = STRK20_POOL_ADDRESS
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
@@ -224,21 +227,21 @@ export class PrivacyService {
     const approveCall = {
       contractAddress: token.address,
       entrypoint: 'approve',
-      calldata: [STRK20_POOL_ADDRESS, u256Amount.low, u256Amount.high],
+      calldata: [poolAddress, u256Amount.low, u256Amount.high],
     };
 
     onStepChange?.('SHIELDING');
     const depositCall = {
-      contractAddress: STRK20_POOL_ADDRESS,
+      contractAddress: poolAddress,
       entrypoint: 'deposit',
       calldata: [token.address, u256Amount.low, u256Amount.high],
     };
 
-    // Execute multi-call via connected account
-    const tx = await walletAccount.execute([approveCall, depositCall]);
+    const executor = walletAccount.account || walletAccount;
+    const tx = await executor.execute([approveCall, depositCall]);
     onStepChange?.('SUBMITTED');
 
-    return { txHash: tx.transaction_hash };
+    return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
   }
 
   /**
@@ -249,7 +252,8 @@ export class PrivacyService {
     token: TokenInfo,
     recipientViewingKeyOrAddress: string,
     amountBigInt: bigint,
-    onStepChange?: (step: 'PREPARING' | 'PROVING' | 'SUBMITTING') => void
+    onStepChange?: (step: 'PREPARING' | 'PROVING' | 'SUBMITTING') => void,
+    poolAddress: string = STRK20_POOL_ADDRESS
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
@@ -269,13 +273,14 @@ export class PrivacyService {
     // Fallback invocation through pool contract
     const u256Amount = uint256.bnToUint256(amountBigInt);
     const transferCall = {
-      contractAddress: STRK20_POOL_ADDRESS,
+      contractAddress: poolAddress,
       entrypoint: 'transfer',
       calldata: [token.address, recipientViewingKeyOrAddress, u256Amount.low, u256Amount.high],
     };
 
-    const tx = await walletAccount.execute([transferCall]);
-    return { txHash: tx.transaction_hash };
+    const executor = walletAccount.account || walletAccount;
+    const tx = await executor.execute([transferCall]);
+    return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
   }
 
   /**
@@ -286,7 +291,8 @@ export class PrivacyService {
     token: TokenInfo,
     destinationAddress: string,
     amountBigInt: bigint,
-    onStepChange?: (step: 'PROVING' | 'SUBMITTING') => void
+    onStepChange?: (step: 'PROVING' | 'SUBMITTING') => void,
+    poolAddress: string = STRK20_POOL_ADDRESS
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
@@ -304,13 +310,14 @@ export class PrivacyService {
 
     const u256Amount = uint256.bnToUint256(amountBigInt);
     const withdrawCall = {
-      contractAddress: STRK20_POOL_ADDRESS,
+      contractAddress: poolAddress,
       entrypoint: 'withdraw',
       calldata: [token.address, destinationAddress, u256Amount.low, u256Amount.high],
     };
 
-    const tx = await walletAccount.execute([withdrawCall]);
-    return { txHash: tx.transaction_hash };
+    const executor = walletAccount.account || walletAccount;
+    const tx = await executor.execute([withdrawCall]);
+    return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
   }
 }
 

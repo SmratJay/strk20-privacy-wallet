@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Key, ChevronDown, CheckCircle2, AlertCircle, ExternalLink, FileText } from 'lucide-react';
+import { Shield, Key, ChevronDown, CheckCircle2, AlertCircle, ExternalLink, FileText, Droplets, Sparkles } from 'lucide-react';
 import { shortenAddress } from '@/utils/formatters';
-import { STRK20_POOL_ADDRESS } from '@/config/tokens';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface HeaderProps {
   wallet: any;
@@ -12,33 +12,38 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOpenAuditorModal }) => {
+  const { currentNetwork, networkId, setNetworkId, isSepolia } = useNetwork();
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
+  const [networkDropdownOpen, setNetworkDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const networkDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on click outside or escape key
+  // Close dropdowns on click outside or escape key
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setWalletDropdownOpen(false);
+      }
+      if (networkDropdownRef.current && !networkDropdownRef.current.contains(event.target as Node)) {
+        setNetworkDropdownOpen(false);
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setWalletDropdownOpen(false);
+        setNetworkDropdownOpen(false);
       }
     };
 
-    if (walletDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleKeyDown);
-    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [walletDropdownOpen]);
+  }, []);
 
   return (
     <header className="border-b border-surface-border bg-surface/80 backdrop-blur-md sticky top-0 z-40">
@@ -47,7 +52,7 @@ export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOp
         <div className="flex items-center gap-3">
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-sky-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-lg shadow-lg shadow-emerald-500/10">
             <Shield className="w-5 h-5 text-emerald-400" />
-            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-background" />
+            <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isSepolia ? 'bg-amber-400' : 'bg-emerald-500'} ring-2 ring-background`} />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -57,23 +62,101 @@ export const Header: React.FC<HeaderProps> = ({ wallet, onOpenPublishModal, onOp
               </span>
             </div>
             <p className="text-xs text-zinc-400 font-mono flex items-center gap-1.5">
-              <span>Starknet Mainnet</span>
+              <span className={isSepolia ? 'text-amber-400 font-semibold' : 'text-zinc-300'}>
+                {currentNetwork.name}
+              </span>
               <span>•</span>
               <a
-                href={`https://voyager.online/contract/${STRK20_POOL_ADDRESS}`}
+                href={`${currentNetwork.explorerUrl}/contract/${currentNetwork.poolAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-zinc-500 hover:text-emerald-400 transition-colors flex items-center gap-0.5"
+                title={`View ${currentNetwork.name} Pool Contract`}
               >
-                <span>Pool: {shortenAddress(STRK20_POOL_ADDRESS, 3)}</span>
+                <span>Pool: {shortenAddress(currentNetwork.poolAddress, 3)}</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             </p>
           </div>
         </div>
 
-        {/* Right: Actions & Wallet */}
+        {/* Right: Actions, Network Switcher & Wallet */}
         <div className="flex items-center gap-2.5">
+          {/* Network Switcher Toggle */}
+          <div className="relative" ref={networkDropdownRef}>
+            <button
+              onClick={() => setNetworkDropdownOpen(!networkDropdownOpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-sm ${
+                isSepolia
+                  ? 'bg-amber-950/40 border-amber-500/40 text-amber-300 hover:bg-amber-900/40'
+                  : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/40'
+              }`}
+              title="Switch between Starknet Mainnet and Sepolia Testnet"
+            >
+              <span>{isSepolia ? '🧪 Sepolia' : '⚡ Mainnet'}</span>
+              <ChevronDown className="w-3 h-3 opacity-70" />
+            </button>
+
+            {networkDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-48 p-1.5 bg-surface-elevated border border-surface-border rounded-xl shadow-2xl z-50 animate-in fade-in">
+                <p className="text-[10px] font-semibold text-zinc-400 px-2 py-1 uppercase tracking-wider">
+                  Select Network
+                </p>
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setNetworkId('mainnet');
+                      setNetworkDropdownOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      networkId === 'mainnet'
+                        ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30'
+                        : 'text-zinc-300 hover:bg-surface-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>⚡</span>
+                      <span>Mainnet</span>
+                    </div>
+                    {networkId === 'mainnet' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setNetworkId('sepolia');
+                      setNetworkDropdownOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      networkId === 'sepolia'
+                        ? 'bg-amber-600/20 text-amber-300 border border-amber-500/30'
+                        : 'text-zinc-300 hover:bg-surface-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>🧪</span>
+                      <span>Sepolia Testnet</span>
+                    </div>
+                    {networkId === 'sepolia' && <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sepolia Faucet Quick Link (Visible only on Sepolia) */}
+          {isSepolia && currentNetwork.faucetUrl && (
+            <a
+              href={currentNetwork.faucetUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl hover:bg-amber-500/20 transition-all animate-pulse"
+              title="Get free Starknet Sepolia STRK & ETH testnet tokens"
+            >
+              <Droplets className="w-3.5 h-3.5 text-amber-400" />
+              <span>Get Faucet</span>
+            </a>
+          )}
+
           {/* Compliance Proof Trigger */}
           {wallet.isConnected && (
             <button

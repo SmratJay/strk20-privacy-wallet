@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeftRight, Sparkles, AlertCircle, Loader2, Info, CheckCircle2 } from 'lucide-react';
-import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
+import { ArrowLeftRight, Sparkles, AlertCircle, Loader2, Info } from 'lucide-react';
+import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
 import { avnuService, SwapQuoteResult } from '@/services/avnuService';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface SwapTabProps {
   balances: ShieldedBalance[];
@@ -14,13 +15,21 @@ interface SwapTabProps {
 }
 
 export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess }) => {
-  const [fromToken, setFromToken] = useState<TokenInfo>(MAINNET_TOKENS[0]); // STRK
-  const [toToken, setToToken] = useState<TokenInfo>(MAINNET_TOKENS[2]); // USDC
+  const { currentNetwork } = useNetwork();
+  const [fromToken, setFromToken] = useState<TokenInfo>(currentNetwork.tokens[0]); // STRK
+  const [toToken, setToToken] = useState<TokenInfo>(currentNetwork.tokens[2] || currentNetwork.tokens[1]); // USDC
   const [amount, setAmount] = useState('');
   const [quote, setQuote] = useState<SwapQuoteResult | null>(null);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync tokens when network changes
+  useEffect(() => {
+    setFromToken(currentNetwork.tokens[0]);
+    setToToken(currentNetwork.tokens[2] || currentNetwork.tokens[1]);
+    setQuote(null);
+  }, [currentNetwork]);
 
   const currentBalance = balances.find((b) => b.token.symbol === fromToken.symbol);
   const publicBal = currentBalance ? currentBalance.publicBalance : 0n;
@@ -49,7 +58,8 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           fromToken,
           toToken,
           amount,
-          wallet.address || undefined
+          wallet.address || undefined,
+          currentNetwork.avnuBaseUrl
         );
         if (active) {
           setQuote(res);
@@ -66,7 +76,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
       active = false;
       clearTimeout(timer);
     };
-  }, [fromToken, toToken, amount, wallet.address]);
+  }, [fromToken, toToken, amount, wallet.address, currentNetwork]);
 
   const handleSwap = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +106,8 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           fromToken,
           toToken,
           amount,
-          wallet.address || undefined
+          wallet.address || undefined,
+          currentNetwork.avnuBaseUrl
         );
         if (!freshQuote?.rawQuote) {
           throw new Error('Could not obtain live AVNU DEX quote for trade execution');
@@ -104,7 +115,8 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
         const { txHash } = await avnuService.executeRealSwap(
           wallet.walletAccount,
           freshQuote.rawQuote,
-          0.01 // 1% max slippage
+          0.01, // 1% max slippage
+          currentNetwork.avnuBaseUrl
         );
         setIsSwapping(false);
         onSuccess(txHash, fromToken, toToken, amount);
@@ -116,7 +128,8 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
       const { txHash } = await avnuService.executeRealSwap(
         wallet.walletAccount,
         quote.rawQuote,
-        0.01
+        0.01,
+        currentNetwork.avnuBaseUrl
       );
 
       setIsSwapping(false);
@@ -144,7 +157,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
             <span>Private Swap (AVNU SDK Router)</span>
           </h2>
           <p className="text-xs text-zinc-400">
-            Real-time Starknet DEX routing through AVNU aggregator with private note settlement
+            Real-time {currentNetwork.name} DEX routing through AVNU aggregator with private note settlement
           </p>
         </div>
       </div>
@@ -166,12 +179,12 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
             <select
               value={fromToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setFromToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2 outline-none"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>
@@ -221,12 +234,12 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
             <select
               value={toToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setToToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2 outline-none"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>
@@ -263,7 +276,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           <Info className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
           <div>
             <p>
-              AVNU aggregates Starknet DEX liquidity (Ekubo, JediSwap, 10kSwap). Open notes allow output tokens to be credited into your STRK20 channel without public recipient linkage.
+              AVNU aggregates {currentNetwork.name} DEX liquidity. Open notes allow output tokens to be credited into your STRK20 channel without public recipient linkage.
             </p>
           </div>
         </div>
@@ -288,7 +301,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
-              <span>{wallet.isConnected ? 'Execute Swap via AVNU' : 'Connect Wallet to Swap'}</span>
+              <span>{wallet.isConnected ? `Execute Swap via AVNU (${currentNetwork.label})` : 'Connect Wallet to Swap'}</span>
             </>
           )}
         </button>

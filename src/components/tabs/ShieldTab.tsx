@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Shield, ArrowDown, Info, AlertCircle, CheckCircle2, Loader2, ExternalLink } from 'lucide-react';
-import { MAINNET_TOKENS, TokenInfo, NOTE_MATURITY_BLOCKS } from '@/config/tokens';
+import React, { useState, useEffect } from 'react';
+import { Shield, Info, AlertCircle, Loader2 } from 'lucide-react';
+import { TokenInfo, NOTE_MATURITY_BLOCKS } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface ShieldTabProps {
   balances: ShieldedBalance[];
@@ -13,10 +14,17 @@ interface ShieldTabProps {
 }
 
 export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSuccess }) => {
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(MAINNET_TOKENS[0]);
+  const { currentNetwork } = useNetwork();
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'IDLE' | 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED'>('IDLE');
   const [error, setError] = useState<string | null>(null);
+
+  // Sync selected token when network changes
+  useEffect(() => {
+    const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
+    setSelectedToken(matching);
+  }, [currentNetwork]);
 
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
   const publicBal = currentBalance ? currentBalance.publicBalance : 0n;
@@ -53,7 +61,8 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
         wallet.walletAccount,
         selectedToken,
         amountBigInt,
-        (currentStep) => setStep(currentStep)
+        (currentStep) => setStep(currentStep),
+        currentNetwork.poolAddress
       );
 
       setStep('SUBMITTED');
@@ -76,7 +85,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
             <span>Shield Tokens (Public → Private)</span>
           </h2>
           <p className="text-xs text-zinc-400">
-            Deposit public ERC-20 into the STRK20 Privacy Pool as encrypted notes
+            Deposit public ERC-20 into the {currentNetwork.name} STRK20 Privacy Pool as encrypted notes
           </p>
         </div>
       </div>
@@ -99,12 +108,12 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-sky-500 transition-colors"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>

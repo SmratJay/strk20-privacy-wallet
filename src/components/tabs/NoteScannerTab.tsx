@@ -1,19 +1,18 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Eye, Lock, RefreshCw, Layers, ExternalLink, Key, AlertCircle, Loader2 } from 'lucide-react';
+import { Lock, RefreshCw, Layers, ExternalLink, Key, AlertCircle, Loader2 } from 'lucide-react';
 import { strk20Crypto, UTXONote } from '@/services/strk20Crypto';
 import { viewingKeyService } from '@/services/viewingKeyService';
-import { MAINNET_TOKENS, STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL } from '@/config/tokens';
 import { formatTokenAmount, shortenAddress } from '@/utils/formatters';
 import { RpcProvider, num } from 'starknet';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface NoteScannerTabProps {
   wallet: any;
   onShieldRedirect?: () => void;
 }
 
-// localStorage key for per-address viewing key cache
 const VK_STORAGE_KEY = 'strk20_viewing_key';
 
 function loadViewingKey(address: string): { privateKey: string; publicKey: string } | null {
@@ -31,7 +30,8 @@ function saveViewingKey(address: string, vk: { privateKey: string; publicKey: st
   } catch {}
 }
 
-export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShieldRedirect }) => {
+export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
+  const { currentNetwork } = useNetwork();
   const [isScanning, setIsScanning] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'UNSPENT' | 'SPENT'>('ALL');
   const [notes, setNotes] = useState<UTXONote[]>([]);
@@ -53,31 +53,23 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
     }
   }, [wallet.address]);
 
-  // Auto-scan when we have both an address and a viewing key
+  // Auto-scan when we have both an address and a viewing key, or when network changes
   useEffect(() => {
     if (wallet.address && viewingKey) {
       scanAccountNotes(viewingKey);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet.address, viewingKey]);
+  }, [wallet.address, viewingKey, currentNetwork]);
 
-  /**
-   * Step 1 — Derive viewing key from wallet signature.
-   * The user signs a deterministic off-chain message; we hash it into a STARK private key.
-   * This is the only way to get a consistent channel key for note discovery.
-   */
   const handleDeriveViewingKey = async () => {
     if (!wallet.rawWallet || !wallet.address) return;
     setIsDeriving(true);
     setDeriveError(null);
 
     try {
-      const msgHash =
-        '0x5354524b32305f56494557494e475f4b455953455455503a5631'; // "STRK20_VIEWING_KEYSETUP:V1"
-
+      const msgHash = '0x5354524b32305f56494557494e475f4b455953455455503a5631';
       let signatureResult: string[] | null = null;
 
-      // Try wallet_signMessage (Starknet Wallet API v0.7+)
       const provider = wallet.rawWallet;
       if (provider.request) {
         try {
@@ -97,7 +89,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
                 domain: {
                   name: 'STRK20 Privacy Wallet',
                   version: '1',
-                  chainId: 'SN_MAIN',
+                  chainId: currentNetwork.chainId,
                 },
                 message: {
                   action: 'Derive Viewing Key',
@@ -112,7 +104,6 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
         }
       }
 
-      // Fallback: use signMessage on the account if available
       if (!signatureResult && wallet.walletAccount?.signer?.signMessage) {
         try {
           const sig = await wallet.walletAccount.signer.signMessage(msgHash);
@@ -122,9 +113,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
         }
       }
 
-      // Last resort: derive deterministically from address (weaker but functional)
       const signatureFelt = signatureResult?.[0] ?? wallet.address;
-
       const derived = viewingKeyService.deriveViewingKeyFromSignature(signatureFelt);
       const vk = { privateKey: derived.privateViewingKey, publicKey: derived.publicViewingKey };
 
@@ -138,25 +127,25 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
     }
   };
 
-  /**
-   * Scan local session notes using the real viewing private key for channel key derivation.
-   * Channel key = Poseidon(CHANNEL_KEY_TAG, ECDH(vk_priv, pool_pub_x), sender, recipient)
-   */
   const scanAccountNotes = async (vk: { privateKey: string; publicKey: string }) => {
     if (!wallet.address) return;
 
     setIsScanning(true);
     try {
-      const provider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
-      let block: any;
-      try {
-        block = await provider.getBlock('latest');
-      } catch {
-        // Fallback to nethermind if Alchemy is not configured
-        const fallback = new RpcProvider({ nodeUrl: 'https://free-rpc.nethermind.io/mainnet-juno' });
-        block = await fallback.getBlock('latest');
+      let block: any = null;
+      for (const nodeUrl of currentNetwork.rpcUrls) {
+        try {
+          const provider = new RpcProvider({ nodeUrl });
+          block = await provider.getBlock('latest');
+          if (block) break;
+        } catch {
+          // try next RPC
+        }
       }
-      setLastScannedBlock(block.block_number);
+
+      if (block) {
+        setLastScannedBlock(block.block_number);
+      }
 
       // Read locally recorded shielded transactions from this session
       const savedTxs = localStorage.getItem('strk20_privacy_txs');
@@ -166,15 +155,13 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
         const parsedTxs: any[] = JSON.parse(savedTxs);
         parsedTxs.forEach((tx, idx) => {
           if (tx.type === 'SHIELD') {
-            const token = MAINNET_TOKENS.find(t => t.symbol === tx.tokenSymbol) || MAINNET_TOKENS[0];
+            const token = currentNetwork.tokens.find(t => t.symbol === tx.tokenSymbol) || currentNetwork.tokens[0];
 
-            // Derive channel key properly: ECDH(viewing_private_key, pool_public_key)
-            // Pool address is treated as the counterparty public key in the directional channel
             const channelKey = strk20Crypto.deriveChannelKeyECDH(
-              vk.privateKey,          // ← Actual viewing private key scalar
-              vk.publicKey,           // ← Our own viewing public key as recipient pub
-              wallet.address,         // ← sender
-              STRK20_POOL_ADDRESS     // ← recipient (pool)
+              vk.privateKey,
+              vk.publicKey,
+              wallet.address,
+              currentNetwork.poolAddress
             );
 
             const noteId = strk20Crypto.computeNoteId(channelKey, token.address, idx);
@@ -182,7 +169,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
               channelKey,
               token.address,
               idx,
-              vk.privateKey  // ← Use viewing private key as owner key for nullifier
+              vk.privateKey
             );
 
             discoveredNotes.push({
@@ -195,7 +182,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
               amount: BigInt(Math.floor(parseFloat(tx.amount || '0') * (10 ** token.decimals))),
               nullifier,
               isSpent: false,
-              blockNumber: block.block_number - idx,
+              blockNumber: (block?.block_number || 1000) - idx,
               timestamp: tx.timestamp || Date.now(),
               txHash: tx.txHash,
             });
@@ -228,7 +215,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
             <span>UTXO Channel & Note Inspector</span>
           </h2>
           <p className="text-xs text-zinc-400">
-            Scans your directional subchannels in STRK20 pool WriteOnce storage.
+            Scans your directional subchannels in {currentNetwork.name} STRK20 pool WriteOnce storage.
           </p>
         </div>
 
@@ -255,14 +242,14 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
           <div className="text-emerald-400 font-bold text-sm mt-0.5">{totalUnspentCount} Notes</div>
         </div>
         <div className="p-3 rounded-xl bg-surface-elevated border border-surface-border">
-          <span className="text-zinc-500 text-[10px] uppercase">Latest Block</span>
+          <span className="text-zinc-500 text-[10px] uppercase">Latest Block ({currentNetwork.label})</span>
           <div className="text-sky-400 font-bold text-sm mt-0.5">
             {lastScannedBlock ? `#${lastScannedBlock}` : 'Ready'}
           </div>
         </div>
       </div>
 
-      {/* Step 1: Viewing Key Setup — required before scanning */}
+      {/* Step 1: Viewing Key Setup */}
       {wallet.isConnected && !viewingKey && (
         <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 space-y-3">
           <div className="flex items-start gap-2.5">
@@ -366,19 +353,19 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
             <Lock className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">No Encrypted Notes Found for Account</h3>
+            <h3 className="text-sm font-bold text-white">No Encrypted Notes Found on {currentNetwork.name}</h3>
             <p className="text-xs text-zinc-400 max-w-md mx-auto mt-1">
               Deposit (shield) tokens into the STRK20 pool to create your first encrypted UTXO note.
             </p>
           </div>
           <div className="pt-2">
             <a
-              href={`https://voyager.online/contract/${STRK20_POOL_ADDRESS}`}
+              href={`${currentNetwork.explorerUrl}/contract/${currentNetwork.poolAddress}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-sky-400 hover:underline font-mono"
             >
-              <span>Verify STRK20 Pool On-Chain</span>
+              <span>Verify STRK20 Pool On {currentNetwork.name}</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
@@ -388,7 +375,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
       {filteredNotes.length > 0 && (
         <div className="space-y-2.5">
           {filteredNotes.map((note) => {
-            const token = MAINNET_TOKENS.find(t => t.address === note.tokenAddress) || MAINNET_TOKENS[0];
+            const token = currentNetwork.tokens.find(t => t.address === note.tokenAddress) || currentNetwork.tokens[0];
             return (
               <div
                 key={note.noteId}
@@ -439,7 +426,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet, onShield
                 {note.txHash && (
                   <div className="pt-2 text-right">
                     <a
-                      href={`https://voyager.online/tx/${note.txHash}`}
+                      href={`${currentNetwork.explorerUrl}/tx/${note.txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-[10px] text-zinc-500 hover:text-sky-400 inline-flex items-center gap-1 font-mono"

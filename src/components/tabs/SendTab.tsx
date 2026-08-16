@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2, Check } from 'lucide-react';
-import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
+import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2 } from 'lucide-react';
+import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
 import { viewingKeyService, SavedContact } from '@/services/viewingKeyService';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface SendTabProps {
   balances: ShieldedBalance[];
@@ -14,7 +15,8 @@ interface SendTabProps {
 }
 
 export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess }) => {
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(MAINNET_TOKENS[0]);
+  const { currentNetwork } = useNetwork();
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'IDLE' | 'PREPARING' | 'PROVING' | 'SUBMITTING'>('IDLE');
@@ -30,6 +32,12 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
     setContacts(viewingKeyService.getContacts());
   }, []);
 
+  // Sync token selection when network changes
+  useEffect(() => {
+    const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
+    setSelectedToken(matching);
+  }, [currentNetwork]);
+
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
   const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
 
@@ -41,7 +49,7 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
 
   const handleSaveCurrentContact = () => {
     if (!newContactName.trim() || !recipient.trim()) return;
-    const saved = viewingKeyService.saveContact(newContactName, recipient);
+    viewingKeyService.saveContact(newContactName, recipient);
     setContacts(viewingKeyService.getContacts());
     setNewContactName('');
     setIsAddingContact(false);
@@ -88,7 +96,8 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
         selectedToken,
         cleanedRecipient,
         amountBigInt,
-        (currentStep) => setStep(currentStep)
+        (currentStep) => setStep(currentStep),
+        currentNetwork.poolAddress
       );
 
       onSuccess(txHash, selectedToken, amount, recipient);
@@ -111,7 +120,7 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
             <span>Private Transfer (Encrypted UTXO)</span>
           </h2>
           <p className="text-xs text-zinc-400">
-            Transfer shielded funds with zero on-chain sender, recipient, or amount trail
+            Transfer shielded funds on {currentNetwork.name} with zero on-chain sender or amount trail
           </p>
         </div>
 
@@ -228,12 +237,12 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-emerald-500 transition-colors"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>

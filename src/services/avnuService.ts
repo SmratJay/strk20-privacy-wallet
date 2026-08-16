@@ -19,19 +19,21 @@ export class AvnuService {
     sellToken: TokenInfo,
     buyToken: TokenInfo,
     amountStr: string,
-    takerAddress?: string
+    takerAddress?: string,
+    avnuBaseUrl?: string
   ): Promise<SwapQuoteResult | null> {
     if (!amountStr || parseFloat(amountStr) <= 0) return null;
 
     try {
       const sellAmountBigInt = parseTokenAmount(amountStr, sellToken.decimals);
+      const avnuOptions = avnuBaseUrl ? { baseUrl: avnuBaseUrl } : undefined;
       
       const quotes = await getQuotes({
         sellTokenAddress: sellToken.address,
         buyTokenAddress: buyToken.address,
         sellAmount: sellAmountBigInt,
         takerAddress: takerAddress || STRK20_POOL_ADDRESS,
-      });
+      }, avnuOptions);
 
       if (quotes && quotes.length > 0) {
         const best = quotes[0];
@@ -54,7 +56,7 @@ export class AvnuService {
       console.warn('Live AVNU quote error:', err);
     }
 
-    // Fallback market estimation if rate limited
+    // Fallback market estimation if rate limited or on testnet
     const mockRates: Record<string, Record<string, number>> = {
       STRK: { USDC: 0.38, USDT: 0.38, ETH: 0.00014 },
       ETH: { STRK: 7140, USDC: 2715, USDT: 2715 },
@@ -81,7 +83,8 @@ export class AvnuService {
   async executeRealSwap(
     walletAccount: any,
     quote: Quote,
-    slippage: number = 0.01 // 1% default slippage
+    slippage: number = 0.01, // 1% default slippage
+    avnuBaseUrl?: string
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
@@ -95,21 +98,20 @@ export class AvnuService {
       throw new Error('Could not resolve wallet address for swap execution');
     }
 
-    // 1. Build swap calls through AVNU router
-    // quoteToCalls takes QuoteToCallsParams: { quoteId, slippage, takerAddress, executeApprove }
+    // 1. Build swap calls through AVNU router with network options
+    const avnuOptions = avnuBaseUrl ? { baseUrl: avnuBaseUrl } : undefined;
     const callsResponse = await quoteToCalls({
       quoteId: quote.quoteId,
       slippage,
       takerAddress,
       executeApprove: true,
-    });
+    }, avnuOptions);
 
     if (!callsResponse || !callsResponse.calls || callsResponse.calls.length === 0) {
       throw new Error('Could not generate swap calls from AVNU router');
     }
 
     // 2. Submit multi-call transaction via connected wallet account
-    // The execute method lives on the account object (may be nested)
     const executor = walletAccount.account || walletAccount;
     if (typeof executor.execute !== 'function') {
       throw new Error('Connected wallet does not support transaction execution');

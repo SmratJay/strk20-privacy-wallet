@@ -2,9 +2,8 @@
 
 import React, { useState } from 'react';
 import { X, Check, Copy, FileText, Info, ExternalLink } from 'lucide-react';
-import { shortenAddress } from '@/utils/formatters';
-import { STRK20_POOL_ADDRESS } from '@/config/tokens';
 import { strk20Crypto } from '@/services/strk20Crypto';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface AuditorExportModalProps {
   isOpen: boolean;
@@ -17,6 +16,7 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
   onClose,
   accountAddress,
 }) => {
+  const { currentNetwork } = useNetwork();
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -24,7 +24,7 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
   // Derive real domain-separated Poseidon commitment for auditor key escrow
   const escrowedBlob = strk20Crypto.computeAuditorEscrowCommitment(
     accountAddress,
-    STRK20_POOL_ADDRESS
+    currentNetwork.poolAddress
   );
 
   const handleCopy = () => {
@@ -44,7 +44,7 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white">Selective Disclosure Protocol</h3>
-              <p className="text-xs text-zinc-400 font-mono">STRK20 Viewing Key Escrow Commitment</p>
+              <p className="text-xs text-zinc-400 font-mono">STRK20 Viewing Key Escrow Commitment ({currentNetwork.label})</p>
             </div>
           </div>
           <button

@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Copy, Check, Share2, Sparkles } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
+import { TokenInfo } from '@/config/tokens';
 import { shortenAddress } from '@/utils/formatters';
 import { useToast } from '@/components/Toast';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface RequestTabProps {
   wallet: any;
@@ -13,13 +14,19 @@ interface RequestTabProps {
 
 export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
   const { showToast } = useToast();
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(MAINNET_TOKENS[0]);
+  const { currentNetwork, isSepolia } = useNetwork();
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [amount, setAmount] = useState('25');
   const [memo, setMemo] = useState('Payment for Dev Services');
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
+    setSelectedToken(matching);
+  }, [currentNetwork]);
+
   const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
-  const paymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?token=${selectedToken.symbol}&amount=${amount}&memo=${encodeURIComponent(memo)}`;
+  const paymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(paymentLink);
@@ -27,7 +34,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
     showToast({
       type: 'success',
       title: 'Stealth Link Copied',
-      description: 'Share this link with anyone to receive private payment',
+      description: `Share this link with anyone to receive private payment on ${currentNetwork.name}`,
     });
     setTimeout(() => setCopied(false), 2000);
   };
@@ -40,7 +47,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
           <span>Stealth Payment Request (Invoice)</span>
         </h2>
         <p className="text-xs text-zinc-400">
-          Generate a dynamic QR invoice. Payments deposit directly into your STRK20 encrypted pool channel.
+          Generate a dynamic QR invoice on {currentNetwork.name}. Payments deposit directly into your STRK20 encrypted channel.
         </p>
       </div>
 
@@ -49,18 +56,19 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
         <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-3">
           <div className="flex items-center justify-between text-xs text-zinc-400">
             <span>Requested Asset & Amount</span>
+            {isSepolia && <span className="text-[11px] text-amber-400 font-mono">🧪 Sepolia Testnet</span>}
           </div>
 
           <div className="flex items-center gap-3">
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>

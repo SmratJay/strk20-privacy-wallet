@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, ArrowUpRight, ArrowDownLeft, ArrowLeftRight, History, Sparkles, Key, Lock, EyeOff, Layers, FileText, QrCode } from 'lucide-react';
+import { Shield, ArrowUpRight, ArrowDownLeft, History, Sparkles, Layers, QrCode } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { PrivacyBanner } from '@/components/PrivacyBanner';
 import { BalanceCards } from '@/components/BalanceCards';
@@ -17,19 +17,21 @@ import { HistoryTab } from '@/components/tabs/HistoryTab';
 import { PublishAddressModal } from '@/components/PublishAddressModal';
 import { AuditorExportModal } from '@/components/AuditorExportModal';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
-import { MAINNET_TOKENS, TokenInfo, STRK20_POOL_ADDRESS } from '@/config/tokens';
+import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/privacyService';
 import { useToast } from '@/components/Toast';
+import { NetworkProvider, useNetwork } from '@/context/NetworkContext';
 
-export default function Home() {
+function WalletApp() {
   const wallet = useStarknetWallet();
   const { showToast } = useToast();
+  const { currentNetwork, isSepolia } = useNetwork();
   const [activeTab, setActiveTab] = useState<'SHIELD' | 'SEND' | 'REQUEST' | 'UNSHIELD' | 'SWAP' | 'SCANNER' | 'HISTORY'>('SHIELD');
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isAuditorModalOpen, setIsAuditorModalOpen] = useState(false);
   
   const [balances, setBalances] = useState<ShieldedBalance[]>(
-    MAINNET_TOKENS.map((token) => ({
+    currentNetwork.tokens.map((token) => ({
       token,
       publicBalance: 0n,
       shieldedBalance: 0n,
@@ -62,25 +64,39 @@ export default function Home() {
     }
   };
 
-  // Fetch balances when wallet connects or changes
+  // Fetch balances when wallet connects or network changes
   const refreshBalances = useCallback(async () => {
     if (!wallet.address) return;
     setIsLoadingBalances(true);
     try {
-      const updated = await privacyService.fetchBalances(wallet.address, wallet.walletAccount);
+      const updated = await privacyService.fetchBalances(
+        wallet.address,
+        wallet.walletAccount,
+        currentNetwork
+      );
       setBalances(updated);
     } catch (err) {
       console.error('Balance fetch failed:', err);
     } finally {
       setIsLoadingBalances(false);
     }
-  }, [wallet.address, wallet.walletAccount]);
+  }, [wallet.address, wallet.walletAccount, currentNetwork]);
 
   useEffect(() => {
     if (wallet.isConnected && wallet.address) {
       refreshBalances();
+    } else {
+      setBalances(
+        currentNetwork.tokens.map((token) => ({
+          token,
+          publicBalance: 0n,
+          shieldedBalance: 0n,
+          pendingNotesCount: 0,
+          privacyApiSupported: false,
+        }))
+      );
     }
-  }, [wallet.isConnected, wallet.address, refreshBalances]);
+  }, [wallet.isConnected, wallet.address, refreshBalances, currentNetwork]);
 
   // Handlers for completed operations
   const handleShieldSuccess = (txHash: string, token: TokenInfo, amount: string) => {
@@ -93,14 +109,14 @@ export default function Home() {
       amount,
       status: 'CONFIRMED',
       isPrivate: true,
-      privacyDetails: `Deposited public ${token.symbol} into encrypted STRK20 note`,
+      privacyDetails: `Deposited ${amount} ${token.symbol} into ${currentNetwork.name} STRK20 pool note`,
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
     showToast({
       type: 'success',
       title: 'Tokens Shielded Successfully',
-      description: `Deposited ${amount} ${token.symbol} into STRK20 pool encrypted note`,
+      description: `Deposited ${amount} ${token.symbol} into STRK20 pool note (${currentNetwork.label})`,
     });
   };
 
@@ -115,7 +131,7 @@ export default function Home() {
       recipient,
       status: 'CONFIRMED',
       isPrivate: true,
-      privacyDetails: `Encrypted transfer inside pool (sender & recipient hidden)`,
+      privacyDetails: `Encrypted transfer on ${currentNetwork.name} (sender & recipient hidden)`,
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
@@ -137,14 +153,14 @@ export default function Home() {
       recipient: destination,
       status: 'CONFIRMED',
       isPrivate: false,
-      privacyDetails: `Withdrew private note to public address ${destination.slice(0, 6)}...`,
+      privacyDetails: `Withdrew private note to public address ${destination.slice(0, 6)}... on ${currentNetwork.name}`,
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
     showToast({
       type: 'info',
       title: 'Unshield Withdrawal Executed',
-      description: `Withdrew ${amount} ${token.symbol} to public address`,
+      description: `Withdrew ${amount} ${token.symbol} to public address (${currentNetwork.label})`,
     });
   };
 
@@ -158,7 +174,7 @@ export default function Home() {
       amount,
       status: 'CONFIRMED',
       isPrivate: true,
-      privacyDetails: `AVNU private swap credited to fresh encrypted note`,
+      privacyDetails: `AVNU private swap on ${currentNetwork.name}`,
     };
     saveTransactions([newTx, ...transactions]);
     refreshBalances();
@@ -180,6 +196,28 @@ export default function Home() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8">
+        {/* Network Banner for Sepolia Testnet */}
+        {isSepolia && (
+          <div className="mb-5 p-3 rounded-2xl bg-amber-950/30 border border-amber-500/30 flex items-center justify-between text-xs text-amber-300">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🧪</span>
+              <span>
+                <strong>Sepolia Testnet Active:</strong> You are testing with free testnet tokens. No real funds are used.
+              </span>
+            </div>
+            {currentNetwork.faucetUrl && (
+              <a
+                href={currentNetwork.faucetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold underline hover:text-amber-200"
+              >
+                Get Sepolia Faucet →
+              </a>
+            )}
+          </div>
+        )}
+
         {/* Network & Proof Metrics */}
         <PoolMetrics />
 
@@ -405,5 +443,13 @@ export default function Home() {
         />
       )}
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <NetworkProvider>
+      <WalletApp />
+    </NetworkProvider>
   );
 }

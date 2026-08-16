@@ -1,24 +1,27 @@
 'use client';
 
 import React from 'react';
-import { Activity, ShieldCheck, Cpu, Database, CheckCircle2 } from 'lucide-react';
-import { STRK20_POOL_ADDRESS, CHAIN_ID } from '@/config/tokens';
-import { shortenAddress } from '@/utils/formatters';
+import { Activity, ShieldCheck, Cpu, Database } from 'lucide-react';
+import { useNetwork } from '@/context/NetworkContext';
 
 export const PoolMetrics: React.FC = () => {
+  const { currentNetwork, isSepolia } = useNetwork();
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
       {/* Metric 1: Pool Status */}
       <div className="p-3.5 rounded-xl bg-surface border border-surface-border flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+        <div className={`p-2 rounded-lg ${isSepolia ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
           <Activity className="w-4 h-4" />
         </div>
         <div>
           <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className={`w-1.5 h-1.5 rounded-full ${isSepolia ? 'bg-amber-400' : 'bg-emerald-400'} animate-pulse`} />
             <span className="text-[11px] font-semibold text-zinc-300">STRK20 Pool</span>
           </div>
-          <p className="text-xs font-mono font-bold text-white mt-0.5">{CHAIN_ID} Live</p>
+          <p className={`text-xs font-mono font-bold mt-0.5 ${isSepolia ? 'text-amber-300' : 'text-white'}`}>
+            {currentNetwork.label} Active
+          </p>
         </div>
       </div>
 

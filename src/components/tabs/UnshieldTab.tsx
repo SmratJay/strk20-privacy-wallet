@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowDownLeft, Info, AlertCircle, Loader2 } from 'lucide-react';
-import { MAINNET_TOKENS, TokenInfo } from '@/config/tokens';
+import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
+import { useNetwork } from '@/context/NetworkContext';
 
 interface UnshieldTabProps {
   balances: ShieldedBalance[];
@@ -13,11 +14,18 @@ interface UnshieldTabProps {
 }
 
 export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSuccess }) => {
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(MAINNET_TOKENS[0]);
+  const { currentNetwork } = useNetwork();
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [destination, setDestination] = useState('');
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'IDLE' | 'PROVING' | 'SUBMITTING'>('IDLE');
   const [error, setError] = useState<string | null>(null);
+
+  // Sync token selection when network changes
+  useEffect(() => {
+    const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
+    setSelectedToken(matching);
+  }, [currentNetwork]);
 
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
   const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
@@ -66,7 +74,8 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSu
         selectedToken,
         destination.trim(),
         amountBigInt,
-        (currentStep) => setStep(currentStep)
+        (currentStep) => setStep(currentStep),
+        currentNetwork.poolAddress
       );
 
       onSuccess(txHash, selectedToken, amount, destination);
@@ -88,7 +97,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSu
             <span>Unshield Tokens (Private → Public)</span>
           </h2>
           <p className="text-xs text-zinc-400">
-            Withdraw private pool notes back to any public Starknet address
+            Withdraw private {currentNetwork.name} pool notes back to any public Starknet address
           </p>
         </div>
       </div>
@@ -135,12 +144,12 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({ balances, wallet, onSu
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
-                const found = MAINNET_TOKENS.find((t) => t.symbol === e.target.value);
+                const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
               className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 transition-colors"
             >
-              {MAINNET_TOKENS.map((t) => (
+              {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
                   {t.icon} {t.symbol}
                 </option>
