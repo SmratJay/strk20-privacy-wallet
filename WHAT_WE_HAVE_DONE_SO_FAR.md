@@ -257,6 +257,27 @@
 * **Description:** Replaced the incorrect `deriveChannelKeyECDH(wallet.address, STRK20_POOL_ADDRESS, ...)` call (which passed a public address as a private key scalar) with `deriveChannelKeyECDH(vk.privateKey, vk.publicKey, wallet.address, STRK20_POOL_ADDRESS)`.
 * **Why it matters:** The ECDH function requires a private key scalar as the first argument. Passing a public address string caused the STARK curve multiplication to either throw or silently fall through to the deterministic fallback, producing Note IDs that never match real pool notes.
 
+---
+
+### Sunday, August 16, 2026 — 09:09:15 IST
+
+#### 🔴 [BIG CHANGE] — Dynamic Starknet Mainnet ↔ Sepolia Testnet Toggle & Faucet Integration
+
+**Context:** Enabled dual-network support allowing developers and hackathon judges to thoroughly test all features (Shielding, Private Transfers, Dynamic QR Invoices, Unshielding, AVNU DEX Swaps, Note Scanning) on **Starknet Sepolia Testnet** using free faucet tokens before switching to **Mainnet**.
+
+---
+
+#### 🔴 [BIG CHANGE] — Network Architecture & Context System (`networks.ts`, `NetworkContext.tsx`)
+* **Description:** Built a global `NetworkProvider` and `useNetwork()` hook providing instant, sticky network switching with `localStorage` persistence.
+* **Detailed Technical Explanation:**
+  * **Mainnet Pool:** `0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a` (Voyager Explorer, Mainnet AVNU router `https://starknet.api.avnu.fi`).
+  * **Sepolia Pool:** `0x254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91` (Sepolia Voyager Explorer, Sepolia AVNU router `https://sepolia.api.avnu.fi`).
+  * Includes integrated link to the official Sepolia faucet (`https://starknet-faucet.vercel.app`).
+
+#### 🟢 [SMALL CHANGE] — Seamless Component-Level Dynamic Network Integration
+* **Description:** Rewired all tabs (`ShieldTab`, `SendTab`, `UnshieldTab`, `SwapTab`, `RequestTab`, `NoteScannerTab`), modals (`PublishAddressModal`, `AuditorExportModal`), and Header with dynamic network parameters, tokens, and block explorers.
+
+
 
 
 
