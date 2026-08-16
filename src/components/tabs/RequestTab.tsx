@@ -19,6 +19,13 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
   const [amount, setAmount] = useState('25');
   const [memo, setMemo] = useState('Payment for Dev Services');
   const [copied, setCopied] = useState(false);
+  const [origin, setOrigin] = useState('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setOrigin(window.location.origin);
+    }
+  }, []);
 
   useEffect(() => {
     const matching = currentNetwork.tokens.find(t => t.symbol === selectedToken.symbol) || currentNetwork.tokens[0];
@@ -26,7 +33,10 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
   }, [currentNetwork]);
 
   const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
-  const paymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`;
+  
+  // Clean, self-referential payment URL that deep-links directly into our wallet app
+  const baseUrl = origin || 'https://strk20-privacy.vercel.app';
+  const paymentLink = `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(paymentLink);

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Copy, Check, ShieldCheck, QrCode, Info, ExternalLink, Share2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { shortenAddress } from '@/utils/formatters';
@@ -21,11 +21,19 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [activeView, setActiveView] = useState<'CARD' | 'QR'>('CARD');
+  const [origin, setOrigin] = useState('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setOrigin(window.location.origin);
+    }
+  }, []);
 
   if (!isOpen) return null;
 
   const privacyReceiveAddress = `strk20:${accountAddress}`;
-  const shareablePaymentLink = `https://orrange.xyz/pay/${privacyReceiveAddress}?network=${currentNetwork.id}`;
+  const baseUrl = origin || 'https://strk20-privacy.vercel.app';
+  const shareablePaymentLink = `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&network=${currentNetwork.id}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(privacyReceiveAddress);
@@ -117,7 +125,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-zinc-400 flex items-center justify-between">
                   <span>Shareable Payment Link</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">orrange.xyz</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">App Deep Link</span>
                 </label>
                 <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface border border-surface-border font-mono text-xs text-zinc-400 break-all">
                   <span className="flex-1 truncate">{shareablePaymentLink}</span>

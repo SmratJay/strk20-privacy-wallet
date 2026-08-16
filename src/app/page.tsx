@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { Shield, ArrowUpRight, ArrowDownLeft, History, Sparkles, Layers, QrCode } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { PrivacyBanner } from '@/components/PrivacyBanner';
@@ -22,13 +22,19 @@ import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/
 import { useToast } from '@/components/Toast';
 import { NetworkProvider, useNetwork } from '@/context/NetworkContext';
 
-function WalletApp() {
+function WalletAppContent() {
   const wallet = useStarknetWallet();
   const { showToast } = useToast();
-  const { currentNetwork, isSepolia } = useNetwork();
+  const { currentNetwork, networkId, setNetworkId, isSepolia } = useNetwork();
   const [activeTab, setActiveTab] = useState<'SHIELD' | 'SEND' | 'REQUEST' | 'UNSHIELD' | 'SWAP' | 'SCANNER' | 'HISTORY'>('SHIELD');
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isAuditorModalOpen, setIsAuditorModalOpen] = useState(false);
+
+  // Deep-link / invoice pre-fill state
+  const [initialRecipient, setInitialRecipient] = useState('');
+  const [initialTokenSymbol, setInitialTokenSymbol] = useState('');
+  const [initialAmount, setInitialAmount] = useState('');
+  const [initialMemo, setInitialMemo] = useState('');
   
   const [balances, setBalances] = useState<ShieldedBalance[]>(
     currentNetwork.tokens.map((token) => ({
@@ -41,6 +47,43 @@ function WalletApp() {
   );
   const [isLoadingBalances, setIsLoadingBalances] = useState(false);
   const [transactions, setTransactions] = useState<PrivacyTransaction[]>([]);
+
+  // Parse URL search parameters on client mount for Invoice Deep-Links
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      const networkParam = urlParams.get('network');
+      const toParam = urlParams.get('to');
+      const tokenParam = urlParams.get('token');
+      const amountParam = urlParams.get('amount');
+      const memoParam = urlParams.get('memo');
+
+      if (networkParam && (networkParam === 'mainnet' || networkParam === 'sepolia')) {
+        setNetworkId(networkParam);
+      }
+
+      if (toParam) setInitialRecipient(decodeURIComponent(toParam));
+      if (tokenParam) setInitialTokenSymbol(tokenParam);
+      if (amountParam) setInitialAmount(amountParam);
+      if (memoParam) setInitialMemo(decodeURIComponent(memoParam));
+
+      if (tabParam === 'SEND' || toParam) {
+        setActiveTab('SEND');
+        if (memoParam) {
+          showToast({
+            type: 'info',
+            title: 'Invoice Loaded',
+            description: `Payment request for ${amountParam || ''} ${tokenParam || 'tokens'} pre-filled.`,
+          });
+        }
+      }
+    } catch {
+      // Ignore URL parse issues
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load transaction history from localStorage on client load
   useEffect(() => {
@@ -336,6 +379,10 @@ function WalletApp() {
             <SendTab
               balances={balances}
               wallet={wallet}
+              initialRecipient={initialRecipient}
+              initialTokenSymbol={initialTokenSymbol}
+              initialAmount={initialAmount}
+              initialMemo={initialMemo}
               onSuccess={handleSendSuccess}
             />
           )}
@@ -449,7 +496,9 @@ function WalletApp() {
 export default function Home() {
   return (
     <NetworkProvider>
-      <WalletApp />
+      <Suspense fallback={<div className="min-h-screen bg-background text-zinc-400 flex items-center justify-center font-mono">Loading Privacy Wallet...</div>}>
+        <WalletAppContent />
+      </Suspense>
     </NetworkProvider>
   );
 }

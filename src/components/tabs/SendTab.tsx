@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Lock, UserCheck, AlertCircle, Loader2, Sparkles, Plus, BookOpen, Trash2, Tag } from 'lucide-react';
 import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, privacyService } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
@@ -11,14 +11,27 @@ import { useNetwork } from '@/context/NetworkContext';
 interface SendTabProps {
   balances: ShieldedBalance[];
   wallet: any;
+  initialRecipient?: string;
+  initialTokenSymbol?: string;
+  initialAmount?: string;
+  initialMemo?: string;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, recipient: string) => void;
 }
 
-export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess }) => {
+export const SendTab: React.FC<SendTabProps> = ({
+  balances,
+  wallet,
+  initialRecipient = '',
+  initialTokenSymbol = '',
+  initialAmount = '',
+  initialMemo = '',
+  onSuccess,
+}) => {
   const { currentNetwork } = useNetwork();
   const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
-  const [recipient, setRecipient] = useState('');
-  const [amount, setAmount] = useState('');
+  const [recipient, setRecipient] = useState(initialRecipient);
+  const [amount, setAmount] = useState(initialAmount);
+  const [memo, setMemo] = useState(initialMemo);
   const [step, setStep] = useState<'IDLE' | 'PREPARING' | 'PROVING' | 'SUBMITTING'>('IDLE');
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +44,17 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
   useEffect(() => {
     setContacts(viewingKeyService.getContacts());
   }, []);
+
+  // Update from initial props if passed via deep-link
+  useEffect(() => {
+    if (initialRecipient) setRecipient(initialRecipient);
+    if (initialAmount) setAmount(initialAmount);
+    if (initialMemo) setMemo(initialMemo);
+    if (initialTokenSymbol) {
+      const found = currentNetwork.tokens.find(t => t.symbol.toUpperCase() === initialTokenSymbol.toUpperCase());
+      if (found) setSelectedToken(found);
+    }
+  }, [initialRecipient, initialAmount, initialMemo, initialTokenSymbol, currentNetwork]);
 
   // Sync token selection when network changes
   useEffect(() => {
@@ -103,6 +127,7 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
       onSuccess(txHash, selectedToken, amount, recipient);
       setAmount('');
       setRecipient('');
+      setMemo('');
       setStep('IDLE');
     } catch (err: any) {
       console.error('Private transfer error:', err);
@@ -113,6 +138,25 @@ export const SendTab: React.FC<SendTabProps> = ({ balances, wallet, onSuccess })
 
   return (
     <div className="max-w-xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl">
+      {/* Invoice Banner if paying an invoice */}
+      {memo && (
+        <div className="mb-4 p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-emerald-400" />
+            <span>
+              <strong>Invoice Request:</strong> "{memo}"
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMemo('')}
+            className="text-[10px] text-zinc-400 hover:text-white"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-5">
         <div>
           <h2 className="text-lg font-bold text-white flex items-center gap-2">

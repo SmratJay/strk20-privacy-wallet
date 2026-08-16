@@ -73,16 +73,9 @@ export const SEPOLIA_TOKENS: TokenInfo[] = [
   {
     symbol: 'USDC',
     name: 'USD Coin (Sepolia)',
-    address: '0x053b40a647cedfbfc52a2dc73d347c1fa38b8fb75fbe91b9e1a90291f8129b61',
+    address: '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343',
     decimals: 6,
     icon: '💵',
-  },
-  {
-    symbol: 'USDT',
-    name: 'Tether USD (Sepolia)',
-    address: '0x005a643907b9a4bc6a55e909946b2c8095d6abc168672505272e457d81972303',
-    decimals: 6,
-    icon: '🟢',
   },
 ];
 
@@ -96,9 +89,9 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       process.env.NEXT_PUBLIC_STRK20_POOL ||
       '0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a',
     rpcUrls: [
-      process.env.NEXT_PUBLIC_STARKNET_RPC || 'https://starknet-mainnet.public.blastapi.io',
+      'https://api.cartridge.gg/x/starknet/mainnet',
+      process.env.NEXT_PUBLIC_STARKNET_RPC || 'https://free-rpc.nethermind.io/mainnet-juno',
       'https://free-rpc.nethermind.io/mainnet-juno',
-      'https://starknet-mainnet.public.blastapi.io',
     ],
     avnuBaseUrl: 'https://starknet.api.avnu.fi',
     explorerUrl: 'https://voyager.online',
@@ -113,10 +106,10 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       process.env.NEXT_PUBLIC_STRK20_SEPOLIA_POOL ||
       '0x254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91',
     rpcUrls: [
-      'https://starknet-sepolia.public.blastapi.io',
+      'https://api.cartridge.gg/x/starknet/sepolia',
       'https://free-rpc.nethermind.io/sepolia-juno',
     ],
-    avnuBaseUrl: 'https://sepolia.api.avnu.fi',
+    avnuBaseUrl: 'https://starknet.api.avnu.fi',
     explorerUrl: 'https://sepolia.voyager.online',
     faucetUrl: 'https://starknet-faucet.vercel.app',
     tokens: SEPOLIA_TOKENS,
