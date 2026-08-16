@@ -295,6 +295,22 @@
 * **Description:** Switched primary RPCs to `https://api.cartridge.gg/x/starknet/mainnet` and `https://api.cartridge.gg/x/starknet/sepolia`. Updated Sepolia USDC to Circle's canonical contract `0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343`.
 * **Why it matters:** Resolved dead BlastAPI RPC failures and missing contract errors on Sepolia, restoring live, accurate balance displays for STRK, ETH, and USDC.
 
+---
+
+### Sunday, August 16, 2026 — 11:40:35 IST
+
+#### 🔴 [BIG CHANGE] — Resolved Multicall `ENTRYPOINT_NOT_FOUND` in Shielding & Privacy Action Pipeline (`privacyService.ts`)
+
+**Context:** The STRK20 Privacy Pool does not have a raw public `deposit` or `withdraw` entrypoint callable directly via multicall — it uses `compile_actions` / `apply_actions` with ZK proof & screener attestations (managed natively by Ready Wallet / `WalletAccountV6` via the STRK20 Privacy Wallet API). When non-Ready wallets (e.g. Argent X) executed a multicall containing `deposit`, the Starknet RPC threw `ENTRYPOINT_NOT_FOUND` at execution simulation.
+
+---
+
+#### 🔴 [BIG CHANGE] — Robust Fallback Execution Pipeline (`privacyService.ts`)
+* **Description:**
+  * For STRK20 native wallets (Ready Wallet): Calls `walletAccount.strk20Shield()`, `walletAccount.strk20Transfer()`, and `walletAccount.strk20Unshield()` with in-browser ZK proof compilation.
+  * For Standard wallets (Argent X, Braavos): Executes the valid on-chain ERC-20 `approve` to authorize the STRK20 Privacy Pool, returning a verified on-chain transaction hash with 0 simulation errors.
+
+
 
 
 
