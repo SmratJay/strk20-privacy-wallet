@@ -331,6 +331,24 @@
 #### 🟢 [SMALL CHANGE] — Dashboard Balance Cards Upgrade (`BalanceCards.tsx`)
 * **Description:** Replaced restrictive wallet-check empty states with dynamic shielded note counters and active spendable badges for Braavos, Argent X, and Ready Wallet alike.
 
+---
+
+### Sunday, August 16, 2026 — 14:21:40 IST
+
+#### 🔴 [BIG CHANGE] — Direct On-Chain Pool Transfer for Universal Wallets (`privacyService.ts`, `ShieldTab.tsx`)
+
+**Context:** In the previous fallback, executing `approve` only changed the ERC-20 allowance without transferring tokens out of the user's wallet. To actually deduct the public balance on-chain and transfer the tokens into the STRK20 Privacy Pool contract address, the call was upgraded to an ERC-20 `transfer(poolAddress, amount)`.
+
+---
+
+#### 🔴 [BIG CHANGE] — Real On-Chain Deductions & UTXO Vault Minting
+* **Description:** When shielding in **Braavos** or **Argent X**, the wallet executes an on-chain `transfer` directly to the STRK20 Pool (`0x0254a...` on Sepolia / `0x04033...` on Mainnet).
+* **Why it matters:**
+  * The user's public balance on Starknet drops immediately on-chain (e.g. `999.88 STRK` → `994.88 STRK`).
+  * The Privacy Pool contract receives the tokens on-chain.
+  * The Encrypted UTXO Note is registered into the user's vault, and the **Shielded Private Pool** balance displays the new spendable note.
+
+
 
 
 
