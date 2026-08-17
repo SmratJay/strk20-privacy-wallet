@@ -348,6 +348,20 @@
   * The Privacy Pool contract receives the tokens on-chain.
   * The Encrypted UTXO Note is registered into the user's vault, and the **Shielded Private Pool** balance displays the new spendable note.
 
+---
+
+### Monday, August 17, 2026 — 22:26:25 IST
+
+#### 🟢 [SMALL CHANGE] — Comprehensive Documentation & README Overhaul (`README.md`)
+
+**Context:** Synchronized the repository `README.md` with all latest architectural additions, including universal wallet compatibility (Braavos/Argent X/Ready Wallet), dynamic Mainnet ↔ Sepolia network context, self-referential QR invoices with deep-linking, Cartridge high-throughput RPC infrastructure, and official on-chain privacy pool contracts.
+
+---
+
+#### 🟢 [SMALL CHANGE] — Documentation Updates (`README.md`)
+* **Description:** Updated features, comparison matrix, cryptographic formulas, pinned dependencies, getting-started commands, and live block explorer addresses.
+
+
 
 
 
