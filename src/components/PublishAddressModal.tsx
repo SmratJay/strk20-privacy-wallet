@@ -32,7 +32,7 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
   if (!isOpen) return null;
 
   const privacyReceiveAddress = `strk20:${accountAddress}`;
-  const baseUrl = origin || 'https://strk20-privacy.vercel.app';
+  const baseUrl = origin || 'https://orrange.xyz';
   const shareablePaymentLink = `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&network=${currentNetwork.id}`;
 
   const handleCopy = () => {
@@ -48,162 +48,90 @@ export const PublishAddressModal: React.FC<PublishAddressModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-surface-elevated border border-surface-border rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md font-mono">
+      <div className="relative w-full max-w-md bg-zinc-950 border border-orrange-500/50 corner-box shadow-2xl overflow-hidden space-y-4 p-5">
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-5 border-b border-surface-border">
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-              <ShieldCheck className="w-5 h-5" />
+            <div className="p-1.5 bg-orrange-500/10 border border-orrange-500/30 text-orrange-400">
+              <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Publish Privacy Address</h3>
-              <p className="text-xs text-zinc-400 font-mono">Umbra UX: Publish once, receive privately ({currentNetwork.label})</p>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">Publish Stealth Address</h3>
+              <p className="text-[10px] text-zinc-500 uppercase">Publish once, receive privately ({currentNetwork.label})</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-border transition-colors"
+            className="p-1 text-zinc-500 hover:text-white transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* View Switcher */}
-        <div className="flex border-b border-surface-border bg-surface px-5 pt-3 gap-3 text-xs font-semibold">
+        <div className="flex border-b border-zinc-900 pb-2 gap-2 text-xs">
           <button
             onClick={() => setActiveView('CARD')}
-            className={`pb-2.5 border-b-2 transition-colors ${
+            className={`px-3 py-1 text-[10px] font-bold uppercase transition-all ${
               activeView === 'CARD'
-                ? 'border-emerald-500 text-emerald-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                ? 'bg-orrange-500 text-black'
+                : 'bg-zinc-900 text-zinc-400 hover:text-white'
             }`}
           >
-            Address & Specs
+            Address Details
           </button>
           <button
             onClick={() => setActiveView('QR')}
-            className={`pb-2.5 border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`px-3 py-1 text-[10px] font-bold uppercase transition-all flex items-center gap-1.5 ${
               activeView === 'QR'
-                ? 'border-emerald-500 text-emerald-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                ? 'bg-orrange-500 text-black'
+                : 'bg-zinc-900 text-zinc-400 hover:text-white'
             }`}
           >
-            <QrCode className="w-3.5 h-3.5" />
-            <span>Scan QR Code</span>
+            <QrCode className="w-3 h-3" />
+            <span>QR Invoice</span>
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div className="space-y-4">
           {activeView === 'CARD' ? (
             <>
-              {/* Explainer */}
-              <div className="p-3 rounded-xl bg-zinc-900/60 border border-surface-border flex items-start gap-2.5 text-xs text-zinc-300">
-                <Info className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                <p>
-                  Share this address anywhere. When anyone pays you on {currentNetwork.name}, the STRK20 pool creates an encrypted UTXO note directly in your channel. Observers see zero link to your identity.
-                </p>
-              </div>
-
-              {/* Privacy Address Display */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-400">Your STRK20 Privacy Address</label>
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface border border-surface-border font-mono text-xs text-zinc-200 break-all">
-                  <span className="flex-1 select-all text-emerald-400">{privacyReceiveAddress}</span>
+              <div className="p-3 bg-zinc-900/60 border border-zinc-800 space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase">Your Stealth Channel Identifier</label>
+                <div className="flex items-center justify-between p-2 bg-zinc-950 border border-zinc-800 text-xs text-white">
+                  <span className="font-mono truncate mr-2">{privacyReceiveAddress}</span>
                   <button
                     onClick={handleCopy}
-                    className="p-2 rounded-lg bg-surface-border hover:bg-zinc-700 text-zinc-200 transition-colors shrink-0"
-                    title="Copy address"
+                    className="text-orrange-400 hover:underline text-[10px] uppercase font-bold shrink-0"
                   >
-                    {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    {copied ? '[COPIED]' : '[COPY]'}
                   </button>
                 </div>
               </div>
 
-              {/* Shareable Link */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-400 flex items-center justify-between">
-                  <span>Shareable Payment Link</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">App Deep Link</span>
-                </label>
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface border border-surface-border font-mono text-xs text-zinc-400 break-all">
-                  <span className="flex-1 truncate">{shareablePaymentLink}</span>
-                  <button
-                    onClick={handleCopyLink}
-                    className="p-2 rounded-lg bg-surface-border hover:bg-zinc-700 text-zinc-200 transition-colors shrink-0"
-                    title="Copy payment link"
-                  >
-                    {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Registration Status */}
-              <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-xs font-medium text-emerald-300">Viewing Key Registered in Pool</span>
-                </div>
-                <a
-                  href={`${currentNetwork.explorerUrl}/contract/${currentNetwork.poolAddress}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 font-mono"
-                >
-                  <span>Pool Explorer</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-
-              {/* Structural Advantages */}
-              <div className="pt-1">
-                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                  Why STRK20 Beats Umbra
-                </p>
-                <ul className="text-xs text-zinc-300 space-y-1.5 list-disc list-inside">
-                  <li><strong className="text-zinc-100">1 Key Registration:</strong> No 2-key stealth meta-address complexity.</li>
-                  <li><strong className="text-zinc-100">Zero On-Chain Address:</strong> Payments sit in encrypted UTXO pool notes.</li>
-                  <li><strong className="text-zinc-100">Gas-Free Relay:</strong> Native pool withdrawals decouple transaction senders.</li>
-                </ul>
-              </div>
-            </>
-          ) : (
-            /* Real Dynamic QR View */
-            <div className="p-6 text-center space-y-4">
-              <div className="inline-block p-4 rounded-2xl bg-white shadow-2xl border-4 border-emerald-500/30">
-                <QRCodeSVG
-                  value={shareablePaymentLink}
-                  size={180}
-                  level="M"
-                  includeMargin={false}
-                />
-              </div>
-
-              <div>
-                <p className="text-xs font-mono text-zinc-300 break-all">{shortenAddress(privacyReceiveAddress, 10)}</p>
-                <p className="text-[11px] text-zinc-500 mt-1">Scan with any Starknet or STRK20 camera ({currentNetwork.label})</p>
+              <div className="p-3 bg-zinc-900/40 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+                <span className="text-orrange-400 font-bold uppercase text-[10px]">How Senders Pay You:</span>
+                <p>1. Senders use your address to derive a single-use stealth public key.</p>
+                <p>2. Funds land in the STRK20 Privacy Pool as encrypted notes only you can decrypt.</p>
               </div>
 
               <button
-                onClick={handleCopy}
-                className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all"
+                onClick={handleCopyLink}
+                className="w-full py-2.5 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black font-black text-xs uppercase tracking-wider transition-all"
               >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'Copied to Clipboard!' : 'Copy Privacy Address'}</span>
+                {copiedLink ? '✓ Stealth Link Copied' : 'Copy Direct Payment Link'}
               </button>
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center p-4 space-y-3">
+              <div className="p-3 bg-white border border-zinc-700">
+                <QRCodeSVG value={shareablePaymentLink} size={180} level="M" />
+              </div>
+              <p className="text-[10px] text-zinc-500">Scan to initiate private payment</p>
             </div>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-surface-border bg-surface flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors"
-          >
-            Done
-          </button>
         </div>
       </div>
     </div>

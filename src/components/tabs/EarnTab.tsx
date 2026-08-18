@@ -98,170 +98,176 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header Stat Overview */}
-      <div className="bg-gradient-to-br from-zinc-900 via-zinc-900/90 to-zinc-950 border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+    <div className="space-y-6 font-mono">
+      {/* Top Banner: Total Deposited in Shielded Yield */}
+      <div className="bg-zinc-950 border border-zinc-800 p-6 corner-box shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <span>Shielded Yield & Lending (PEL Earn)</span>
+            <div className="flex items-center gap-2 text-xs font-bold text-orrange-400 uppercase tracking-wider mb-1">
+              <Layers className="w-4 h-4" />
+              <span>SHIELDED EARN & YIELD SUBSTRATE (VESU / MONEY MARKET)</span>
             </div>
-            <div className="text-3xl font-extrabold text-white">
+            <div className="text-3xl font-black text-white">
               ${totalYieldValueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-zinc-500 mt-1">
-              Earn continuous DeFi yields on overcollateralized lending markets without unshielding assets.
+              Earn institutional lending yields while your balance remains an encrypted UTXO note.
             </p>
           </div>
-          <div className="p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-center gap-3">
-            <div>
-              <div className="text-[11px] text-zinc-400">Total Accrued Yield</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">+${totalAccruedUsd.toFixed(4)}</div>
-            </div>
-            <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-bold">
-              %
+
+          <div className="flex items-center gap-4 text-xs">
+            <div className="p-3 bg-zinc-900 border border-zinc-800 text-right">
+              <span className="text-[10px] text-zinc-500 uppercase block">Total Accrued Yield</span>
+              <span className="text-sm font-bold text-emerald-400">
+                +${totalAccruedUsd.toFixed(4)} USD
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Vault Cards Grid */}
+      {/* Available Vaults Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {vaults.map((v) => {
-          const isSelected = selectedVault.id === v.id;
-          const userDep = deposits.find((d) => d.vaultId === v.id);
-
+          const isSelected = v.id === selectedVault.id;
           return (
             <div
               key={v.id}
               onClick={() => setSelectedVault(v)}
-              className={`p-5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+              className={`p-5 corner-box border transition-all cursor-pointer flex flex-col justify-between ${
                 isSelected
-                  ? 'bg-zinc-900 border-purple-500/60 shadow-lg shadow-purple-950/20'
-                  : 'bg-zinc-900/50 border-zinc-800/80 hover:border-zinc-700'
+                  ? 'bg-zinc-900 border-orrange-500 shadow-lg shadow-orrange-950/30'
+                  : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
               }`}
             >
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-zinc-800 flex items-center justify-center font-bold text-xs text-zinc-200">
-                      {v.tokenSymbol}
-                    </div>
-                    <div>
-                      <div className="font-bold text-sm text-zinc-100">{v.name}</div>
-                      <div className="text-[10px] text-purple-400 font-medium">{v.protocolName}</div>
-                    </div>
-                  </div>
+                  <span className="text-2xl">{v.icon}</span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    {v.protocol}
+                  </span>
                 </div>
 
-                <div className="my-3 p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/60">
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-xs text-zinc-400">Net APY:</span>
-                    <span className="text-xl font-extrabold text-emerald-400 font-mono">{v.apyPct}%</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] text-zinc-500 mt-1">
-                    <span>TVL: ${(v.tvlUsd / 1e6).toFixed(1)}M</span>
-                    <span>Utilization: {v.utilizationPct}%</span>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-                  {v.strategyDescription}
-                </p>
+                <h4 className="font-bold text-white text-sm">{v.name}</h4>
+                <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{v.description}</p>
               </div>
 
-              <div className="mt-4 pt-3 border-t border-zinc-800/60 flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Your Deposit:</span>
-                <span className="font-mono font-semibold text-zinc-200">
-                  {userDep ? `${userDep.depositedAmountTokens.toFixed(2)} ${v.tokenSymbol}` : '0.00'}
-                </span>
+              <div className="mt-6 pt-4 border-t border-zinc-900 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-zinc-500 block uppercase">Target APY</span>
+                  <span className="text-lg font-black text-orrange-400">{v.apyPct.toFixed(2)}%</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-zinc-500 block uppercase">Pool TVL</span>
+                  <span className="text-xs font-bold text-zinc-300">${(v.tvlUsd / 1e6).toFixed(1)}M</span>
+                </div>
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Deposit / Withdraw Action Box */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
-        <h3 className="text-sm font-bold text-zinc-100 mb-4 flex items-center gap-2">
-          <Lock className="w-4 h-4 text-purple-400" />
-          Shielded Supply to {selectedVault.name}
-        </h3>
+      {/* Deposit & Active Positions Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Deposit Control */}
+        <div className="lg:col-span-5 bg-zinc-950 border border-zinc-800 p-5 corner-box space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Supply to {selectedVault.name}
+            </h3>
+            <span className="text-[10px] text-orrange-400 font-bold">{selectedVault.apyPct}% APY</span>
+          </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
-          <div className="sm:col-span-8">
-            <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5">
-              <span>Amount ({selectedVault.tokenSymbol})</span>
-              <span className="text-[11px] text-zinc-500">Source: STRK20 Shielded Note</span>
+          <div>
+            <div className="flex justify-between text-xs text-zinc-400 mb-1.5">
+              <span>SUPPLY AMOUNT</span>
+              <span className="text-[10px] text-zinc-500">Asset: {selectedVault.tokenSymbol}</span>
             </div>
             <div className="relative">
               <input
                 type="number"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(e.target.value)}
-                placeholder="50"
-                className="w-full px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 focus:border-purple-500 text-white font-mono text-sm outline-none"
+                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white text-sm outline-none"
+                placeholder="0.0"
               />
-              <span className="absolute right-4 top-2.5 text-xs font-bold text-zinc-400">
+              <span className="absolute right-3.5 top-2.5 text-xs font-bold text-zinc-500">
                 {selectedVault.tokenSymbol}
               </span>
             </div>
           </div>
 
-          <div className="sm:col-span-4">
-            <button
-              onClick={handleDeposit}
-              disabled={isProcessing}
-              className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-900/30 transition-all"
-            >
-              {isProcessing ? 'Supplying...' : `Deposit ${selectedVault.tokenSymbol} Privately`}
-            </button>
-          </div>
-        </div>
-
-        {/* Active Vault Positions */}
-        {deposits.length > 0 && (
-          <div className="mt-6 pt-6 border-t border-zinc-800">
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-              Your Active Yield Vaults
-            </h4>
-            <div className="space-y-2">
-              {deposits.map((d) => {
-                const vault = earnService.getVault(d.vaultId);
-                if (!vault) return null;
-
-                return (
-                  <div
-                    key={d.vaultId}
-                    className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <div className="font-bold text-zinc-200">{vault.name}</div>
-                      <div className="text-[11px] text-zinc-500">
-                        {d.depositedAmountTokens.toFixed(4)} {vault.tokenSymbol} (${d.depositedAmountUsd.toFixed(2)})
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <div className="text-[10px] text-zinc-500">Accrued Yield</div>
-                        <div className="font-mono font-bold text-emerald-400">
-                          +{d.accruedYieldTokens.toFixed(6)} {vault.tokenSymbol}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleWithdraw(d.vaultId, d.depositedAmountTokens)}
-                        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[11px] border border-zinc-700"
-                      >
-                        Withdraw
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs space-y-1.5 text-zinc-400">
+            <div className="flex justify-between">
+              <span>Est. Daily Yield:</span>
+              <span className="font-bold text-emerald-400">
+                +${((parseFloat(depositAmount) || 0) * (selectedVault.apyPct / 100) / 365).toFixed(4)} USD
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Privacy Guarantee:</span>
+              <span className="text-orrange-400 font-semibold">Shielded Substrate</span>
             </div>
           </div>
-        )}
+
+          <button
+            onClick={handleDeposit}
+            disabled={isProcessing}
+            className="w-full py-3 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+          >
+            {isProcessing ? 'Supplying to Vault...' : `Deposit ${selectedVault.tokenSymbol}`}
+          </button>
+        </div>
+
+        {/* User Deposited Positions */}
+        <div className="lg:col-span-7 bg-zinc-950 border border-zinc-800 p-5 corner-box">
+          <h3 className="text-xs font-bold text-white uppercase mb-4 pb-3 border-b border-zinc-900 flex items-center justify-between">
+            <span>Your Shielded Vault Positions</span>
+            <span className="text-[10px] text-zinc-500">[ POSEIDON_COMPOUNDING ]</span>
+          </h3>
+
+          {deposits.length === 0 ? (
+            <div className="text-center py-10 text-zinc-500 text-xs">
+              No active deposits. Select a vault on the left and supply funds to earn private yield!
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {deposits.map((d) => (
+                <div
+                  key={d.id}
+                  className="p-3.5 bg-zinc-900/60 border border-zinc-800 flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center gap-2">
+                      <span>{d.vaultName}</span>
+                      <span className="text-[10px] text-emerald-400 font-bold border border-emerald-500/30 px-1.5 py-0.2 bg-emerald-500/10">
+                        {d.apyPct}% APY
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-zinc-400 mt-1">
+                      Supplied: {d.depositedAmount} {d.tokenSymbol} (${d.depositedAmountUsd.toFixed(2)})
+                    </div>
+                  </div>
+
+                  <div className="text-right flex items-center gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-emerald-400">
+                        +${d.accruedYieldUsd.toFixed(4)} USD
+                      </div>
+                      <div className="text-[9px] text-zinc-500 uppercase">Accrued Yield</div>
+                    </div>
+                    <button
+                      onClick={() => handleWithdraw(d.vaultId, d.depositedAmount)}
+                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-bold border border-zinc-700"
+                    >
+                      WITHDRAW
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

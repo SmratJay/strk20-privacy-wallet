@@ -102,20 +102,20 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           }
         }
       } catch (err: any) {
-        if (active) setError(err.message || 'Could not calculate routes');
+        if (active) setError(err?.message || 'Could not find routes');
       } finally {
         if (active) setIsLoadingRoutes(false);
       }
-    }, 300);
+    }, 400);
 
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [fromToken, toToken, amount, privacyMode]);
+  }, [amount, fromToken, toToken, privacyMode]);
 
   const activeSelectedRoute = useMemo(() => {
-    return computedRoutes.find((r) => r.id === selectedRouteId) || computedRoutes[0] || null;
+    return computedRoutes.find((r) => r.id === selectedRouteId) || computedRoutes[0];
   }, [computedRoutes, selectedRouteId]);
 
   const handleSwap = async (e: React.FormEvent) => {
@@ -131,16 +131,21 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
       return;
     }
 
+    if (amountBigInt > availableBal) {
+      setError(`Insufficient ${fromToken.symbol} balance`);
+      return;
+    }
+
     setError(null);
     setIsSwapping(true);
 
     try {
-      // Execute swap via AVNU / Router
-      const quote = await avnuService.getPrivateSwapQuote(
+      // 1. Fetch real quote from AVNU
+      const quote = await avnuService.getSwapQuote(
         fromToken,
         toToken,
         amount,
-        wallet.address,
+        wallet.address || undefined,
         currentNetwork.avnuBaseUrl
       );
 
@@ -170,62 +175,78 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
   };
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-2xl mx-auto p-6 bg-zinc-950 border border-zinc-800 corner-box shadow-2xl space-y-5 font-mono">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-4 border-b border-zinc-900">
+        <div>
+          <h2 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+            <span className="w-2 h-2 rounded-full bg-orrange-500 animate-pulse" />
+            <span>Intent & Privacy Router (Spot)</span>
+          </h2>
+          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+            Objective: Minimize C(r) = P(r) + F(r) + G(r) + S(r) + L(r) + λ·Λ(r)
+          </p>
+        </div>
+        <span className="text-[10px] text-orrange-400 font-bold border border-orrange-500/30 px-2 py-0.5 bg-orrange-950/40">
+          [ AVNU // EKUBO // STRK20 ]
+        </span>
+      </div>
+
       <form onSubmit={handleSwap} className="space-y-4">
-        {/* Privacy Mode Selector (Whitepaper Section 5.3) */}
-        <div className="p-1 rounded-xl bg-zinc-950 border border-zinc-800 grid grid-cols-3 gap-1 text-xs font-semibold">
+        {/* Privacy Tier Preference Selector */}
+        <div className="grid grid-cols-3 gap-1.5 p-1 bg-zinc-900 border border-zinc-800 text-xs">
           <button
             type="button"
             onClick={() => setPrivacyMode('MAX_PRIVACY')}
-            className={`py-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+            className={`py-1.5 px-2 flex items-center justify-center gap-1 transition-all uppercase text-[11px] font-bold ${
               privacyMode === 'MAX_PRIVACY'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-orrange-500 text-black'
+                : 'text-zinc-400 hover:text-white'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            Max Privacy
+            <span>Max Privacy</span>
           </button>
           <button
             type="button"
             onClick={() => setPrivacyMode('BALANCED')}
-            className={`py-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+            className={`py-1.5 px-2 flex items-center justify-center gap-1 transition-all uppercase text-[11px] font-bold ${
               privacyMode === 'BALANCED'
-                ? 'bg-zinc-800 text-white border border-zinc-700'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-orrange-500 text-black'
+                : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            Balanced
+            <Layers className="w-3.5 h-3.5" />
+            <span>Balanced</span>
           </button>
           <button
             type="button"
             onClick={() => setPrivacyMode('MAX_SPEED')}
-            className={`py-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+            className={`py-1.5 px-2 flex items-center justify-center gap-1 transition-all uppercase text-[11px] font-bold ${
               privacyMode === 'MAX_SPEED'
-                ? 'bg-zinc-800 text-white border border-zinc-700'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-orrange-500 text-black'
+                : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <Zap className="w-3.5 h-3.5 text-blue-400" />
-            Max Speed
+            <Zap className="w-3.5 h-3.5" />
+            <span>Max Speed</span>
           </button>
         </div>
 
         {/* Input Token Box */}
-        <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800/80 focus-within:border-purple-500/80 transition-colors">
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 focus-within:border-orrange-500 transition-colors">
           <div className="flex justify-between text-xs text-zinc-400 mb-2">
-            <span>You Pay</span>
-            <div className="flex items-center gap-1.5">
+            <span>YOU PAY (INPUT)</span>
+            <div className="flex items-center gap-1.5 text-[11px]">
               <span>
                 Available: {formatTokenAmount(availableBal, fromToken.decimals, 4)} {fromToken.symbol}
               </span>
               <button
                 type="button"
                 onClick={handleMax}
-                className="text-[11px] font-bold text-purple-400 hover:text-purple-300 ml-1"
+                className="font-bold text-orrange-400 hover:underline ml-1"
               >
-                MAX
+                [MAX]
               </button>
             </div>
           </div>
@@ -236,7 +257,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.0"
-              className="w-full bg-transparent text-2xl font-mono text-white placeholder-zinc-600 outline-none"
+              className="w-full bg-transparent text-2xl font-bold text-white placeholder-zinc-700 outline-none"
             />
 
             <select
@@ -245,7 +266,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setFromToken(found);
               }}
-              className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-bold text-sm outline-none cursor-pointer"
+              className="px-3 py-2 bg-zinc-900 border border-zinc-700 text-white font-bold text-xs outline-none cursor-pointer"
             >
               {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
@@ -261,21 +282,21 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           <button
             type="button"
             onClick={handleFlipTokens}
-            className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-700 hover:border-purple-500 flex items-center justify-center text-zinc-300 hover:text-white transition-all hover:scale-110 shadow-lg"
+            className="w-7 h-7 bg-zinc-900 border border-zinc-700 hover:border-orrange-500 flex items-center justify-center text-zinc-300 hover:text-white transition-all hover:scale-110 shadow-lg"
           >
-            <ArrowLeftRight className="w-3.5 h-3.5 rotate-90" />
+            <ArrowLeftRight className="w-3.5 h-3.5 rotate-90 text-orrange-400" />
           </button>
         </div>
 
         {/* Output Token Box */}
-        <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800/80">
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800">
           <div className="flex justify-between text-xs text-zinc-400 mb-2">
-            <span>You Receive (Estimated)</span>
-            {isLoadingRoutes && <Loader2 className="w-3 h-3 animate-spin text-purple-400" />}
+            <span>YOU RECEIVE (ESTIMATED)</span>
+            {isLoadingRoutes && <Loader2 className="w-3 h-3 animate-spin text-orrange-400" />}
           </div>
 
           <div className="flex items-center justify-between gap-3">
-            <div className="w-full text-2xl font-mono text-zinc-200">
+            <div className="w-full text-2xl font-bold text-zinc-200">
               {activeSelectedRoute
                 ? formatTokenAmount(activeSelectedRoute.totalExpectedOutput, toToken.decimals, 4)
                 : '0.0'}
@@ -287,7 +308,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setToToken(found);
               }}
-              className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-bold text-sm outline-none cursor-pointer"
+              className="px-3 py-2 bg-zinc-900 border border-zinc-700 text-white font-bold text-xs outline-none cursor-pointer"
             >
               {currentNetwork.tokens
                 .filter((t) => t.symbol !== fromToken.symbol)
@@ -300,12 +321,12 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           </div>
         </div>
 
-        {/* Multi-Venue Route Comparison Cards (Section 5.3) */}
+        {/* Multi-Venue Route Comparison Cards */}
         {computedRoutes.length > 0 && (
           <div className="space-y-2 pt-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-              <span>PEL Intent Execution Routes</span>
-              <span className="text-[10px] text-zinc-500">Ranked by min cost C(r)</span>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+              <span>Intent Execution Routes</span>
+              <span>Ranked by min cost C(r)</span>
             </div>
 
             <div className="grid grid-cols-1 gap-2">
@@ -315,21 +336,21 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
                   <div
                     key={r.id}
                     onClick={() => setSelectedRouteId(r.id)}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                    className={`p-3 border transition-all cursor-pointer flex items-center justify-between ${
                       isSelected
-                        ? 'bg-zinc-900 border-purple-500/70 shadow-md shadow-purple-950/20'
+                        ? 'bg-zinc-900 border-orrange-500 shadow-md shadow-orrange-950/40'
                         : 'bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-purple-400">
-                        <ShieldCheck className="w-4 h-4" />
+                      <div className="w-7 h-7 bg-zinc-800 border border-zinc-700 flex items-center justify-center text-orrange-400">
+                        <ShieldCheck className="w-3.5 h-3.5" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-xs text-zinc-200">{r.hops[0].venue.name}</span>
                           {r.isRecommended && (
-                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[9px] font-bold border border-emerald-500/20">
+                            <span className="px-1.5 py-0.2 bg-orrange-500/20 text-orrange-400 text-[9px] font-bold border border-orrange-500/30">
                               RECOMMENDED
                             </span>
                           )}
@@ -343,7 +364,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
                     </div>
 
                     <div className="text-right">
-                      <div className="font-mono font-bold text-xs text-zinc-100">
+                      <div className="font-bold text-xs text-white">
                         {formatTokenAmount(r.totalExpectedOutput, toToken.decimals, 4)} {toToken.symbol}
                       </div>
                       <div className="text-[10px] flex items-center gap-1 justify-end font-semibold">
@@ -369,7 +390,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
         )}
 
         {error && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
+          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
@@ -379,12 +400,12 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
         <button
           type="submit"
           disabled={isSwapping || !amount || parseFloat(amount) <= 0}
-          className="w-full py-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-purple-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          className="w-full py-3 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           {isSwapping ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Routing & Executing Private Swap...
+              Routing & Executing Swap...
             </>
           ) : (
             <>

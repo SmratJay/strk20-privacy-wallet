@@ -30,7 +30,6 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
   walletAddress,
   onNavigateTab,
 }) => {
-  // Current mock asset price mapping (USD)
   const tokenPrices: Record<string, number> = {
     STRK: 0.584,
     ETH: 3418.75,
@@ -57,7 +56,7 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
     }, 0);
   }, [balances]);
 
-  // 3. Calculate Perp Position Margin & Equity (Section 13.1)
+  // 3. Calculate Perp Position Margin & Equity
   const perpPositions = useMemo(() => {
     return walletAddress ? perpsService.getPositions(walletAddress).filter(p => p.status === 'OPEN') : [];
   }, [walletAddress]);
@@ -81,157 +80,173 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
   const privacyRatio = totalCombinedNetWorth > 0 ? (privateNetWorthUsd / totalCombinedNetWorth) * 100 : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 font-mono">
       {/* Top Banner: Total Net Worth Breakdown */}
-      <div className="bg-gradient-to-br from-zinc-900 via-zinc-900/90 to-zinc-950 border border-zinc-800/80 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="bg-zinc-950 border border-orrange-500/50 p-6 corner-box shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-orrange-500/10 rounded-full blur-3xl pointer-events-none" />
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Total Private Net Worth (PEL Core)</span>
+            <div className="flex items-center gap-2 text-xs font-bold text-orrange-400 uppercase tracking-wider mb-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-orrange-500 animate-pulse" />
+              <span>TOTAL PRIVATE NET WORTH // PEL SUBSTRATE</span>
             </div>
-            <div className="text-4xl font-extrabold text-white tracking-tight flex items-baseline gap-3">
+            <div className="text-3xl sm:text-4xl font-black text-white tracking-tight flex items-baseline gap-3">
               ${privateNetWorthUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-                {privacyRatio.toFixed(0)}% Shielded
+              <span className="text-xs font-bold px-2 py-0.5 bg-orrange-950/70 border border-orrange-500/50 text-orrange-300">
+                {privacyRatio.toFixed(0)}% SHIELDED
               </span>
             </div>
             <p className="text-xs text-zinc-500 mt-1">
-              Confidential assets across STRK20 notes, perpetual positions, and yield vaults.
+              Formula: ∑ Value(Notes) + ∑ Equity(Perps) + ∑ Value(Vaults)
             </p>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onNavigateTab('SHIELD')}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-900/30 transition-all hover:scale-105"
-            >
-              <ArrowDownLeft className="w-3.5 h-3.5" />
-              Shield Funds
-            </button>
+          <div className="flex items-center gap-3">
             <button
               onClick={() => onNavigateTab('SWAP')}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition-all"
+              className="px-4 py-2 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black text-xs font-black tracking-wider uppercase transition-all cursor-pointer shadow-lg shadow-orrange-950/40"
             >
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              Trade
+              Trade Router
             </button>
             <button
-              onClick={() => onNavigateTab('PERPS')}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition-all"
+              onClick={() => onNavigateTab('SHIELD')}
+              className="px-4 py-2 border border-zinc-800 hover:border-orrange-500/60 bg-zinc-900 text-zinc-300 hover:text-white text-xs font-bold tracking-wider uppercase transition-all cursor-pointer"
             >
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-              Open Perp
+              Deposit Notes
             </button>
           </div>
         </div>
 
-        {/* 3 Pillar Allocations */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-6 border-t border-zinc-800/80">
-          <div className="p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/50">
-            <div className="text-xs text-zinc-400 flex items-center justify-between mb-1">
+        {/* 3 Sub-component Balance Pillars */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-6 border-t border-zinc-900">
+          <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 hover:border-orrange-500/40 transition-all">
+            <div className="text-[10px] text-zinc-500 uppercase flex items-center justify-between font-bold">
               <span>1. Shielded Cash Notes</span>
-              <Lock className="w-3.5 h-3.5 text-purple-400" />
+              <Lock className="w-3 h-3 text-orrange-400" />
             </div>
-            <div className="text-lg font-bold text-white">
+            <div className="text-lg font-bold text-white mt-1">
               ${shieldedCashUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">STRK, ETH, USDC Notes</div>
+            <div className="text-[10px] text-orrange-400 mt-0.5 font-bold uppercase">[ UTXO ENCRYPTED ]</div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/50">
-            <div className="text-xs text-zinc-400 flex items-center justify-between mb-1">
-              <span>2. Perp Position Equity</span>
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 hover:border-orrange-500/40 transition-all">
+            <div className="text-[10px] text-zinc-500 uppercase flex items-center justify-between font-bold">
+              <span>2. Active Perp Equity</span>
+              <TrendingUp className="w-3 h-3 text-orrange-400" />
             </div>
-            <div className="text-lg font-bold text-white">
+            <div className="text-lg font-bold text-white mt-1">
               ${perpEquityUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">{perpPositions.length} active positions</div>
+            <div className="text-[10px] text-orrange-400 mt-0.5 font-bold uppercase">
+              [ {perpPositions.length} {perpPositions.length === 1 ? 'POSITION' : 'POSITIONS'} // ZK COMMITTED ]
+            </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/50">
-            <div className="text-xs text-zinc-400 flex items-center justify-between mb-1">
-              <span>3. Shielded Earn & Vaults</span>
-              <Layers className="w-3.5 h-3.5 text-amber-400" />
+          <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 hover:border-orrange-500/40 transition-all">
+            <div className="text-[10px] text-zinc-500 uppercase flex items-center justify-between font-bold">
+              <span>3. Shielded Lending Vaults</span>
+              <Layers className="w-3 h-3 text-orrange-400" />
             </div>
-            <div className="text-lg font-bold text-white">
+            <div className="text-lg font-bold text-white mt-1">
               ${earnDepositsUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">{userDeposits.length} active vaults</div>
+            <div className="text-[10px] text-orrange-400 mt-0.5 font-bold uppercase">[ VESU YIELD ACTIVE ]</div>
           </div>
         </div>
       </div>
 
-      {/* Asset Breakdown Table */}
-      <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-5 shadow-xl">
-        <h3 className="text-sm font-semibold text-zinc-200 mb-4 flex items-center gap-2">
-          <Activity className="w-4 h-4 text-purple-400" />
-          Shielded Holdings & Note Details
-        </h3>
+      {/* Grid: Assets Table & Open Positions */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Shielded Assets Table */}
+        <div className="lg:col-span-7 bg-zinc-950 border border-zinc-800 p-5 corner-box space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <PieChart className="w-4 h-4 text-orrange-400" />
+              <span>Shielded Asset Allocations</span>
+            </h3>
+            <span className="text-[10px] text-zinc-500 font-bold">[ POSEIDON_STORAGE ]</span>
+          </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-zinc-300">
-            <thead className="text-[11px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800/80 pb-2">
-              <tr>
-                <th className="py-2.5 px-3">Asset</th>
-                <th className="py-2.5 px-3">Public Balance</th>
-                <th className="py-2.5 px-3">Shielded UTXO Balance</th>
-                <th className="py-2.5 px-3">Shielded Value</th>
-                <th className="py-2.5 px-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/40">
-              {balances.map((b) => {
-                const price = tokenPrices[b.token.symbol] || 0;
-                const pubAmt = Number(b.publicBalance) / 10 ** b.token.decimals;
-                const shldAmt = Number(b.shieldedBalance) / 10 ** b.token.decimals;
-                const valUsd = shldAmt * price;
+          <div className="space-y-2">
+            {balances.map((b) => {
+              const price = tokenPrices[b.token.symbol] || 0;
+              const shieldedAmount = Number(b.shieldedBalance) / 10 ** b.token.decimals;
+              const shieldedValueUsd = shieldedAmount * price;
 
-                return (
-                  <tr key={b.token.symbol} className="hover:bg-zinc-800/30 transition-colors">
-                    <td className="py-3 px-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-xs text-zinc-200">
-                          {b.token.symbol.substring(0, 1)}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-zinc-100">{b.token.symbol}</div>
-                          <div className="text-[10px] text-zinc-500">{b.token.name}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 text-zinc-400 font-mono">
-                      {pubAmt.toFixed(4)} {b.token.symbol}
-                    </td>
-                    <td className="py-3 px-3 font-mono font-bold text-purple-300">
-                      {shldAmt.toFixed(4)} {b.token.symbol}
-                    </td>
-                    <td className="py-3 px-3 font-mono font-semibold text-zinc-200">
-                      ${valUsd.toFixed(2)}
-                    </td>
-                    <td className="py-3 px-3 text-right space-x-1.5">
-                      <button
-                        onClick={() => onNavigateTab('SHIELD')}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-purple-300 border border-purple-500/20"
-                      >
-                        Shield
-                      </button>
-                      <button
-                        onClick={() => onNavigateTab('SWAP')}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700"
-                      >
-                        Swap
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+              return (
+                <div 
+                  key={b.token.symbol} 
+                  className="p-3 bg-zinc-900/50 border border-zinc-800/80 hover:border-orrange-500/50 transition-colors flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{b.token.icon}</span>
+                    <div>
+                      <div className="text-xs font-bold text-white">{b.token.symbol}</div>
+                      <div className="text-[10px] text-zinc-500">${price.toLocaleString()} USD</div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-xs font-bold text-orrange-400">
+                      {shieldedAmount.toFixed(4)} {b.token.symbol}
+                    </div>
+                    <div className="text-[10px] text-zinc-400">
+                      ${shieldedValueUsd.toFixed(2)} USD
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Quick Route & Perpetual Overview */}
+        <div className="lg:col-span-5 bg-zinc-950 border border-zinc-800 p-5 corner-box space-y-4 flex flex-col justify-between">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Activity className="w-4 h-4 text-orrange-400" />
+                <span>Live Derivatives Status</span>
+              </h3>
+              <span className="text-[10px] text-orrange-400 font-bold">[ 50X_LEVERAGE ]</span>
+            </div>
+
+            {perpPositions.length > 0 ? (
+              <div className="space-y-2">
+                {perpPositions.map((pos) => (
+                  <div key={pos.id} className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs">
+                    <div className="flex items-center justify-between font-bold text-white">
+                      <span>{pos.market} ({pos.side})</span>
+                      <span className={pos.unrealizedPnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {pos.unrealizedPnlUsd >= 0 ? '+' : ''}${pos.unrealizedPnlUsd.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1 flex justify-between">
+                      <span>Margin: ${pos.marginUsd}</span>
+                      <span>Liq: ${pos.liquidationPriceUsd.toFixed(2)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center border border-dashed border-zinc-800 bg-zinc-900/30 text-zinc-500 text-xs">
+                No active leveraged positions.
+                <button
+                  onClick={() => onNavigateTab('PERPS')}
+                  className="mt-3 block mx-auto text-orrange-400 hover:underline font-bold text-[11px] uppercase cursor-pointer"
+                >
+                  Open 1x-50x Perp →
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-zinc-900 text-[10px] text-zinc-500 flex items-center justify-between">
+            <span>PEL_ROUTER // OPTIMIZED</span>
+            <span className="text-orrange-400 font-bold">100% PRIVATE</span>
+          </div>
         </div>
       </div>
     </div>

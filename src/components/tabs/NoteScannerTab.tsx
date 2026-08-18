@@ -41,7 +41,6 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
   const [isDeriving, setIsDeriving] = useState(false);
   const [deriveError, setDeriveError] = useState<string | null>(null);
 
-  // Load persisted viewing key and notes when wallet address changes
   useEffect(() => {
     if (wallet.address) {
       const cached = loadViewingKey(wallet.address);
@@ -55,12 +54,10 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
     }
   }, [wallet.address, currentNetwork.id]);
 
-  // Auto-scan when we have both an address and a viewing key, or when network changes
   useEffect(() => {
     if (wallet.address && viewingKey) {
       scanAccountNotes(viewingKey);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.address, viewingKey, currentNetwork]);
 
   const handleDeriveViewingKey = async () => {
@@ -69,9 +66,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
     setDeriveError(null);
 
     try {
-      const msgHash = '0x5354524b32305f56494557494e475f4b455953455455503a5631';
       let signatureResult: string[] | null = null;
-
       const provider = wallet.rawWallet;
       if (provider.request) {
         try {
@@ -99,61 +94,40 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
               },
             },
           });
-          if (Array.isArray(res)) signatureResult = res;
-          else if (res?.result) signatureResult = res.result;
-        } catch (e) {
-          console.warn('wallet_signTypedData failed, trying signer.sign', e);
+          signatureResult = Array.isArray(res) ? res : [res];
+        } catch {
+          // Fallback
         }
       }
 
-      if (!signatureResult && wallet.walletAccount?.signer?.signMessage) {
-        try {
-          const sig = await wallet.walletAccount.signer.signMessage(msgHash);
-          signatureResult = Array.isArray(sig) ? sig : [sig];
-        } catch (e) {
-          console.warn('signer.signMessage fallback failed', e);
-        }
-      }
-
-      const signatureFelt = signatureResult?.[0] ?? wallet.address;
-      const derived = viewingKeyService.deriveViewingKeyFromSignature(signatureFelt);
-      const vk = { privateKey: derived.privateViewingKey, publicKey: derived.publicViewingKey };
+      const vk = signatureResult && signatureResult.length >= 2
+        ? viewingKeyService.deriveViewingKeyFromSignature(signatureResult[0], signatureResult[1])
+        : viewingKeyService.generateViewingKey();
 
       saveViewingKey(wallet.address, vk);
       setViewingKey(vk);
+      await scanAccountNotes(vk);
     } catch (err: any) {
-      console.error('Viewing key derivation error:', err);
-      setDeriveError(err.message || 'Failed to derive viewing key');
+      setDeriveError(err.message || 'Could not derive viewing key');
     } finally {
       setIsDeriving(false);
     }
   };
 
-  const scanAccountNotes = async (vk: { privateKey: string; publicKey: string }) => {
-    if (!wallet.address) return;
+  const scanAccountNotes = async (vkToUse?: { privateKey: string; publicKey: string }) => {
+    const key = vkToUse || viewingKey;
+    if (!key || !wallet.address) return;
 
     setIsScanning(true);
     try {
-      let block: any = null;
-      for (const nodeUrl of currentNetwork.rpcUrls) {
-        try {
-          const provider = new RpcProvider({ nodeUrl });
-          block = await provider.getBlock('latest');
-          if (block) break;
-        } catch {
-          // try next RPC
-        }
-      }
+      const provider = new RpcProvider({ nodeUrl: currentNetwork.rpcUrl });
+      const currentBlock = await provider.getBlockNumber().catch(() => 0);
+      setLastScannedBlock(currentBlock);
 
-      if (block) {
-        setLastScannedBlock(block.block_number);
-      }
-
-      // Load all notes from client-side encrypted vault
-      const vaultNotes = vaultService.getNotes(wallet.address, currentNetwork.id);
-      setNotes(vaultNotes);
+      const localNotes = vaultService.getNotes(wallet.address, currentNetwork.id);
+      setNotes(localNotes);
     } catch (err) {
-      console.warn('Note scanning RPC error:', err);
+      console.error('Note scan error:', err);
     } finally {
       setIsScanning(false);
     }
@@ -168,138 +142,112 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
   const totalUnspentCount = notes.filter((n) => !n.isSpent).length;
 
   return (
-    <div className="max-w-3xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border">
+    <div className="max-w-2xl mx-auto p-6 bg-zinc-950 border border-zinc-800 corner-box shadow-2xl space-y-5 font-mono">
+      <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-sky-400" />
-            <span>UTXO Channel & Note Inspector</span>
+          <h2 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+            <Lock className="w-4 h-4 text-orrange-400" />
+            <span>Poseidon UTXO Note Scanner</span>
           </h2>
-          <p className="text-xs text-zinc-400">
-            Scans your directional subchannels in {currentNetwork.name} STRK20 pool WriteOnce storage.
+          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+            Client-Side Decryption Engine // {currentNetwork.name}
           </p>
         </div>
 
         <button
-          onClick={() => viewingKey && scanAccountNotes(viewingKey)}
-          disabled={isScanning || !wallet.isConnected || !viewingKey}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all self-start sm:self-auto"
+          onClick={() => scanAccountNotes()}
+          disabled={isScanning || !viewingKey}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-200 transition-all uppercase disabled:opacity-40"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-          <span>{isScanning ? 'Scanning RPC...' : 'Rescan Pool Notes'}</span>
+          <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-orrange-400' : ''}`} />
+          <span>{isScanning ? 'Scanning...' : 'Scan Events'}</span>
         </button>
       </div>
 
-      {/* Discovery Metrics */}
-      <div className="grid grid-cols-3 gap-2.5 text-xs font-mono">
-        <div className="p-3 rounded-xl bg-surface-elevated border border-surface-border">
-          <span className="text-zinc-500 text-[10px] uppercase">Connected Address</span>
-          <div className="text-white font-bold text-xs mt-0.5 truncate">
-            {wallet.address ? shortenAddress(wallet.address, 4) : 'Not Connected'}
-          </div>
-        </div>
-        <div className="p-3 rounded-xl bg-surface-elevated border border-surface-border">
-          <span className="text-zinc-500 text-[10px] uppercase">Spendable UTXOs</span>
-          <div className="text-emerald-400 font-bold text-sm mt-0.5">{totalUnspentCount} Notes</div>
-        </div>
-        <div className="p-3 rounded-xl bg-surface-elevated border border-surface-border">
-          <span className="text-zinc-500 text-[10px] uppercase">Latest Block ({currentNetwork.label})</span>
-          <div className="text-sky-400 font-bold text-sm mt-0.5">
-            {lastScannedBlock ? `#${lastScannedBlock}` : 'Ready'}
-          </div>
-        </div>
-      </div>
-
-      {/* Step 1: Viewing Key Setup */}
-      {wallet.isConnected && !viewingKey && (
-        <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 space-y-3">
-          <div className="flex items-start gap-2.5">
-            <Key className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+      {/* Viewing Key Status */}
+      {!viewingKey && (
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-orrange-500/10 border border-orrange-500/30 text-orrange-400 shrink-0">
+              <Key className="w-4 h-4" />
+            </div>
             <div>
-              <p className="text-xs font-semibold text-amber-200">Viewing Key Required to Scan Notes</p>
-              <p className="text-[11px] text-zinc-400 mt-0.5">
-                STRK20 note discovery requires your private viewing key, derived once from a wallet signature. The key never leaves your browser and is stored locally.
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                Derive Viewing Key to Decrypt Notes
+              </h3>
+              <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                Your viewing key decrypts your incoming UTXOs locally in the browser without revealing your private spending credentials.
               </p>
             </div>
           </div>
+
           {deriveError && (
-            <div className="flex items-center gap-2 text-[11px] text-rose-300">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{deriveError}</span>
             </div>
           )}
+
           <button
             onClick={handleDeriveViewingKey}
-            disabled={isDeriving}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white text-xs font-semibold transition-all"
+            disabled={isDeriving || !wallet.isConnected}
+            className="w-full py-2.5 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
           >
-            {isDeriving ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Requesting signature from wallet...</span>
-              </>
-            ) : (
-              <>
-                <Key className="w-3.5 h-3.5" />
-                <span>Sign to Derive Viewing Key (One-Time)</span>
-              </>
-            )}
+            {isDeriving ? 'Deriving Key in Wallet...' : 'Derive Viewing Key'}
           </button>
         </div>
       )}
 
-      {/* Viewing key active badge */}
-      {wallet.isConnected && viewingKey && (
-        <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-xs">
+      {/* Active Key Badge */}
+      {viewingKey && (
+        <div className="flex items-center justify-between p-2.5 bg-zinc-900 border border-zinc-800 text-xs">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-emerald-300 font-semibold">Viewing Key Active</span>
-            <span className="text-zinc-500 font-mono">{shortenAddress(viewingKey.publicKey, 4)}</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-orrange-500 animate-pulse" />
+            <span className="text-orrange-400 font-bold uppercase text-[10px]">VIEWING_KEY_ACTIVE:</span>
+            <span className="text-zinc-400 font-mono text-[10px]">{shortenAddress(viewingKey.publicKey, 6)}</span>
           </div>
           <button
             onClick={() => {
-              if (wallet.address) {
-                localStorage.removeItem(`${VK_STORAGE_KEY}_${wallet.address}`);
-              }
+              if (wallet.address) localStorage.removeItem(`${VK_STORAGE_KEY}_${wallet.address}`);
               setViewingKey(null);
               setNotes([]);
             }}
-            className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors"
+            className="text-[10px] text-zinc-500 hover:text-rose-400 uppercase"
           >
-            Clear Key
+            [CLEAR]
           </button>
         </div>
       )}
 
-      {/* Filter Tabs */}
+      {/* Filters */}
       {notes.length > 0 && (
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-1.5 pt-1">
           <button
             onClick={() => setActiveFilter('ALL')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+            className={`px-3 py-1 text-[10px] font-bold uppercase border transition-all ${
               activeFilter === 'ALL'
-                ? 'bg-zinc-700 text-white'
-                : 'bg-surface-elevated text-zinc-400 hover:text-zinc-200'
+                ? 'border-orrange-500 bg-orrange-500 text-black'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
             }`}
           >
             All Notes ({notes.length})
           </button>
           <button
             onClick={() => setActiveFilter('UNSPENT')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+            className={`px-3 py-1 text-[10px] font-bold uppercase border transition-all ${
               activeFilter === 'UNSPENT'
-                ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                : 'bg-surface-elevated text-zinc-400 hover:text-zinc-200'
+                ? 'border-orrange-500 bg-orrange-500 text-black'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
             }`}
           >
-            Unspent Only ({totalUnspentCount})
+            Unspent ({totalUnspentCount})
           </button>
           <button
             onClick={() => setActiveFilter('SPENT')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+            className={`px-3 py-1 text-[10px] font-bold uppercase border transition-all ${
               activeFilter === 'SPENT'
-                ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40'
-                : 'bg-surface-elevated text-zinc-400 hover:text-zinc-200'
+                ? 'border-orrange-500 bg-orrange-500 text-black'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
             }`}
           >
             Spent ({notes.length - totalUnspentCount})
@@ -309,94 +257,57 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
 
       {/* Note List / Empty State */}
       {viewingKey && notes.length === 0 && !isScanning && (
-        <div className="p-8 text-center rounded-2xl bg-surface-elevated border border-surface-border space-y-3">
-          <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mx-auto">
-            <Lock className="w-6 h-6" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-white">No Encrypted Notes Found on {currentNetwork.name}</h3>
-            <p className="text-xs text-zinc-400 max-w-md mx-auto mt-1">
-              Deposit (shield) tokens into the STRK20 pool to create your first encrypted UTXO note.
-            </p>
-          </div>
-          <div className="pt-2">
-            <a
-              href={`${currentNetwork.explorerUrl}/contract/${currentNetwork.poolAddress}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-sky-400 hover:underline font-mono"
-            >
-              <span>Verify STRK20 Pool On {currentNetwork.name}</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
+        <div className="p-8 text-center bg-zinc-900/30 border border-dashed border-zinc-800 space-y-2">
+          <p className="text-xs font-bold text-white uppercase">No Encrypted Notes Found</p>
+          <p className="text-[11px] text-zinc-500">Deposit tokens into the pool to generate your first UTXO note.</p>
         </div>
       )}
 
       {filteredNotes.length > 0 && (
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {filteredNotes.map((note) => {
             const token = currentNetwork.tokens.find(t => t.address === note.tokenAddress) || currentNetwork.tokens[0];
             return (
               <div
                 key={note.noteId}
-                className={`p-4 rounded-xl border transition-all ${
+                className={`p-3.5 border transition-all ${
                   note.isSpent
-                    ? 'bg-surface/50 border-surface-border opacity-70'
-                    : 'bg-surface-elevated border-surface-border hover:border-sky-500/30'
+                    ? 'bg-zinc-950/40 border-zinc-900 opacity-60'
+                    : 'bg-zinc-900/60 border-zinc-800 hover:border-orrange-500/40'
                 }`}
               >
-                <div className="flex items-center justify-between pb-2 border-b border-surface-border/60">
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
                   <div className="flex items-center gap-2">
-                    <div className={`p-1.5 rounded-lg ${note.isSpent ? 'bg-zinc-800 text-zinc-500' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      <Lock className="w-3.5 h-3.5" />
-                    </div>
-                    <div>
-                      <span className="text-xs font-bold text-white font-mono">
-                        {note.tokenSymbol} Note (Index #{note.index})
-                      </span>
-                      <span className="text-[10px] text-zinc-500 font-mono ml-2">Block #{note.blockNumber}</span>
-                    </div>
+                    <span className="text-xs font-bold text-white font-mono">
+                      {note.tokenSymbol} Note #{note.index}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">Block #{note.blockNumber}</span>
                   </div>
 
-                  <div className="flex items-center gap-2 font-mono">
-                    <span className={`text-xs font-bold ${note.isSpent ? 'text-zinc-500 line-through' : 'text-emerald-400'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-bold ${note.isSpent ? 'text-zinc-500 line-through' : 'text-orrange-400'}`}>
                       {formatTokenAmount(note.amount, token.decimals)} {note.tokenSymbol}
                     </span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                    <span className={`text-[9px] px-1.5 py-0.2 font-bold border ${
                       note.isSpent
-                        ? 'bg-zinc-800 text-zinc-400'
-                        : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                        ? 'bg-zinc-900 text-zinc-500 border-zinc-800'
+                        : 'bg-orrange-500/20 text-orrange-300 border-orrange-500/40'
                     }`}>
                       {note.isSpent ? 'SPENT' : 'UNSPENT'}
                     </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-[11px] font-mono text-zinc-400">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-[10px] text-zinc-500">
                   <div>
-                    <span className="text-zinc-500">Poseidon Note ID:</span>{' '}
+                    <span>Poseidon Note ID: </span>
                     <span className="text-zinc-300">{shortenAddress(note.noteId, 6)}</span>
                   </div>
                   <div>
-                    <span className="text-zinc-500">Nullifier:</span>{' '}
-                    <span className="text-purple-400">{shortenAddress(note.nullifier, 6)}</span>
+                    <span>Nullifier: </span>
+                    <span className="text-amber-400">{shortenAddress(note.nullifier, 6)}</span>
                   </div>
                 </div>
-
-                {note.txHash && (
-                  <div className="pt-2 text-right">
-                    <a
-                      href={`${currentNetwork.explorerUrl}/tx/${note.txHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] text-zinc-500 hover:text-sky-400 inline-flex items-center gap-1 font-mono"
-                    >
-                      <span>Tx: {shortenAddress(note.txHash, 4)}</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  </div>
-                )}
               </div>
             );
           })}

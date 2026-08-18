@@ -94,65 +94,43 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
   };
 
   return (
-    <div className="max-w-xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl">
-      <div className="flex items-center justify-between mb-5">
+    <div className="max-w-xl mx-auto p-6 bg-zinc-950 border border-zinc-800 corner-box shadow-2xl space-y-5 font-mono">
+      <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <ArrowDownLeft className="w-5 h-5 text-amber-400" />
+          <h2 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+            <ArrowDownLeft className="w-4 h-4 text-orrange-400" />
             <span>Unshield Tokens (Private → Public)</span>
           </h2>
-          <p className="text-xs text-zinc-400">
-            Withdraw private {currentNetwork.name} pool notes back to any public Starknet address
+          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+            Withdraw encrypted UTXO notes to any public Starknet address via relayer
           </p>
         </div>
+        <span className="text-[10px] text-orrange-400 font-bold border border-orrange-500/30 px-2 py-0.5 bg-orrange-950/40">
+          [ UNLINKABLE_EXIT ]
+        </span>
       </div>
 
       <form onSubmit={handleUnshield} className="space-y-4">
-        {/* Destination Address */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-2">
+        {/* Token & Amount */}
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Destination Public Address</span>
-            {wallet.address && (
-              <button
-                type="button"
-                onClick={handleFillSelf}
-                className="text-[11px] text-sky-400 hover:underline"
-              >
-                Use Connected ({shortenAddress(wallet.address, 3)})
-              </button>
-            )}
-          </div>
-          <input
-            type="text"
-            placeholder="0x..."
-            value={destination}
-            onChange={(e) => setDestination(e.target.value)}
-            disabled={step !== 'IDLE'}
-            className="w-full bg-surface border border-surface-border text-white text-xs font-mono rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 transition-colors"
-          />
-        </div>
-
-        {/* Asset & Amount */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-3">
-          <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Asset & Shielded Amount</span>
+            <span>SELECT ASSET & AMOUNT</span>
             <span>
               Shielded Balance:{' '}
-              <strong className="text-amber-400 font-mono">
+              <strong className="text-orrange-400">
                 {formatTokenAmount(shieldedBal, selectedToken.decimals)} {selectedToken.symbol}
               </strong>
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Token Selector */}
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
-              className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 transition-colors"
+              className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-700 text-white font-bold text-xs outline-none cursor-pointer"
             >
               {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
@@ -161,65 +139,94 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
               ))}
             </select>
 
-            {/* Input */}
             <div className="relative flex-1">
               <input
                 type="number"
                 step="any"
+                min="0"
                 placeholder="0.0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 disabled={step !== 'IDLE'}
-                className="w-full bg-surface border border-surface-border text-white text-base font-mono rounded-xl px-3 py-2 outline-none focus:border-amber-500 transition-colors"
+                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white font-bold text-sm outline-none"
               />
               <button
                 type="button"
                 onClick={handleMax}
                 disabled={step !== 'IDLE'}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-400 hover:text-amber-300 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-orrange-400 hover:underline uppercase"
               >
-                MAX
+                [MAX]
               </button>
             </div>
           </div>
         </div>
 
-        {/* Public disclosure */}
-        <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-500/20 text-xs text-amber-200/80 flex items-start gap-2">
-          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p>
-              <strong>Notice:</strong> The unshield leg transfers tokens out of the pool to the destination address. Observers will see the pool paid this address, but your past transfers remain unlinked.
-            </p>
+        {/* Destination Public Address */}
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-2">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>DESTINATION STARKNET ADDRESS</span>
+            {wallet.address && (
+              <button
+                type="button"
+                onClick={handleFillSelf}
+                className="text-[10px] text-orrange-400 hover:underline uppercase font-bold"
+              >
+                [Use My Connected Wallet]
+              </button>
+            )}
           </div>
+
+          <input
+            type="text"
+            placeholder="0x... (Recipient Public Address)"
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            disabled={step !== 'IDLE'}
+            className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white font-mono text-xs outline-none"
+          />
+        </div>
+
+        {/* Informational Box */}
+        <div className="p-3 bg-zinc-900/40 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+          <div className="flex items-center gap-1.5 font-bold text-white uppercase text-[10px]">
+            <Info className="w-3.5 h-3.5 text-orrange-400" />
+            <span>Unshielding Guarantee:</span>
+          </div>
+          <p>
+            1. The relayer invokes the withdrawal on Starknet — the public blockchain only sees funds leaving the pool.
+          </p>
+          <p>
+            2. There is <strong className="text-white">NO cryptographic link</strong> between your deposit address and this withdrawal address.
+          </p>
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
+        {/* Action Button */}
         <button
           type="submit"
-          disabled={step !== 'IDLE' || !amount || !destination}
-          className="w-full py-3.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 transition-all"
+          disabled={step !== 'IDLE' || !amount || parseFloat(amount) <= 0 || !destination}
+          className="w-full py-3 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
-          {step !== 'IDLE' ? (
+          {step === 'PROVING' && (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>
-                {step === 'PROVING' && 'Proving nullifier & withdrawal...'}
-                {step === 'SUBMITTING' && 'Executing pool withdrawal...'}
-              </span>
-            </>
-          ) : (
-            <>
-              <ArrowDownLeft className="w-4 h-4" />
-              <span>Unshield to Public Address</span>
+              <span>Step 1/2: Generating Nullifier Proof...</span>
             </>
           )}
+          {step === 'SUBMITTING' && (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Step 2/2: Relayer Withdrawing Public ERC-20...</span>
+            </>
+          )}
+          {step === 'IDLE' && <span>Unshield to Public Address</span>}
         </button>
       </form>
     </div>

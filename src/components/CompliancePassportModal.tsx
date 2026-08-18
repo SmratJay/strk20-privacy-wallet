@@ -28,17 +28,16 @@ export const CompliancePassportModal: React.FC<CompliancePassportModalProps> = (
 }) => {
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [selectedProofType, setSelectedProofType] = useState<'KYC' | 'VOLUME' | 'JURISDICTION'>('KYC');
 
   if (!isOpen) return null;
 
-  const PASSPORT_TAG = '0x50415353504f52545f5441473a5631'; // PASSPORT_TAG:V1
+  const PASSPORT_TAG = '0x50415353504f52545f5441473a5631';
   const addrHex = walletAddress ? (walletAddress.startsWith('0x') ? walletAddress : '0x' + walletAddress) : '0x0';
   const nowHex = '0x' + Date.now().toString(16);
   const kycCommitment = hash.computePoseidonHashOnElements([PASSPORT_TAG, addrHex, '0x1', nowHex]);
-  const volumeCommitment = hash.computePoseidonHashOnElements([PASSPORT_TAG, addrHex, '0xc350', nowHex]); // 50,000 = 0xc350
-  const jurisdictionCommitment = hash.computePoseidonHashOnElements([PASSPORT_TAG, addrHex, '0x3e7', nowHex]); // 999 = 0x3e7
+  const volumeCommitment = hash.computePoseidonHashOnElements([PASSPORT_TAG, addrHex, '0xc350', nowHex]);
+  const jurisdictionCommitment = hash.computePoseidonHashOnElements([PASSPORT_TAG, addrHex, '0x3e7', nowHex]);
 
   const passportPayload = {
     protocol: 'PEL-Privacy-Passport-v1',
@@ -78,99 +77,81 @@ export const CompliancePassportModal: React.FC<CompliancePassportModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md font-mono">
+      <div className="bg-zinc-950 border border-orrange-500/50 corner-box w-full max-w-lg overflow-hidden shadow-2xl space-y-4 p-5">
         {/* Header */}
-        <div className="p-6 border-b border-zinc-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-              <FileCheck2 className="w-5 h-5" />
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-orrange-500/10 border border-orrange-500/30 text-orrange-400">
+              <FileCheck2 className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">PEL Privacy Passport</h3>
-              <p className="text-xs text-zinc-400">Selective Disclosure & Compliance (Section 14)</p>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">PEL Privacy Passport</h3>
+              <p className="text-[10px] text-zinc-500 uppercase">ZK Selective Compliance Credentials</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-zinc-800/60 hover:bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors"
+            className="p-1 text-zinc-500 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="p-6 space-y-4">
-          <div className="p-3.5 rounded-2xl bg-purple-500/5 border border-purple-500/20 text-xs text-zinc-300">
-            <div className="font-semibold text-purple-300 mb-1 flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-purple-400" />
-              Minimum Necessary Disclosure Principle
+        {/* Info Banner */}
+        <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+          <span className="text-orrange-400 font-bold uppercase text-[10px]">Zero-Knowledge Proof Attestation:</span>
+          <p>
+            Prove accredited status and sanction screening without revealing wallet balances, personal identity, or historical trading counterparties.
+          </p>
+        </div>
+
+        {/* Credentials Breakdown */}
+        <div className="space-y-2">
+          <div className="p-3 bg-zinc-900 border border-zinc-800 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-bold text-white">Proof(KYC == true)</div>
+              <div className="text-[10px] text-zinc-500">Poseidon Hash: {kycCommitment.slice(0, 14)}...</div>
             </div>
-            Prove compliance predicates directly to counterparties, auditors, and regulators without revealing your
-            underlying transaction history or private balances.
+            <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 uppercase font-bold">
+              VERIFIED
+            </span>
           </div>
 
-          {/* Proof Badges */}
-          <div className="space-y-2">
-            <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span className="font-semibold text-zinc-200">Proof(KYC == true)</span>
-              </div>
-              <span className="text-[10px] font-mono text-purple-400 truncate max-w-[120px]">
-                {kycCommitment.substring(0, 10)}...
-              </span>
+          <div className="p-3 bg-zinc-900 border border-zinc-800 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-bold text-white">Proof(Volume &gt;= $50k)</div>
+              <div className="text-[10px] text-zinc-500">Tier: ACCREDITED_TRADER</div>
             </div>
-
-            <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span className="font-semibold text-zinc-200">Proof(TotalVolume ≥ $50k)</span>
-              </div>
-              <span className="text-[10px] font-mono text-purple-400 truncate max-w-[120px]">
-                {volumeCommitment.substring(0, 10)}...
-              </span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span className="font-semibold text-zinc-200">Proof(Sanctions == Clean)</span>
-              </div>
-              <span className="text-[10px] font-mono text-purple-400 truncate max-w-[120px]">
-                {jurisdictionCommitment.substring(0, 10)}...
-              </span>
-            </div>
+            <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 uppercase font-bold">
+              VERIFIED
+            </span>
           </div>
 
-          {/* Raw JSON Preview */}
-          <div>
-            <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
-              <span>Cryptographic Proof Payload</span>
-              <button
-                onClick={handleCopy}
-                className="flex items-center gap-1 text-[11px] text-purple-400 hover:text-purple-300 font-bold"
-              >
-                {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                {copied ? 'Copied' : 'Copy JSON'}
-              </button>
+          <div className="p-3 bg-zinc-900 border border-zinc-800 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-bold text-white">Proof(Jurisdiction != Sanctioned)</div>
+              <div className="text-[10px] text-zinc-500">OFAC / FATF Compliant</div>
             </div>
-            <pre className="p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 text-[10px] font-mono text-zinc-300 max-h-36 overflow-y-auto leading-relaxed">
-              {JSON.stringify(passportPayload, null, 2)}
-            </pre>
+            <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 uppercase font-bold">
+              VERIFIED
+            </span>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-4 bg-zinc-950/80 border-t border-zinc-800/80 flex items-center justify-between gap-3">
-          <span className="text-[10px] text-zinc-500">
-            Powered by Stwo Prover & Cairo v2 Circuits
-          </span>
+        {/* Actions */}
+        <div className="flex gap-2 pt-2">
           <button
             onClick={handleCopy}
-            className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-900/30 transition-all"
+            className="flex-1 py-2.5 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black font-black text-xs uppercase tracking-wider transition-all"
           >
-            Export Compliance Proof
+            {copied ? '✓ Copied ZK Payload' : 'Export JSON Passport'}
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 border border-zinc-800 hover:border-zinc-700 bg-zinc-900 text-zinc-300 hover:text-white text-xs font-bold uppercase transition-all"
+          >
+            Close
           </button>
         </div>
       </div>

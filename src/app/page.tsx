@@ -1,79 +1,85 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Shield, 
+  ShieldCheck, 
+  ArrowLeftRight, 
+  Lock, 
   ArrowUpRight, 
   ArrowDownLeft, 
-  History, 
-  Sparkles, 
-  Layers, 
   QrCode, 
-  PieChart, 
-  TrendingUp, 
-  Zap, 
-  Lock, 
-  FileCheck2,
+  History, 
+  Sparkles,
+  PieChart,
+  TrendingUp,
+  Layers,
   Terminal,
   Activity,
-  Maximize2
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 import { Header } from '@/components/Header';
-import { PrivacyBanner } from '@/components/PrivacyBanner';
-import { BalanceCards } from '@/components/BalanceCards';
-import { AnonymityScore } from '@/components/AnonymityScore';
-import { PoolMetrics } from '@/components/PoolMetrics';
+import { LandingHero } from '@/components/landing/LandingHero';
+import { ProblemSectorCards } from '@/components/landing/ProblemSectorCards';
+import { MoatArchitectureSection } from '@/components/landing/MoatArchitectureSection';
+import { InteractiveCliBar } from '@/components/landing/InteractiveCliBar';
+
+// 10 Tabs of the Financial Super-App
 import { PortfolioTab } from '@/components/tabs/PortfolioTab';
+import { SwapTab } from '@/components/tabs/SwapTab';
 import { PerpsTab } from '@/components/tabs/PerpsTab';
 import { EarnTab } from '@/components/tabs/EarnTab';
 import { ShieldTab } from '@/components/tabs/ShieldTab';
 import { SendTab } from '@/components/tabs/SendTab';
 import { UnshieldTab } from '@/components/tabs/UnshieldTab';
-import { SwapTab } from '@/components/tabs/SwapTab';
 import { RequestTab } from '@/components/tabs/RequestTab';
 import { NoteScannerTab } from '@/components/tabs/NoteScannerTab';
 import { HistoryTab } from '@/components/tabs/HistoryTab';
+
+// Modals
 import { PublishAddressModal } from '@/components/PublishAddressModal';
 import { AuditorExportModal } from '@/components/AuditorExportModal';
 import { CompliancePassportModal } from '@/components/CompliancePassportModal';
-import { LandingHero } from '@/components/landing/LandingHero';
-import { ProblemSectorCards } from '@/components/landing/ProblemSectorCards';
-import { MoatArchitectureSection } from '@/components/landing/MoatArchitectureSection';
-import { InteractiveCliBar } from '@/components/landing/InteractiveCliBar';
-import { useStarknetWallet } from '@/hooks/useStarknetWallet';
-import { TokenInfo } from '@/config/tokens';
-import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/privacyService';
-import { useToast } from '@/components/Toast';
-import { NetworkProvider, useNetwork } from '@/context/NetworkContext';
 
-export type PELTabType = 
-  | 'PORTFOLIO'
-  | 'SWAP'
-  | 'PERPS'
-  | 'EARN'
-  | 'SEND'
-  | 'REQUEST'
-  | 'SHIELD'
-  | 'UNSHIELD'
-  | 'SCANNER'
+import { useStarknetWallet } from '@/hooks/useStarknetWallet';
+import { privacyService, ShieldedBalance, PrivacyTransaction } from '@/services/privacyService';
+import { TokenInfo } from '@/config/tokens';
+import { useToast } from '@/components/Toast';
+import { useNetwork } from '@/context/NetworkContext';
+
+type PELTabType = 
+  | 'PORTFOLIO' 
+  | 'SWAP' 
+  | 'PERPS' 
+  | 'EARN' 
+  | 'SHIELD' 
+  | 'SEND' 
+  | 'UNSHIELD' 
+  | 'REQUEST' 
+  | 'SCANNER' 
   | 'HISTORY';
 
-function WalletAppContent() {
-  const wallet = useStarknetWallet();
+export default function Home() {
   const { showToast } = useToast();
-  const { currentNetwork, networkId, setNetworkId, isSepolia } = useNetwork();
+  const { currentNetwork, setNetworkId } = useNetwork();
+  const wallet = useStarknetWallet(currentNetwork);
+
+  // Active Terminal Tab State
   const [activeTab, setActiveTab] = useState<PELTabType>('PORTFOLIO');
+
+  // Modal visibility states
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isAuditorModalOpen, setIsAuditorModalOpen] = useState(false);
   const [isPassportModalOpen, setIsPassportModalOpen] = useState(false);
 
-  // Deep-link / invoice pre-fill state
+  // Pre-filled props for SendTab from invoice deep-links
   const [initialRecipient, setInitialRecipient] = useState('');
   const [initialTokenSymbol, setInitialTokenSymbol] = useState('');
   const [initialAmount, setInitialAmount] = useState('');
   const [initialMemo, setInitialMemo] = useState('');
-  
-  const [balances, setBalances] = useState<ShieldedBalance[]>(
+
+  // Balances state
+  const [balances, setBalances] = useState<ShieldedBalance[]>(() =>
     currentNetwork.tokens.map((token) => ({
       token,
       publicBalance: 0n,
@@ -222,53 +228,51 @@ function WalletAppContent() {
         </div>
 
         {/* 4. Live orrange Super-App Terminal Section */}
-        <div id="terminal" className="pt-16 border-t border-zinc-800/80 space-y-8 scroll-mt-20">
+        <div id="terminal" className="pt-16 border-t border-zinc-800/80 space-y-6 scroll-mt-20">
           {/* Terminal Section Header */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-zinc-800">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-orrange-500 tracking-wider uppercase mb-1">
-                <Terminal className="w-4 h-4" />
-                <span>ORRANGE // TERMINAL WORKSTATION</span>
+          <div className="bg-zinc-950 border border-orrange-500/40 p-4 sm:p-5 corner-box space-y-3 font-mono">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-orrange-500/10 border border-orrange-500/30 flex items-center justify-center text-orrange-400 shrink-0">
+                  <Terminal className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-orrange-400 uppercase tracking-widest">
+                    <span className="w-2 h-2 rounded-full bg-orrange-500 animate-pulse" />
+                    <span>ORRANGE // PEL WORKSTATION v2.4</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight uppercase">
+                    Private Execution Terminal
+                  </h2>
+                </div>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono tracking-tight uppercase">
-                Private Financial Terminal
-              </h2>
-            </div>
 
-            <div className="flex items-center gap-3 text-[11px] font-mono text-zinc-400">
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-950 border border-zinc-800">
-                <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span>BLOCK: #13551720</span>
-              </span>
-              <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-950 border border-zinc-800 text-orrange-400 font-bold">
-                <span>POOL: ACTIVE</span>
-              </span>
-            </div>
-          </div>
-
-          <PrivacyBanner />
-
-          {/* Core Wallet & Pool Metrics Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
-              <BalanceCards
-                balances={balances}
-                isLoading={isLoadingBalances}
-                onRefresh={refreshBalances}
-                onSelectAction={(tab) => scrollToTerminal(tab)}
-              />
-            </div>
-            <div className="space-y-6">
-              <AnonymityScore balances={balances} />
-              <PoolMetrics />
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <div className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300">
+                  <span className="text-zinc-500 mr-1.5">NETWORK:</span>
+                  <span className="text-orrange-400 font-bold uppercase">{currentNetwork.label}</span>
+                </div>
+                <div className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300">
+                  <span className="text-zinc-500 mr-1.5">STWO PROVER:</span>
+                  <span className="text-emerald-400 font-bold">STARK ACTIVE</span>
+                </div>
+                <button
+                  onClick={refreshBalances}
+                  disabled={isLoadingBalances}
+                  className="px-3 py-1.5 bg-orrange-500/10 hover:bg-orrange-500/20 border border-orrange-500/40 text-orrange-400 font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isLoadingBalances ? 'animate-spin' : ''}`} />
+                  <span>SYNC</span>
+                </button>
+              </div>
             </div>
           </div>
 
           {/* 10 Terminal Navigation Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-zinc-800 no-scrollbar font-mono text-xs">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-zinc-800/80 no-scrollbar font-mono text-xs">
             <button
               onClick={() => setActiveTab('PORTFOLIO')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'PORTFOLIO'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -280,7 +284,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('SWAP')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'SWAP'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -292,7 +296,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('PERPS')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'PERPS'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -304,7 +308,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('EARN')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'EARN'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -316,7 +320,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('SEND')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'SEND'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -328,7 +332,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('REQUEST')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'REQUEST'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -340,7 +344,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('SHIELD')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'SHIELD'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -352,7 +356,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('UNSHIELD')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'UNSHIELD'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -364,7 +368,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('SCANNER')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'SCANNER'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -376,7 +380,7 @@ function WalletAppContent() {
 
             <button
               onClick={() => setActiveTab('HISTORY')}
-              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box cursor-pointer ${
                 activeTab === 'HISTORY'
                   ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
                   : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -388,7 +392,7 @@ function WalletAppContent() {
           </div>
 
           {/* Active Workstation Viewport */}
-          <div className="p-4 sm:p-6 bg-zinc-950/90 border border-zinc-800 corner-box shadow-2xl">
+          <div className="p-4 sm:p-6 bg-zinc-950 border border-orrange-500/30 corner-box shadow-2xl">
             {activeTab === 'PORTFOLIO' && (
               <PortfolioTab
                 balances={balances}
@@ -464,15 +468,13 @@ function WalletAppContent() {
                     timestamp: Date.now(),
                     status: 'CONFIRMED',
                     isPrivate: true,
-                    privacyDetails: 'Confidential UTXO Note Transfer to Stealth Recipient',
+                    privacyDetails: 'Encrypted note transfer (Poseidon note hash)',
                   });
                 }}
               />
             )}
 
-            {activeTab === 'REQUEST' && (
-              <RequestTab wallet={wallet} />
-            )}
+            {activeTab === 'REQUEST' && <RequestTab wallet={wallet} />}
 
             {activeTab === 'UNSHIELD' && (
               <UnshieldTab
@@ -489,24 +491,30 @@ function WalletAppContent() {
                     timestamp: Date.now(),
                     status: 'CONFIRMED',
                     isPrivate: true,
-                    privacyDetails: 'Burned Note & Transferred to Public Starknet Address',
+                    privacyDetails: 'Relayer-mediated public withdrawal',
                   });
                 }}
               />
             )}
 
             {activeTab === 'SCANNER' && (
-              <NoteScannerTab wallet={wallet} onShieldRedirect={() => setActiveTab('SHIELD')} />
+              <NoteScannerTab
+                wallet={wallet}
+                onShieldRedirect={() => setActiveTab('SHIELD')}
+              />
             )}
 
             {activeTab === 'HISTORY' && (
-              <HistoryTab transactions={transactions} onClear={() => saveTransactions([])} />
+              <HistoryTab
+                transactions={transactions}
+                onClear={() => saveTransactions([])}
+              />
             )}
           </div>
         </div>
       </main>
 
-      {/* 5. Sticky Interactive CLI Bar at Bottom */}
+      {/* Interactive Sticky Bottom CLI Bar */}
       <InteractiveCliBar onExecuteCommand={(tab) => scrollToTerminal(tab)} />
 
       {/* Modals */}
@@ -528,15 +536,5 @@ function WalletAppContent() {
         walletAddress={wallet.address || ''}
       />
     </div>
-  );
-}
-
-export default function WalletApp() {
-  return (
-    <NetworkProvider>
-      <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center text-orrange-500 font-mono text-sm">INITIALIZING ORRANGE...</div>}>
-        <WalletAppContent />
-      </Suspense>
-    </NetworkProvider>
   );
 }

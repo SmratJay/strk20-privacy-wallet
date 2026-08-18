@@ -99,27 +99,25 @@ export const SendTab: React.FC<SendTabProps> = ({
 
     const amountBigInt = parseTokenAmount(amount, selectedToken.decimals);
     if (amountBigInt <= 0n) {
-      setError('Enter a valid amount');
+      setError('Enter a valid send amount');
       return;
     }
 
     if (amountBigInt > shieldedBal) {
-      setError(`Insufficient shielded ${selectedToken.symbol} balance`);
+      setError(`Insufficient shielded ${selectedToken.symbol} balance. Shield tokens first.`);
       return;
     }
 
     setError(null);
     setStep('PREPARING');
 
-    // Clean recipient string (strip strk20: prefix if present)
-    const cleanedRecipient = recipient.replace(/^strk20:/i, '').trim();
-
     try {
       const { txHash } = await privacyService.executePrivateTransfer(
         wallet.walletAccount,
         selectedToken,
-        cleanedRecipient,
         amountBigInt,
+        recipient.trim(),
+        memo.trim() || undefined,
         (currentStep) => setStep(currentStep),
         currentNetwork.poolAddress,
         currentNetwork.id
@@ -131,161 +129,50 @@ export const SendTab: React.FC<SendTabProps> = ({
       setMemo('');
       setStep('IDLE');
     } catch (err: any) {
-      console.error('Private transfer error:', err);
-      setError(err.message || 'Private transfer failed');
+      console.error('Send error:', err);
+      setError(err.message || 'Failed to send private transaction');
       setStep('IDLE');
     }
   };
 
   return (
-    <div className="max-w-xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl">
-      {/* Invoice Banner if paying an invoice */}
-      {memo && (
-        <div className="mb-4 p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300 animate-in fade-in">
-          <div className="flex items-center gap-2">
-            <Tag className="w-4 h-4 text-emerald-400" />
-            <span>
-              <strong>Invoice Request:</strong> "{memo}"
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setMemo('')}
-            className="text-[10px] text-zinc-400 hover:text-white"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-5">
+    <div className="max-w-xl mx-auto p-6 bg-zinc-950 border border-zinc-800 corner-box shadow-2xl space-y-5 font-mono">
+      <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <Lock className="w-5 h-5 text-emerald-400" />
-            <span>Private Transfer (Encrypted UTXO)</span>
+          <h2 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+            <Lock className="w-4 h-4 text-orrange-400" />
+            <span>Send Privately (Note → Note)</span>
           </h2>
-          <p className="text-xs text-zinc-400">
-            Transfer shielded funds on {currentNetwork.name} with zero on-chain sender or amount trail
+          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+            100% on-chain privacy • UTXO Note Re-encryption via {currentNetwork.name}
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setShowAddressBook(!showAddressBook)}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-elevated border border-surface-border hover:border-emerald-500/40 text-zinc-300 text-xs transition-colors"
-        >
-          <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Address Book ({contacts.length})</span>
-        </button>
+        <span className="text-[10px] text-orrange-400 font-bold border border-orrange-500/30 px-2 py-0.5 bg-orrange-950/40">
+          [ PRIVATE_RELAY ]
+        </span>
       </div>
 
-      {/* Address Book Modal / Dropdown */}
-      {showAddressBook && (
-        <div className="mb-4 p-3.5 rounded-xl bg-surface-elevated border border-emerald-500/30 space-y-3 animate-in fade-in">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-white">Saved Privacy Contacts</span>
-            <button
-              onClick={() => setIsAddingContact(!isAddingContact)}
-              className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add Current</span>
-            </button>
-          </div>
-
-          {isAddingContact && (
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="text"
-                placeholder="Contact Name (e.g. Alice, Treasury)"
-                value={newContactName}
-                onChange={(e) => setNewContactName(e.target.value)}
-                className="flex-1 bg-surface border border-surface-border text-white text-xs rounded-lg px-2.5 py-1.5 outline-none"
-              />
-              <button
-                type="button"
-                onClick={handleSaveCurrentContact}
-                disabled={!newContactName || !recipient}
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50"
-              >
-                Save
-              </button>
-            </div>
-          )}
-
-          <div className="space-y-1 max-h-36 overflow-y-auto">
-            {contacts.length === 0 ? (
-              <p className="text-xs text-zinc-500 py-1">No contacts saved yet.</p>
-            ) : (
-              contacts.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => {
-                    setRecipient(c.privacyAddress);
-                    setShowAddressBook(false);
-                  }}
-                  className="flex items-center justify-between p-2 rounded-lg bg-surface hover:bg-zinc-800 cursor-pointer border border-surface-border text-xs text-zinc-200 transition-colors"
-                >
-                  <div>
-                    <span className="font-semibold text-white">{c.name}</span>
-                    <span className="font-mono text-zinc-400 text-[10px] ml-2">
-                      {shortenAddress(c.privacyAddress, 4)}
-                    </span>
-                  </div>
-                  <button
-                    onClick={(e) => handleDeleteContact(c.id, e)}
-                    className="p-1 text-zinc-500 hover:text-rose-400"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
       <form onSubmit={handleSend} className="space-y-4">
-        {/* Recipient Privacy Address */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-2">
+        {/* Token & Amount Selection */}
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Recipient Address / Viewing Key</span>
-            <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
-              <UserCheck className="w-3 h-3" />
-              <span>Umbra Stealth Compatible</span>
-            </span>
-          </div>
-          <input
-            type="text"
-            placeholder="strk20:0x... or 0x..."
-            value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
-            disabled={step !== 'IDLE'}
-            className="w-full bg-surface border border-surface-border text-white text-xs font-mono rounded-xl px-3 py-2.5 outline-none focus:border-emerald-500 transition-colors"
-          />
-        </div>
-
-        {/* Asset & Amount */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-3">
-          <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Asset & Shielded Amount</span>
+            <span>SELECT ASSET & AMOUNT</span>
             <span>
               Shielded Balance:{' '}
-              <strong className="text-emerald-400 font-mono">
+              <strong className="text-orrange-400">
                 {formatTokenAmount(shieldedBal, selectedToken.decimals)} {selectedToken.symbol}
               </strong>
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Token Selector */}
             <select
               value={selectedToken.symbol}
               onChange={(e) => {
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
-              className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-emerald-500 transition-colors"
+              className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-700 text-white font-bold text-xs outline-none cursor-pointer"
             >
               {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
@@ -294,65 +181,179 @@ export const SendTab: React.FC<SendTabProps> = ({
               ))}
             </select>
 
-            {/* Amount input */}
             <div className="relative flex-1">
               <input
                 type="number"
                 step="any"
+                min="0"
                 placeholder="0.0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 disabled={step !== 'IDLE'}
-                className="w-full bg-surface border border-surface-border text-white text-base font-mono rounded-xl px-3 py-2 outline-none focus:border-emerald-500 transition-colors"
+                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white font-bold text-sm outline-none"
               />
               <button
                 type="button"
                 onClick={handleMax}
                 disabled={step !== 'IDLE'}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-orrange-400 hover:underline uppercase"
               >
-                MAX
+                [MAX]
               </button>
             </div>
           </div>
         </div>
 
-        {/* Relay & Gas Badge */}
-        <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-xs text-emerald-300 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span>Paymaster Relayed (No gas link to your address)</span>
+        {/* Recipient Privacy Address */}
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-2">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>RECIPIENT ADDRESS</span>
+            <button
+              type="button"
+              onClick={() => setShowAddressBook(!showAddressBook)}
+              className="flex items-center gap-1 text-[10px] font-bold text-orrange-400 hover:underline uppercase"
+            >
+              <BookOpen className="w-3 h-3" />
+              <span>{showAddressBook ? 'Close Book' : `Address Book (${contacts.length})`}</span>
+            </button>
           </div>
-          <span className="font-mono text-[11px] text-emerald-400">Gas Sponsored</span>
+
+          {/* Address Book Modal / Dropdown */}
+          {showAddressBook && (
+            <div className="p-3 bg-zinc-950 border border-zinc-800 space-y-2 mb-2">
+              <div className="text-[10px] font-bold uppercase text-zinc-500 flex justify-between">
+                <span>Saved Contacts</span>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingContact(!isAddingContact)}
+                  className="text-orrange-400 hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>New</span>
+                </button>
+              </div>
+
+              {isAddingContact && (
+                <div className="p-2 bg-zinc-900 border border-zinc-800 space-y-2">
+                  <input
+                    type="text"
+                    placeholder="Contact Name (e.g. Alice)"
+                    value={newContactName}
+                    onChange={(e) => setNewContactName(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-zinc-950 border border-zinc-800 text-xs text-white outline-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingContact(false)}
+                      className="px-2 py-1 text-[10px] text-zinc-400"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveCurrentContact}
+                      className="px-2 py-1 bg-orrange-500 text-black font-bold text-[10px]"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {contacts.length === 0 ? (
+                  <p className="text-[10px] text-zinc-600">No saved contacts yet.</p>
+                ) : (
+                  contacts.map((c) => (
+                    <div
+                      key={c.id}
+                      onClick={() => {
+                        setRecipient(c.address);
+                        setShowAddressBook(false);
+                      }}
+                      className="p-1.5 bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800/80 flex items-center justify-between cursor-pointer"
+                    >
+                      <div>
+                        <span className="text-xs font-bold text-white">{c.name}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono block">
+                          {shortenAddress(c.address)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteContact(c.id, e)}
+                        className="text-zinc-600 hover:text-rose-400 p-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="0x... or privacy public key"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              disabled={step !== 'IDLE'}
+              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white font-mono text-xs outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Private Encrypted Memo */}
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-1.5">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>ENCRYPTED MEMO (OPTIONAL)</span>
+            <span className="text-[10px] text-zinc-500">ECDH Channel Key</span>
+          </div>
+          <input
+            type="text"
+            placeholder="e.g. Invoice #4120, Salary, Private P2P"
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            disabled={step !== 'IDLE'}
+            className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white text-xs outline-none"
+          />
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
+        {/* Action Button with Multi-step Feedback */}
         <button
           type="submit"
-          disabled={step !== 'IDLE' || !amount || !recipient}
-          className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all"
+          disabled={step !== 'IDLE' || !amount || parseFloat(amount) <= 0 || !recipient}
+          className="w-full py-3 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
-          {step !== 'IDLE' ? (
+          {step === 'PREPARING' && (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>
-                {step === 'PREPARING' && 'Deriving ECDH Channel Keys...'}
-                {step === 'PROVING' && 'Generating Stwo Zero-Knowledge Proof (~25-30s)...'}
-                {step === 'SUBMITTING' && 'Relaying Private Transfer...'}
-              </span>
-            </>
-          ) : (
-            <>
-              <ArrowUpRight className="w-4 h-4" />
-              <span>Send Privately</span>
+              <span>Step 1/3: Deriving Stealth Channel Key...</span>
             </>
           )}
+          {step === 'PROVING' && (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Step 2/3: Generating Nullifier Proof...</span>
+            </>
+          )}
+          {step === 'SUBMITTING' && (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Step 3/3: Broadcasting Note Re-encryption...</span>
+            </>
+          )}
+          {step === 'IDLE' && <span>Send Privately</span>}
         </button>
       </form>
     </div>

@@ -34,8 +34,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
 
   const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
   
-  // Clean, self-referential payment URL that deep-links directly into our wallet app
-  const baseUrl = origin || 'https://strk20-privacy.vercel.app';
+  const baseUrl = origin || 'https://orrange.xyz';
   const paymentLink = `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`;
 
   const handleCopyLink = () => {
@@ -50,23 +49,28 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
   };
 
   return (
-    <div className="max-w-xl mx-auto p-6 rounded-2xl bg-surface border border-surface-border shadow-2xl space-y-5">
-      <div>
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-emerald-400" />
-          <span>Stealth Payment Request (Invoice)</span>
-        </h2>
-        <p className="text-xs text-zinc-400">
-          Generate a dynamic QR invoice on {currentNetwork.name}. Payments deposit directly into your STRK20 encrypted channel.
-        </p>
+    <div className="max-w-xl mx-auto p-6 bg-zinc-950 border border-zinc-800 corner-box shadow-2xl space-y-5 font-mono">
+      <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
+        <div>
+          <h2 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+            <Sparkles className="w-4 h-4 text-orrange-400" />
+            <span>Stealth Payment Invoice (Dynamic QR)</span>
+          </h2>
+          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+            Generate QR invoice on {currentNetwork.name}. Payments deposit into your STRK20 channel.
+          </p>
+        </div>
+        <span className="text-[10px] text-orrange-400 font-bold border border-orrange-500/30 px-2 py-0.5 bg-orrange-950/40">
+          [ INVOICE_GENERATOR ]
+        </span>
       </div>
 
       <div className="space-y-4">
         {/* Asset & Amount Configuration */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-surface-border space-y-3">
+        <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Requested Asset & Amount</span>
-            {isSepolia && <span className="text-[11px] text-amber-400 font-mono">🧪 Sepolia Testnet</span>}
+            <span>REQUESTED ASSET & AMOUNT</span>
+            {isSepolia && <span className="text-[10px] text-amber-400 font-bold uppercase">[ Sepolia Testnet ]</span>}
           </div>
 
           <div className="flex items-center gap-3">
@@ -76,7 +80,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
-              className="bg-surface border border-surface-border text-white text-sm font-semibold rounded-xl px-3 py-2.5 outline-none"
+              className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-700 text-white font-bold text-xs outline-none cursor-pointer"
             >
               {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
@@ -91,68 +95,54 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
               placeholder="0.0"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="flex-1 bg-surface border border-surface-border text-white text-base font-mono rounded-xl px-3 py-2 outline-none focus:border-emerald-500"
+              className="flex-1 px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white font-bold text-sm outline-none"
             />
           </div>
 
           <div className="pt-1">
-            <label className="text-[11px] font-semibold text-zinc-400">Payment Memo / Reason (Private)</label>
+            <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">
+              Payment Memo / Reason (ECDH Encrypted)
+            </label>
             <input
               type="text"
-              placeholder="e.g. Freelance Invoice #102, Bounty Reward"
+              placeholder="e.g. Consulting Invoice #104"
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              className="w-full mt-1 bg-surface border border-surface-border text-white text-xs rounded-xl px-3 py-2 outline-none focus:border-emerald-500"
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-xs text-white outline-none focus:border-orrange-500"
             />
           </div>
         </div>
 
-        {/* Live Generated Real QR Invoice */}
-        <div className="p-5 rounded-xl bg-gradient-to-br from-surface-elevated via-surface to-emerald-950/20 border border-emerald-500/30 text-center space-y-3">
-          <div className="inline-block p-3 rounded-2xl bg-white shadow-xl border-2 border-emerald-500/40">
+        {/* Dynamic QR Code View */}
+        <div className="p-5 bg-zinc-900/40 border border-zinc-800 flex flex-col items-center justify-center space-y-3">
+          <div className="p-3 bg-white border border-zinc-700 shadow-md">
             <QRCodeSVG
               value={paymentLink}
-              size={150}
+              size={170}
               level="M"
               includeMargin={false}
             />
           </div>
 
-          <div>
-            <div className="text-sm font-bold text-white font-mono">
-              Requesting {amount || '0'} {selectedToken.symbol}
-            </div>
-            {memo && <div className="text-xs text-emerald-400 font-mono mt-0.5">"{memo}"</div>}
-            <div className="text-[11px] text-zinc-500 font-mono mt-1 break-all">
-              To: {shortenAddress(privacyReceiveAddress, 8)}
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <button
-              onClick={handleCopyLink}
-              className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all"
-            >
-              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? 'Link Copied!' : 'Copy Stealth Link'}</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (navigator.share) {
-                  navigator.share({ title: 'STRK20 Stealth Invoice', url: paymentLink });
-                } else {
-                  handleCopyLink();
-                }
-              }}
-              className="py-2.5 px-3 rounded-xl bg-surface-elevated hover:bg-surface-border text-zinc-200 border border-surface-border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
-            >
-              <Share2 className="w-4 h-4 text-emerald-400" />
-              <span>Share Invoice</span>
-            </button>
+          <div className="text-center space-y-1">
+            <p className="text-xs font-bold text-white uppercase">
+              Scan to Pay {amount || '0'} {selectedToken.symbol} Privately
+            </p>
+            <p className="text-[10px] text-zinc-500 font-mono">
+              Channel: {shortenAddress(privacyReceiveAddress)}
+            </p>
           </div>
         </div>
+
+        {/* Action Button: Copy URL */}
+        <button
+          type="button"
+          onClick={handleCopyLink}
+          className="w-full py-3 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer"
+        >
+          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          <span>{copied ? 'Invoice URL Copied!' : 'Copy Payment Link'}</span>
+        </button>
       </div>
     </div>
   );

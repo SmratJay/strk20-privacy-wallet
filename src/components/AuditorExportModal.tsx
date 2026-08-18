@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Check, Copy, FileText, Info, ExternalLink } from 'lucide-react';
+import { X, Check, Copy, FileText, Info } from 'lucide-react';
 import { strk20Crypto } from '@/services/strk20Crypto';
 import { useNetwork } from '@/context/NetworkContext';
 
@@ -21,7 +21,6 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Derive real domain-separated Poseidon commitment for auditor key escrow
   const escrowedBlob = strk20Crypto.computeAuditorEscrowCommitment(
     accountAddress,
     currentNetwork.poolAddress
@@ -34,87 +33,71 @@ export const AuditorExportModal: React.FC<AuditorExportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg bg-surface-elevated border border-surface-border rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md font-mono">
+      <div className="relative w-full max-w-lg bg-zinc-950 border border-orrange-500/50 corner-box shadow-2xl overflow-hidden space-y-4 p-5">
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-5 border-b border-surface-border">
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
-              <FileText className="w-5 h-5" />
+            <div className="p-1.5 bg-orrange-500/10 border border-orrange-500/30 text-orrange-400">
+              <FileText className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Selective Disclosure Protocol</h3>
-              <p className="text-xs text-zinc-400 font-mono">STRK20 Viewing Key Escrow Commitment ({currentNetwork.label})</p>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">Selective Disclosure Protocol</h3>
+              <p className="text-[10px] text-zinc-500 uppercase">STRK20 Viewing Key Escrow Commitment ({currentNetwork.label})</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-border transition-colors"
+            className="p-1 text-zinc-500 hover:text-white transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4">
-          <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/20 text-xs text-purple-200/90 flex items-start gap-2.5">
-            <Info className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+        <div className="space-y-3">
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+            <span className="text-orrange-400 font-bold uppercase text-[10px]">Institutional Compliance:</span>
             <p>
-              STRK20 supports selective disclosure: the pool is confidential by default and can disclose the information needed to respond to a legitimate regulatory request without exposing unrelated users. At registration (<code>SetViewingKey</code>), your viewing key is encrypted via ECDH to the threshold auditor public key.
+              STRK20 enables selective disclosure: the pool is confidential by default and can disclose specific slices needed for regulatory compliance without exposing unrelated participants.
             </p>
           </div>
 
-          <div className="space-y-1.5 font-mono">
-            <label className="text-xs font-semibold text-zinc-400">
-              Auditor Escrow Commitment (Poseidon Domain Hashed)
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-zinc-500 uppercase">
+              Auditor Escrow Commitment (Poseidon Domain Hash)
             </label>
-            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface border border-surface-border text-xs text-zinc-300 break-all">
+            <div className="flex items-center gap-2 p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 break-all">
               <span className="flex-1 truncate">{escrowedBlob}</span>
               <button
                 onClick={handleCopy}
-                className="p-1.5 rounded-lg bg-surface-border hover:bg-zinc-700 text-zinc-200 shrink-0 transition-colors"
-                title="Copy commitment hash"
+                className="text-orrange-400 hover:underline text-[10px] uppercase font-bold shrink-0"
               >
-                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copied ? '[COPIED]' : '[COPY]'}
               </button>
             </div>
           </div>
 
           {/* Protocol Invariants */}
-          <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs space-y-2">
-            <div className="font-semibold text-zinc-200">Cryptographic Guarantees:</div>
-            <ul className="text-zinc-400 space-y-1.5 list-disc list-inside text-[11px]">
+          <div className="p-3 bg-zinc-900/40 border border-zinc-800 text-xs space-y-1.5 text-[11px]">
+            <div className="font-bold text-white uppercase text-[10px]">Cryptographic Guarantees:</div>
+            <ul className="text-zinc-400 space-y-1 list-disc list-inside">
               <li>
-                <strong className="text-zinc-300">Auditors cannot spend:</strong> Viewing keys provide read-only history decryption; signing spend transactions requires account authority.
+                <strong className="text-zinc-300">Auditors cannot spend:</strong> Viewing keys only decrypt read history; spending requires account private key.
               </li>
               <li>
-                <strong className="text-zinc-300">Targeted isolation:</strong> Unsealing an escrow record decrypts only the specific target user's notes, preserving privacy for all other pool participants.
-              </li>
-              <li>
-                <strong className="text-zinc-300">On-Chain Screening:</strong> Deposits are screened by protocol FPI before acceptance.
+                <strong className="text-zinc-300">Targeted isolation:</strong> Unsealing decrypts only your target note slice.
               </li>
             </ul>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-surface-border bg-surface flex justify-between items-center">
-          <a
-            href="https://strk20-by-example.org/compliance"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-purple-400 hover:underline flex items-center gap-1 font-mono"
-          >
-            <span>strk20-by-example.org/compliance</span>
-            <ExternalLink className="w-3 h-3" />
-          </a>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors"
-          >
-            Close
-          </button>
-        </div>
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 border border-zinc-800 hover:border-zinc-700 bg-zinc-900 text-zinc-300 hover:text-white text-xs font-bold uppercase tracking-wider transition-all"
+        >
+          Close Escrow Inspector
+        </button>
       </div>
     </div>
   );
