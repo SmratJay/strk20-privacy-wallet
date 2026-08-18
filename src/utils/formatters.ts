@@ -29,9 +29,14 @@ export function formatTokenAmount(amount: bigint | string | number, decimals = 1
 export function parseTokenAmount(amount: string, decimals = 18): bigint {
   if (!amount || isNaN(Number(amount))) return 0n;
   const [integerPart, fractionalPart = ''] = amount.split('.');
+  const safeInteger = integerPart && integerPart.trim() !== '' ? integerPart : '0';
   const paddedFraction = fractionalPart.slice(0, decimals).padEnd(decimals, '0');
-  const fullStr = `${integerPart}${paddedFraction}`;
-  return BigInt(fullStr);
+  const fullStr = `${safeInteger}${paddedFraction}`;
+  try {
+    return BigInt(fullStr);
+  } catch {
+    return 0n;
+  }
 }
 
 export function areFeltAddressesEqual(a?: string, b?: string): boolean {

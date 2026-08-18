@@ -13,8 +13,11 @@ import { areFeltAddressesEqual, formatTokenAmount, parseTokenAmount, shortenAddr
 describe('STRK20 Cryptographic Suite & Domain Tags', () => {
   const dummyChannelKey = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
   const dummyToken = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
-  const dummyOwnerPrivKey = '0x0987654321fedcba0987654321fedcba0987654321fedcba0987654321fedcba';
-  const dummyRecipientPub = '0x0345678901abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  // Valid STARK curve keypairs (< CURVE_ORDER)
+  const dummyOwnerPrivKey = '0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdf0';
+  const dummyOwnerPubKey = '0x0355250c2e64771e60858b018ae0d8b98a324e2206bf597c9b3bc98cc0197dfbe';
+  const dummyRecipientPrivKey = '0x487654321fedcba0987654321fedcba0987654321fedcba0987654321fedcbb';
+  const dummyRecipientPub = '0x02636d216297c7ca76f911196351ab865efcbaa130ee2228553ab08f4f8f4bdc8';
   const dummyAccount = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 
   it('preserves exact STRK20 domain separation tags', () => {
@@ -56,6 +59,26 @@ describe('STRK20 Cryptographic Suite & Domain Tags', () => {
     );
     expect(channelKey).toBeDefined();
     expect(channelKey.startsWith('0x')).toBe(true);
+
+    // Symmetric key derivation by recipient with sender's public key
+    const recipientDerivedKey = strk20Crypto.deriveChannelKeyECDH(
+      dummyRecipientPrivKey,
+      dummyOwnerPubKey,
+      dummyAccount,
+      dummyToken
+    );
+    expect(recipientDerivedKey).toEqual(channelKey);
+  });
+
+  it('strictly rejects invalid public keys in ECDH instead of leaking public address hashes', () => {
+    expect(() => {
+      strk20Crypto.deriveChannelKeyECDH(
+        dummyOwnerPrivKey,
+        '0x0345678901abcdef0123456789abcdef0123456789abcdef0123456789abcdef', // Invalid curve point
+        dummyAccount,
+        dummyToken
+      );
+    }).toThrow(/ECDH key agreement failed/);
   });
 
   it('computes selective disclosure auditor escrow commitment', () => {
@@ -124,10 +147,16 @@ describe('Formatters & Utilities', () => {
     expect(areFeltAddressesEqual(zeroPadded, '0x123')).toBe(false);
   });
 
-  it('formats and parses token units with precision for 6 and 18 decimals', () => {
+  it('formats and parses token units with precision for 6 and 18 decimals and handles decimal fractions without leading zero', () => {
     const amount18 = 1500000000000000000n; // 1.5 STRK (18 decimals)
     expect(formatTokenAmount(amount18, 18, 2)).toBe('1.5');
     expect(parseTokenAmount('1.5', 18)).toBe(amount18);
+
+    // Edge case: '.5' without leading zero should parse to 0.5 (500000000000000000n)
+    expect(parseTokenAmount('.5', 18)).toBe(500000000000000000n);
+    expect(parseTokenAmount('.005', 6)).toBe(5000n);
+    expect(parseTokenAmount('', 18)).toBe(0n);
+    expect(parseTokenAmount('abc', 18)).toBe(0n);
 
     const amount6 = 50000000n; // 50 USDC (6 decimals)
     expect(formatTokenAmount(amount6, 6, 2)).toBe('50');

@@ -61,7 +61,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
         wallet.walletAccount,
         selectedToken,
         amountBigInt,
-        (currentStep) => setStep(currentStep),
+        (currentStep: any) => setStep(currentStep),
         currentNetwork.poolAddress,
         currentNetwork.id
       );

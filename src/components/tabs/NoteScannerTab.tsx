@@ -95,14 +95,21 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
             },
           });
           signatureResult = Array.isArray(res) ? res : [res];
-        } catch {
-          // Fallback
+        } catch (err: any) {
+          throw new Error(`Signature request rejected or failed: ${err?.message || 'User cancelled'}`);
         }
       }
 
-      const vk = signatureResult && signatureResult.length >= 2
-        ? viewingKeyService.deriveViewingKeyFromSignature(signatureResult[0], signatureResult[1])
-        : viewingKeyService.generateViewingKey();
+      if (!signatureResult || signatureResult.length < 1 || !signatureResult[0]) {
+        throw new Error('Wallet signature is required to securely derive your private viewing key.');
+      }
+
+      const derived = viewingKeyService.deriveViewingKeyFromSignature(signatureResult[0]);
+
+      const vk = {
+        privateKey: derived.privateViewingKey,
+        publicKey: derived.publicViewingKey,
+      };
 
       saveViewingKey(wallet.address, vk);
       setViewingKey(vk);
@@ -120,7 +127,7 @@ export const NoteScannerTab: React.FC<NoteScannerTabProps> = ({ wallet }) => {
 
     setIsScanning(true);
     try {
-      const provider = new RpcProvider({ nodeUrl: currentNetwork.rpcUrl });
+      const provider = new RpcProvider({ nodeUrl: currentNetwork.rpcUrls[0] });
       const currentBlock = await provider.getBlockNumber().catch(() => 0);
       setLastScannedBlock(currentBlock);
 

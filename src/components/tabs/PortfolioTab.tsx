@@ -19,6 +19,8 @@ import { TokenInfo } from '@/config/tokens';
 import { perpsService } from '@/services/perpsService';
 import { earnService } from '@/services/earnService';
 
+import { priceService } from '@/services/priceService';
+
 interface PortfolioTabProps {
   balances: ShieldedBalance[];
   walletAddress: string;
@@ -30,13 +32,16 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
   walletAddress,
   onNavigateTab,
 }) => {
-  const tokenPrices: Record<string, number> = {
-    STRK: 0.584,
-    ETH: 3418.75,
-    USDC: 1.00,
-    USDT: 1.00,
+  const [tokenPrices, setTokenPrices] = React.useState<Record<string, number>>(() => ({
+    ...priceService.getCachedPrices(),
     BTC: 96420.50,
-  };
+  }));
+
+  React.useEffect(() => {
+    priceService.getPrices().then((prices) => {
+      setTokenPrices({ ...prices, BTC: 96420.50 });
+    }).catch(() => {});
+  }, []);
 
   // 1. Calculate Shielded Cash Value
   const shieldedCashUsd = useMemo(() => {
@@ -45,7 +50,7 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
       const amount = Number(b.shieldedBalance) / 10 ** b.token.decimals;
       return acc + amount * price;
     }, 0);
-  }, [balances]);
+  }, [balances, tokenPrices]);
 
   // 2. Calculate Public Balance Value
   const publicCashUsd = useMemo(() => {
@@ -54,7 +59,7 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
       const amount = Number(b.publicBalance) / 10 ** b.token.decimals;
       return acc + amount * price;
     }, 0);
-  }, [balances]);
+  }, [balances, tokenPrices]);
 
   // 3. Calculate Perp Position Margin & Equity
   const perpPositions = useMemo(() => {
@@ -218,14 +223,14 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
                 {perpPositions.map((pos) => (
                   <div key={pos.id} className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs">
                     <div className="flex items-center justify-between font-bold text-white">
-                      <span>{pos.market} ({pos.side})</span>
+                      <span>{pos.marketId} ({pos.side})</span>
                       <span className={pos.unrealizedPnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                         {pos.unrealizedPnlUsd >= 0 ? '+' : ''}${pos.unrealizedPnlUsd.toFixed(2)}
                       </span>
                     </div>
                     <div className="text-[10px] text-zinc-500 mt-1 flex justify-between">
                       <span>Margin: ${pos.marginUsd}</span>
-                      <span>Liq: ${pos.liquidationPriceUsd.toFixed(2)}</span>
+                      <span>Liq: ${pos.liquidationPrice.toFixed(2)}</span>
                     </div>
                   </div>
                 ))}

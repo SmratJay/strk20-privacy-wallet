@@ -5,6 +5,8 @@
  * Enables seamless 1-click execution without repetitive wallet signature popups.
  */
 
+import { ec } from 'starknet';
+
 export interface ScopedSessionKey {
   publicKey: string;
   expiresAt: number; // Unix timestamp ms
@@ -40,15 +42,32 @@ class SessionKeyService {
 
   /**
    * Create a new scoped session key (valid for 8 hours by default)
+   * Formula: SK = (pk, exp, contracts, selectors, limits) — Whitepaper Section 9.1
    */
   createSession(
     walletAddress: string,
     dailyLimitUsd: number = 5000,
     durationHours: number = 8
   ): ScopedSessionKey {
-    // Generate pseudo-random ephemeral Starknet session pubkey
-    const entropy = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256));
-    const ephemeralPub = '0x0' + Buffer.from(entropy).toString('hex').substring(0, 63);
+    // Generate cryptographically secure ephemeral Starknet session keypair
+    const CURVE_ORDER = 3618502788666131213697322783095070105526743751716087489154079457884512865583n;
+    const entropy = new Uint8Array(32);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(entropy);
+    } else {
+      // Node / test environment fallback
+      try {
+        const nodeCrypto = require('crypto');
+        nodeCrypto.randomFillSync(entropy);
+      } catch {
+        for (let i = 0; i < 32; i++) entropy[i] = Math.floor(Math.random() * 256);
+      }
+    }
+
+    const rawEntropyBig = BigInt('0x' + Array.from(entropy).map(b => b.toString(16).padStart(2, '0')).join(''));
+    const ephemeralPrivBig = (rawEntropyBig % (CURVE_ORDER - 1n)) + 1n;
+    const ephemeralPrivHex = '0x' + ephemeralPrivBig.toString(16);
+    const ephemeralPub = ec.starkCurve.getStarkKey(ephemeralPrivHex);
 
     const session: ScopedSessionKey = {
       publicKey: ephemeralPub,

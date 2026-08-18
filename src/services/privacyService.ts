@@ -1,5 +1,5 @@
 import { RpcProvider, num, uint256, hash } from 'starknet';
-import { STRK20_POOL_ADDRESS, ALCHEMY_RPC_URL, TokenInfo, NetworkConfig, NETWORKS } from '@/config/tokens';
+import { getActivePoolAddress, getActiveRpcUrl, TokenInfo, NetworkConfig, NETWORKS, DEFAULT_NETWORK_ID } from '@/config/tokens';
 import { vaultService } from './vaultService';
 
 export const ERC20_ABI = [
@@ -67,7 +67,14 @@ export class PrivacyService {
   private defaultRpcProvider: RpcProvider;
 
   constructor() {
-    this.defaultRpcProvider = new RpcProvider({ nodeUrl: ALCHEMY_RPC_URL });
+    this.defaultRpcProvider = new RpcProvider({ nodeUrl: getActiveRpcUrl(DEFAULT_NETWORK_ID) });
+  }
+
+  getRpcProvider(network?: NetworkConfig): RpcProvider {
+    if (network && network.rpcUrls && network.rpcUrls.length > 0) {
+      return new RpcProvider({ nodeUrl: network.rpcUrls[0] });
+    }
+    return this.defaultRpcProvider;
   }
 
   /**
@@ -217,11 +224,12 @@ export class PrivacyService {
     token: TokenInfo,
     amountBigInt: bigint,
     onStepChange?: (step: 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED') => void,
-    poolAddress: string = STRK20_POOL_ADDRESS,
+    poolAddress?: string,
     networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
+    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
     const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
     const u256Amount = uint256.bnToUint256(amountBigInt);
 
@@ -246,7 +254,7 @@ export class PrivacyService {
     const transferCall = {
       contractAddress: token.address,
       entrypoint: 'transfer',
-      calldata: [poolAddress, u256Amount.low, u256Amount.high],
+      calldata: [targetPoolAddress, u256Amount.low, u256Amount.high],
     };
 
     const executor = walletAccount.account || walletAccount;
@@ -265,7 +273,7 @@ export class PrivacyService {
         txHash,
         undefined,
         undefined,
-        poolAddress
+        targetPoolAddress
       );
     }
 
@@ -282,11 +290,12 @@ export class PrivacyService {
     recipientViewingKeyOrAddress: string,
     amountBigInt: bigint,
     onStepChange?: (step: 'PREPARING' | 'PROVING' | 'SUBMITTING') => void,
-    poolAddress: string = STRK20_POOL_ADDRESS,
+    poolAddress?: string,
     networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
+    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
     const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
     onStepChange?.('PREPARING');
 
@@ -335,11 +344,12 @@ export class PrivacyService {
     destinationAddress: string,
     amountBigInt: bigint,
     onStepChange?: (step: 'PROVING' | 'SUBMITTING') => void,
-    poolAddress: string = STRK20_POOL_ADDRESS,
+    poolAddress?: string,
     networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
+    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
     const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
     onStepChange?.('PROVING');
 

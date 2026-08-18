@@ -1,5 +1,5 @@
 import { getQuotes, Quote, quoteToCalls, executeSwap } from '@avnu/avnu-sdk';
-import { TokenInfo, STRK20_POOL_ADDRESS } from '@/config/tokens';
+import { TokenInfo, getActivePoolAddress } from '@/config/tokens';
 import { parseTokenAmount } from '@/utils/formatters';
 
 export interface SwapQuoteResult {
@@ -9,30 +9,33 @@ export interface SwapQuoteResult {
   routes: string[];
   estimatedGasFeeStrk: string;
   rawQuote: Quote | null;
+  isFallbackEstimated: boolean;
 }
 
 export class AvnuService {
   /**
-   * Fetch real-time DEX aggregation quote for private or standard swaps
+   * Fetch real-time DEX aggregation quote for private or standard swaps (Whitepaper Section 5 & 6)
    */
   async getPrivateSwapQuote(
     sellToken: TokenInfo,
     buyToken: TokenInfo,
     amountStr: string,
     takerAddress?: string,
-    avnuBaseUrl?: string
+    avnuBaseUrl?: string,
+    networkId?: string
   ): Promise<SwapQuoteResult | null> {
     if (!amountStr || parseFloat(amountStr) <= 0) return null;
 
     try {
       const sellAmountBigInt = parseTokenAmount(amountStr, sellToken.decimals);
       const avnuOptions = avnuBaseUrl ? { baseUrl: avnuBaseUrl } : undefined;
+      const defaultTaker = takerAddress || getActivePoolAddress(networkId || 'mainnet');
       
       const quotes = await getQuotes({
         sellTokenAddress: sellToken.address,
         buyTokenAddress: buyToken.address,
         sellAmount: sellAmountBigInt,
-        takerAddress: takerAddress || STRK20_POOL_ADDRESS,
+        takerAddress: defaultTaker,
       }, avnuOptions);
 
       if (quotes && quotes.length > 0) {
@@ -50,6 +53,7 @@ export class AvnuService {
           routes: routes.length > 0 ? routes : ['Ekubo', 'Jediswap'],
           estimatedGasFeeStrk: (Number(best.gasFees || 5000000000000000n) / 1e18).toFixed(4),
           rawQuote: best,
+          isFallbackEstimated: false,
         };
       }
     } catch (err) {
@@ -74,6 +78,7 @@ export class AvnuService {
       routes: ['Ekubo Multi-Hop Router'],
       estimatedGasFeeStrk: '0.004',
       rawQuote: null,
+      isFallbackEstimated: true,
     };
   }
 

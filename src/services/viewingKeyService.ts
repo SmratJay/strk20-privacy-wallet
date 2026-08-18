@@ -12,9 +12,14 @@ export class ViewingKeyService {
   private static STORAGE_KEY_VIEWING_KEY = 'strk20_derived_vk';
 
   /**
-   * Derives a deterministic Viewing Keypair from a signature
+   * Derives a deterministic Viewing Keypair from a signature (Whitepaper Section 4.3 & 14)
+   * Invariant: Requires user signature to prevent unauthorized or collision-prone key generation.
    */
   deriveViewingKeyFromSignature(signatureFelt: string): { privateViewingKey: string; publicViewingKey: string } {
+    if (!signatureFelt || signatureFelt.trim() === '') {
+      throw new Error('Valid signature required to derive viewing key');
+    }
+
     try {
       const privateKeyFelt = hash.computePoseidonHash(signatureFelt, '0x5354524b32305f56494557494e475f4b4559'); // "STRK20_VIEWING_KEY"
       const publicKey = ec.starkCurve.getStarkKey(privateKeyFelt);
@@ -22,14 +27,8 @@ export class ViewingKeyService {
         privateViewingKey: privateKeyFelt,
         publicViewingKey: publicKey,
       };
-    } catch {
-      // Fallback pseudo-random for browser sessions
-      const randomSeed = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(31))).map(b => b.toString(16).padStart(2, '0')).join('');
-      const publicKey = ec.starkCurve.getStarkKey(randomSeed);
-      return {
-        privateViewingKey: randomSeed,
-        publicViewingKey: publicKey,
-      };
+    } catch (err: any) {
+      throw new Error(`Failed to derive viewing key from signature: ${err?.message || 'Invalid signature format'}`);
     }
   }
 

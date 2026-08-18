@@ -104,7 +104,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     chainId: 'SN_SEPOLIA',
     poolAddress:
       process.env.NEXT_PUBLIC_STRK20_SEPOLIA_POOL ||
-      '0x254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91',
+      '0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91',
     rpcUrls: [
       'https://api.cartridge.gg/x/starknet/sepolia',
       'https://free-rpc.nethermind.io/sepolia-juno',
@@ -119,3 +119,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
 export const DEFAULT_NETWORK_ID: NetworkId = 'mainnet';
 export const NOTE_MATURITY_BLOCKS = 10;
 export const ESTIMATED_POOL_FEE_STRK = '4';
+
+export function getNetworkConfig(networkId: string = DEFAULT_NETWORK_ID): NetworkConfig {
+  return NETWORKS[networkId as NetworkId] || NETWORKS.mainnet;
+}

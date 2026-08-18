@@ -47,7 +47,7 @@ import { TokenInfo } from '@/config/tokens';
 import { useToast } from '@/components/Toast';
 import { useNetwork } from '@/context/NetworkContext';
 
-type PELTabType = 
+export type PELTabType = 
   | 'PORTFOLIO' 
   | 'SWAP' 
   | 'PERPS' 
@@ -62,7 +62,7 @@ type PELTabType =
 export default function Home() {
   const { showToast } = useToast();
   const { currentNetwork, setNetworkId } = useNetwork();
-  const wallet = useStarknetWallet(currentNetwork);
+  const wallet = useStarknetWallet();
 
   // Active Terminal Tab State
   const [activeTab, setActiveTab] = useState<PELTabType>('PORTFOLIO');
@@ -137,22 +137,32 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load transaction history from localStorage on client load
+  // Load transaction history from localStorage on client load & network switch
   useEffect(() => {
     try {
-      const storedTxs = localStorage.getItem('strk20_privacy_txs');
+      const storageKey = `strk20_privacy_txs_${currentNetwork.id}`;
+      const storedTxs = localStorage.getItem(storageKey);
       if (storedTxs) {
         setTransactions(JSON.parse(storedTxs));
+      } else {
+        // Fallback check legacy storage key if mainnet
+        const legacyTxs = localStorage.getItem('strk20_privacy_txs');
+        if (legacyTxs && currentNetwork.id === 'mainnet') {
+          setTransactions(JSON.parse(legacyTxs));
+        } else {
+          setTransactions([]);
+        }
       }
     } catch (e) {
       console.warn('Failed to load transaction history', e);
     }
-  }, []);
+  }, [currentNetwork.id]);
 
   const saveTransactions = (txs: PrivacyTransaction[]) => {
     setTransactions(txs);
     try {
-      localStorage.setItem('strk20_privacy_txs', JSON.stringify(txs));
+      const storageKey = `strk20_privacy_txs_${currentNetwork.id}`;
+      localStorage.setItem(storageKey, JSON.stringify(txs));
     } catch (e) {
       console.warn('Failed to save transaction history', e);
     }

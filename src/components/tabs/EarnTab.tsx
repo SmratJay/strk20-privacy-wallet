@@ -16,6 +16,7 @@ import {
 import { earnService, EarnVault, UserVaultDeposit } from '@/services/earnService';
 import { ShieldedBalance } from '@/services/privacyService';
 import { useToast } from '@/components/Toast';
+import { priceService } from '@/services/priceService';
 
 interface EarnTabProps {
   walletAddress: string;
@@ -29,13 +30,11 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
   const [selectedVault, setSelectedVault] = useState<EarnVault>(vaults[0]);
   const [depositAmount, setDepositAmount] = useState<string>('50');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [tokenPrices, setTokenPrices] = useState<Record<string, number>>(() => priceService.getCachedPrices());
 
-  const tokenPrices: Record<string, number> = {
-    STRK: 0.584,
-    ETH: 3418.75,
-    USDC: 1.00,
-    USDT: 1.00,
-  };
+  useEffect(() => {
+    priceService.getPrices().then(setTokenPrices).catch(() => {});
+  }, []);
 
   const loadDeposits = () => {
     if (!walletAddress) return;
@@ -46,7 +45,7 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
     loadDeposits();
     const interval = setInterval(loadDeposits, 3000);
     return () => clearInterval(interval);
-  }, [walletAddress]);
+  }, [walletAddress, tokenPrices]);
 
   const totalYieldValueUsd = useMemo(() => {
     return deposits.reduce((acc, d) => acc + d.depositedAmountUsd + d.accruedYieldUsd, 0);
@@ -85,8 +84,8 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
     }
   };
 
-  const handleWithdraw = (vaultId: string, amount: number) => {
-    const success = earnService.withdrawFromVault(walletAddress, vaultId, amount, tokenPrices);
+  const handleWithdraw = (vaultId: string, amountTokens: number) => {
+    const success = earnService.withdrawFromVault(walletAddress, vaultId, amountTokens, tokenPrices);
     if (success) {
       loadDeposits();
       showToast({
@@ -97,15 +96,24 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
     }
   };
 
+  const getVaultIcon = (symbol: string) => {
+    if (symbol === 'STRK') return '⚡';
+    if (symbol === 'ETH') return '⟠';
+    return '💵';
+  };
+
   return (
     <div className="space-y-6 font-mono">
       {/* Top Banner: Total Deposited in Shielded Yield */}
       <div className="bg-zinc-950 border border-zinc-800 p-6 corner-box shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-bold text-orrange-400 uppercase tracking-wider mb-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-orrange-400 uppercase tracking-wider mb-1">
               <Layers className="w-4 h-4" />
               <span>SHIELDED EARN & YIELD SUBSTRATE (VESU / MONEY MARKET)</span>
+              <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[9px] font-bold border border-amber-500/30">
+                ALPHA HARNESS (WP §3.2)
+              </span>
             </div>
             <div className="text-3xl font-black text-white">
               ${totalYieldValueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -142,14 +150,14 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
             >
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-2xl">{v.icon}</span>
+                  <span className="text-2xl">{getVaultIcon(v.tokenSymbol)}</span>
                   <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                    {v.protocol}
+                    {v.protocolName}
                   </span>
                 </div>
 
                 <h4 className="font-bold text-white text-sm">{v.name}</h4>
-                <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{v.description}</p>
+                <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{v.strategyDescription}</p>
               </div>
 
               <div className="mt-6 pt-4 border-t border-zinc-900 flex items-center justify-between">
@@ -232,39 +240,46 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress, balances }) => 
             </div>
           ) : (
             <div className="space-y-3">
-              {deposits.map((d) => (
-                <div
-                  key={d.id}
-                  className="p-3.5 bg-zinc-900/60 border border-zinc-800 flex items-center justify-between"
-                >
-                  <div>
-                    <div className="text-xs font-bold text-white flex items-center gap-2">
-                      <span>{d.vaultName}</span>
-                      <span className="text-[10px] text-emerald-400 font-bold border border-emerald-500/30 px-1.5 py-0.2 bg-emerald-500/10">
-                        {d.apyPct}% APY
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-zinc-400 mt-1">
-                      Supplied: {d.depositedAmount} {d.tokenSymbol} (${d.depositedAmountUsd.toFixed(2)})
-                    </div>
-                  </div>
+              {deposits.map((d) => {
+                const vault = earnService.getVault(d.vaultId);
+                const vaultName = vault ? vault.name : 'Shielded Vault';
+                const apy = vault ? vault.apyPct : 8.45;
+                const tokenSymbol = vault ? vault.tokenSymbol : 'STRK';
 
-                  <div className="text-right flex items-center gap-3">
+                return (
+                  <div
+                    key={d.vaultId}
+                    className="p-3.5 bg-zinc-900/60 border border-zinc-800 flex items-center justify-between"
+                  >
                     <div>
-                      <div className="text-xs font-bold text-emerald-400">
-                        +${d.accruedYieldUsd.toFixed(4)} USD
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>{vaultName}</span>
+                        <span className="text-[10px] text-emerald-400 font-bold border border-emerald-500/30 px-1.5 py-0.2 bg-emerald-500/10">
+                          {apy}% APY
+                        </span>
                       </div>
-                      <div className="text-[9px] text-zinc-500 uppercase">Accrued Yield</div>
+                      <div className="text-[10px] text-zinc-400 mt-1">
+                        Supplied: {d.depositedAmountTokens} {tokenSymbol} (${d.depositedAmountUsd.toFixed(2)})
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleWithdraw(d.vaultId, d.depositedAmount)}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-bold border border-zinc-700"
-                    >
-                      WITHDRAW
-                    </button>
+
+                    <div className="text-right flex items-center gap-3">
+                      <div>
+                        <div className="text-xs font-bold text-emerald-400">
+                          +${d.accruedYieldUsd.toFixed(4)} USD
+                        </div>
+                        <div className="text-[9px] text-zinc-500 uppercase">Accrued Yield</div>
+                      </div>
+                      <button
+                        onClick={() => handleWithdraw(d.vaultId, d.depositedAmountTokens)}
+                        className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-bold border border-zinc-700 cursor-pointer"
+                      >
+                        WITHDRAW
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

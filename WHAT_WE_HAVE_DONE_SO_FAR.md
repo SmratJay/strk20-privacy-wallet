@@ -151,4 +151,47 @@
 * **Refined Terminal Layout:** Integrated a high-density, sharp monospace terminal header directly with live network indicators, Stwo STARK verifier telemetry, and 1-click sync buttons, moving directly into the 10 Cyberpunk orange workstation tabs.
 * **Component Polishing:**
   * Overhauled all 10 utility tabs (`PortfolioTab`, `SwapTab`, `PerpsTab`, `EarnTab`, `SendTab`, `RequestTab`, `ShieldTab`, `UnshieldTab`, `NoteScannerTab`, `HistoryTab`) to use pure `#FF6B00` electric orange accents, pitch-black `#050508` surfaces, and corner bracket crosshairs.
-* **Verification:** Vitest test suite executed: **17/17 tests passing**.
+
+---
+
+## 📅 Tuesday, August 18, 2026 — 19:05:00 IST
+
+### 🛠️ Provider Boundary Fix & Headless Next.js 15 Compilation Pass
+
+#### 🟢 [SMALL CHANGE] — Root Layout Provider Injection (`layout.tsx`)
+* **Description:** Added `NetworkProvider` around `{children}` in `src/app/layout.tsx` resolving the runtime exception `useNetwork must be used within a NetworkProvider`.
+
+---
+
+## 📅 Tuesday, August 18, 2026 — 19:25:00 IST
+
+### 🔬 Ultra-Detailed Micro-ASCII Density & Silky Smooth Fluid Physics
+
+#### 🔴 [BIG CHANGE] — Micro-ASCII Matrix Scaling (~12,000+ Particles) & Cosine Bell-Curve Repel (`AsciiHeroVisual.tsx`)
+* **Density & Aspect Ratio Correction:**
+  * Scaled grid resolution to $135 \times 100$ micro-cells matching standard monospaced character proportions ($4.2\text{px} \times 6.4\text{px}$, $5.8\text{px}$ font).
+  * Boosted visual detail to **12,000+ micro-particles**, making intricate artwork features (glowing ring filaments, hand fingers, leaf veins, gold chains, and folded robes) sharply defined without vertical line distortion.
+* **Silky Smooth Fluid Repulsion:**
+  * Shrunk the repulsion radius down to a focused **$38\text{px}$** localized circle directly beneath the cursor.
+  * Replaced harsh linear force with a **smooth cosine bell-curve** ($F = 0.5 \cdot (1 + \cos(\pi \cdot d / R)) \cdot S$), eliminating hard-edge shockwaves and hollow voids.
+  * Increased spring viscosity ($k=0.075, d=0.85$), making particles ripple like liquid magnetic silk and softly glide back to their original anchors.
+  * Preserved full artwork RGB fidelity without color blowout.
+---
+
+## 📅 Tuesday, August 18, 2026 — 20:03:00 IST
+
+### 🏷️ Hero Typography Revision & Clean ASCII Window Frame
+
+#### 🟢 [SMALL CHANGE] — Hero Main Headline Update (`LandingHero.tsx`)
+* **Description:** Updated the primary hero headline to:
+  $$\text{"Private Money. Open Markets."}$$
+  with electric orange terminal glow styling on "Open Markets".
+
+#### 🟢 [SMALL CHANGE] — Pure ASCII Minimalist Frame (`AsciiHeroVisual.tsx`)
+* **Description:** Removed both the top header badge (`ORRANGE // HIGH_RES_SORCERER.ASCII` & particle counter) and bottom telemetry labels to provide an uninterrupted, pure visual ASCII viewport.
+* **Verification:** `npm run build` compiled 4/4 pages in 1555ms; `npm test` passed 17/17 tests.
+
+
+
+
+

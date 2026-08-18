@@ -78,7 +78,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
         selectedToken,
         destination.trim(),
         amountBigInt,
-        (currentStep) => setStep(currentStep),
+        (currentStep: any) => setStep(currentStep),
         currentNetwork.poolAddress,
         currentNetwork.id
       );

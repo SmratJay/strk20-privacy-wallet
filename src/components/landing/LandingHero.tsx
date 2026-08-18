@@ -10,19 +10,19 @@ interface LandingHeroProps {
 
 export const LandingHero: React.FC<LandingHeroProps> = ({ onLaunchTerminal }) => {
   return (
-    <div className="relative pt-8 pb-16">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+    <div className="relative pt-6 pb-14">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
         {/* Left Column: Big Bold Typography */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className="lg:col-span-6 space-y-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 border border-orrange-500/40 bg-orrange-500/5 text-orrange-400 font-mono text-xs font-semibold tracking-wider uppercase">
             <span className="w-2 h-2 rounded-full bg-orrange-500 animate-pulse" />
             <span>STARKNET PRIVATE EXECUTION LAYER // V0.2</span>
           </div>
 
           <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black text-white tracking-tighter leading-[0.95] uppercase font-sans">
-            BUILD <br />
-            WHAT &apos;S <br />
-            <span className="text-orrange-500 terminal-glow">PRIVATE</span>
+            Private <br />
+            Money. <br />
+            <span className="text-orrange-500 terminal-glow">Open Markets.</span>
           </h1>
 
           <p className="text-sm sm:text-base font-mono text-zinc-400 max-w-xl leading-relaxed">
@@ -67,9 +67,9 @@ export const LandingHero: React.FC<LandingHeroProps> = ({ onLaunchTerminal }) =>
           </div>
         </div>
 
-        {/* Right Column: Dynamic ASCII Hero Matrix Graphic */}
-        <div className="lg:col-span-5 flex justify-center">
-          <div className="w-full max-w-lg p-2 bg-zinc-950/90 border border-zinc-800/80 corner-box shadow-2xl">
+        {/* Right Column: Enlarged Dynamic ASCII Sorcerer Hero Matrix */}
+        <div className="lg:col-span-6 flex justify-center w-full">
+          <div className="w-full max-w-xl p-2 bg-zinc-950 border border-orrange-500/30 corner-box shadow-2xl relative">
             <AsciiHeroVisual />
           </div>
         </div>

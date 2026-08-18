@@ -19,6 +19,7 @@ import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
 import { avnuService, SwapQuoteResult } from '@/services/avnuService';
 import { routerService, PrivacyMode, ComputedRoute, TradingIntent } from '@/services/routerService';
 import { useNetwork } from '@/context/NetworkContext';
+import { priceService } from '@/services/priceService';
 
 interface SwapTabProps {
   balances: ShieldedBalance[];
@@ -37,6 +38,11 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>(() => priceService.getCachedPrices());
+
+  useEffect(() => {
+    priceService.getPrices().then(setLivePrices).catch(() => {});
+  }, []);
 
   // Sync tokens when network changes
   useEffect(() => {
@@ -60,13 +66,6 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
     const temp = fromToken;
     setFromToken(toToken);
     setToToken(temp);
-  };
-
-  const tokenPrices: Record<string, number> = {
-    STRK: 0.584,
-    ETH: 3418.75,
-    USDC: 1.00,
-    USDT: 1.00,
   };
 
   // Debounced execution route computation via routerService
@@ -94,7 +93,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           privacyPreference: privacyMode,
         };
 
-        const routes = await routerService.findOptimalRoutes(intent, tokenPrices);
+        const routes = await routerService.findOptimalRoutes(intent, livePrices);
         if (active) {
           setComputedRoutes(routes);
           if (routes.length > 0) {
@@ -112,7 +111,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
       active = false;
       clearTimeout(timer);
     };
-  }, [amount, fromToken, toToken, privacyMode]);
+  }, [amount, fromToken, toToken, privacyMode, livePrices]);
 
   const activeSelectedRoute = useMemo(() => {
     return computedRoutes.find((r) => r.id === selectedRouteId) || computedRoutes[0];
@@ -141,12 +140,13 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
 
     try {
       // 1. Fetch real quote from AVNU
-      const quote = await avnuService.getSwapQuote(
+      const quote = await avnuService.getPrivateSwapQuote(
         fromToken,
         toToken,
         amount,
         wallet.address || undefined,
-        currentNetwork.avnuBaseUrl
+        currentNetwork.avnuBaseUrl,
+        currentNetwork.id
       );
 
       if (quote && quote.rawQuote) {
@@ -158,9 +158,18 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
         );
         onSuccess(res.txHash, fromToken, toToken, amount);
       } else {
-        // Fallback simulation / testnet swap
-        await new Promise((r) => setTimeout(r, 600));
-        const simulatedTx = '0x' + Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+        if (currentNetwork.id === 'mainnet') {
+          throw new Error('No live on-chain DEX quote available on Mainnet for this pair/amount. Please adjust amount or try another pair.');
+        }
+        // Sepolia testnet simulated execution
+        await new Promise((r) => setTimeout(r, 800));
+        const entropy = new Uint8Array(32);
+        if (typeof window !== 'undefined' && window.crypto) {
+          window.crypto.getRandomValues(entropy);
+        } else {
+          for (let i = 0; i < 32; i++) entropy[i] = Math.floor(Math.random() * 256);
+        }
+        const simulatedTx = '0x0' + Array.from(entropy).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 63);
         onSuccess(simulatedTx, fromToken, toToken, amount);
       }
 

@@ -59,6 +59,7 @@ export class Strk20Crypto {
   /**
    * Derives directional channel key via STARK curve ECDH shared secret + Poseidon domain separation.
    * sharedSecret = ECDH(sender_privkey, recipient_pubkey)
+   * Invariant: Never falls back to public derivations to prevent metadata/key leakage (Whitepaper Section 4).
    */
   deriveChannelKeyECDH(
     senderPrivateKey: string,
@@ -66,13 +67,41 @@ export class Strk20Crypto {
     senderAddr: string,
     recipientAddr: string
   ): string {
+    if (!senderPrivateKey || !recipientPublicKey) {
+      throw new Error('Sender private key and recipient public key are required for channel key derivation');
+    }
+
     try {
-      // Clean hex formatting
-      const privClean = senderPrivateKey.startsWith('0x') ? senderPrivateKey.slice(2) : senderPrivateKey;
-      const pubClean = recipientPublicKey.startsWith('0x') ? recipientPublicKey.slice(2) : recipientPublicKey;
+      const CURVE_ORDER = 3618502788666131213697322783095070105526743751716087489154079457884512865583n;
       
+      // Clean and normalize private key scalar < CURVE_ORDER
+      let privClean = senderPrivateKey.startsWith('0x') ? senderPrivateKey.slice(2) : senderPrivateKey;
+      const privBig = BigInt('0x' + privClean);
+      const normalizedPrivBig = privBig < CURVE_ORDER ? privBig : (privBig % (CURVE_ORDER - 1n)) + 1n;
+      const privHex = normalizedPrivBig.toString(16).padStart(64, '0');
+
+      // Recover valid STARK curve ProjectivePoint from recipientPublicKey
+      let pubClean = recipientPublicKey.startsWith('0x') ? recipientPublicKey.slice(2) : recipientPublicKey;
+      let pubPointHex: string;
+
+      if (pubClean.length === 66 || pubClean.length === 130) {
+        pubPointHex = pubClean;
+      } else if (pubClean.length === 65 && (pubClean.startsWith('2') || pubClean.startsWith('3'))) {
+        pubPointHex = '0' + pubClean[0] + pubClean.slice(1).padStart(64, '0');
+      } else if (pubClean.length % 2 !== 0 && (pubClean.startsWith('02') || pubClean.startsWith('03') || pubClean.startsWith('04'))) {
+        pubPointHex = pubClean.slice(0, 2) + pubClean.slice(2).padStart(64, '0');
+      } else {
+        const padded = pubClean.padStart(64, '0');
+        // Try both point parities on STARK curve
+        try {
+          pubPointHex = ec.starkCurve.ProjectivePoint.fromHex('02' + padded).toHex(true);
+        } catch {
+          pubPointHex = ec.starkCurve.ProjectivePoint.fromHex('03' + padded).toHex(true);
+        }
+      }
+
       // Elliptic Curve Diffie-Hellman on STARK curve
-      const sharedSecretPoint = ec.starkCurve.getSharedSecret(privClean, pubClean);
+      const sharedSecretPoint = ec.starkCurve.getSharedSecret(privHex, pubPointHex);
       const sharedSecretHex = '0x' + Array.from(sharedSecretPoint).map(b => b.toString(16).padStart(2, '0')).join('');
       const sharedSecretFelt = num.toHex(BigInt(sharedSecretHex) % num.toBigInt('0x800000000000011000000000000000000000000000000000000000000000001'));
 
@@ -82,13 +111,8 @@ export class Strk20Crypto {
         senderAddr,
         recipientAddr,
       ]);
-    } catch {
-      // Deterministic fallback derivation from addresses and domain tag if keys are unavailable in sandbox
-      return hash.computePoseidonHashOnElements([
-        CHANNEL_KEY_TAG,
-        senderAddr,
-        recipientAddr,
-      ]);
+    } catch (err: any) {
+      throw new Error(`ECDH key agreement failed: ${err?.message || 'Invalid STARK curve keypair'}`);
     }
   }
 

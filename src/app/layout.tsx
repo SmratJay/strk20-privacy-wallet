@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ToastProvider } from '@/components/Toast';
+import { NetworkProvider } from '@/context/NetworkContext';
 
 export const metadata: Metadata = {
   title: 'orrange // Private Execution Layer for Starknet',
@@ -23,10 +24,12 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased selection:bg-emerald-500/30 selection:text-emerald-200">
-        <ToastProvider>
-          {children}
-        </ToastProvider>
+      <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased selection:bg-orrange-500 selection:text-black">
+        <NetworkProvider>
+          <ToastProvider>
+            {children}
+          </ToastProvider>
+        </NetworkProvider>
       </body>
     </html>
   );

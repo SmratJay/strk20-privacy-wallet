@@ -96,12 +96,18 @@ describe('PEL Perpetual Derivatives Invariants (Whitepaper Section 7 & Appendix 
 });
 
 describe('PEL Scoped Session Keys (Whitepaper Section 9)', () => {
-  it('creates valid scoped session key structure', () => {
-    const session = sessionKeyService.createSession('0x0621d378a7af64de2003d657441f437b1978eac5bfa6de6069f0d7107265cefe', 5000, 8);
-    expect(session.isActive).toBe(true);
-    expect(session.dailySpendLimitUsd).toBe(5000);
-    expect(session.expiresAt).toBeGreaterThan(Date.now());
-    expect(session.allowedSelectors).toContain('swap');
-    expect(session.allowedSelectors).toContain('openPosition');
+  it('creates valid scoped session key structure with cryptographically secure pubkey', () => {
+    const session1 = sessionKeyService.createSession('0x0621d378a7af64de2003d657441f437b1978eac5bfa6de6069f0d7107265cefe', 5000, 8);
+    expect(session1.isActive).toBe(true);
+    expect(session1.dailySpendLimitUsd).toBe(5000);
+    expect(session1.expiresAt).toBeGreaterThan(Date.now());
+    expect(session1.allowedSelectors).toContain('swap');
+    expect(session1.allowedSelectors).toContain('openPosition');
+    expect(session1.publicKey.startsWith('0x')).toBe(true);
+    expect(session1.publicKey.length).toBeGreaterThan(30);
+
+    const session2 = sessionKeyService.createSession('0x0621d378a7af64de2003d657441f437b1978eac5bfa6de6069f0d7107265cefe', 5000, 8);
+    // CSPRNG session keys must be cryptographically distinct
+    expect(session1.publicKey).not.toEqual(session2.publicKey);
   });
 });

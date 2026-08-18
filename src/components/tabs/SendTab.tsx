@@ -115,10 +115,9 @@ export const SendTab: React.FC<SendTabProps> = ({
       const { txHash } = await privacyService.executePrivateTransfer(
         wallet.walletAccount,
         selectedToken,
-        amountBigInt,
         recipient.trim(),
-        memo.trim() || undefined,
-        (currentStep) => setStep(currentStep),
+        amountBigInt,
+        (currentStep: any) => setStep(currentStep),
         currentNetwork.poolAddress,
         currentNetwork.id
       );
@@ -269,7 +268,7 @@ export const SendTab: React.FC<SendTabProps> = ({
                     <div
                       key={c.id}
                       onClick={() => {
-                        setRecipient(c.address);
+                        setRecipient(c.privacyAddress);
                         setShowAddressBook(false);
                       }}
                       className="p-1.5 bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800/80 flex items-center justify-between cursor-pointer"
@@ -277,7 +276,7 @@ export const SendTab: React.FC<SendTabProps> = ({
                       <div>
                         <span className="text-xs font-bold text-white">{c.name}</span>
                         <span className="text-[10px] text-zinc-500 font-mono block">
-                          {shortenAddress(c.address)}
+                          {shortenAddress(c.privacyAddress)}
                         </span>
                       </div>
                       <button

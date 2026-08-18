@@ -105,7 +105,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   };
 
   const handleClosePosition = (positionId: string) => {
-    const closed = perpsService.closePosition(positionId);
+    if (!walletAddress) return;
+    const closed = perpsService.closePosition(walletAddress, positionId);
     if (closed) {
       loadPositions();
       showToast({
@@ -118,6 +119,19 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
   return (
     <div className="space-y-6 font-mono">
+      {/* Protocol Badge */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-400">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-3.5 h-3.5 text-orrange-400" />
+          <span className="font-bold text-zinc-200">ZK PRIVATE DERIVATIVES ENGINE</span>
+          <span className="text-zinc-500">•</span>
+          <span>Poseidon Commitments (WP §7.3) & Risk Invariants (App. A)</span>
+        </div>
+        <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30 uppercase">
+          ALPHA SIMULATION HARNESS
+        </span>
+      </div>
+
       {/* Market Selector & Metrics Banner */}
       <div className="bg-zinc-950 border border-zinc-800 p-4 corner-box">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -135,7 +149,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                       : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
                   }`}
                 >
-                  {m.symbol}
+                  {m.id}
                 </button>
               );
             })}
@@ -158,7 +172,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             <div>
               <span className="text-[10px] text-zinc-500 block uppercase">1h Funding</span>
               <span className="font-bold text-orrange-400">
-                {(currentMarket.fundingRateHourly * 100).toFixed(4)}%
+                {(currentMarket.fundingRate1hPct * 100).toFixed(4)}%
               </span>
             </div>
             <div>
@@ -177,7 +191,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
               <div className="flex items-center gap-2">
                 <Activity className="w-4 h-4 text-orrange-400" />
-                <span className="font-bold text-xs text-white uppercase">{currentMarket.symbol} MARKET FEED</span>
+                <span className="font-bold text-xs text-white uppercase">{currentMarket.id} MARKET FEED</span>
               </div>
               <span className="text-[10px] text-zinc-500">[ PARADEX_ZK_ENGINE ]</span>
             </div>
