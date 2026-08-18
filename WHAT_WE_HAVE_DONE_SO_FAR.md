@@ -418,6 +418,24 @@
 #### 🔴 [BIG CHANGE] — Integrated Cyberpunk Super-App Terminal & Interactive CLI (`InteractiveCliBar.tsx`, `page.tsx`)
 * **Description:** Built a unified workstation interface where users can seamlessly explore the landing page or launch the full 10-tab financial terminal (Portfolio, Spot Trade, Perpetuals, Earn, Send, Invoice QR, Shield, Unshield, UTXO Scanner, Compliance Passports). Added a fixed bottom CLI bar (`orrange@starknet:~$`) supporting `/trade`, `/perps`, `/earn`, `/shield`, `/invoice`, and `/audit` commands.
 
+---
+
+### Tuesday, August 18, 2026 — 16:11:20 IST
+
+#### 🔴 [BIG CHANGE] — Interactive Cursor Particle Repulsion Physics for ASCII Hero (`AsciiHeroVisual.tsx`)
+
+**Context:** Upgraded the ASCII hero visual from static frame toggling into a real-time, high-performance HTML5 canvas particle physics simulation.
+
+---
+
+#### 🔴 [BIG CHANGE] — 60 FPS Monospace Particle Spring & Repulsion Simulation (`AsciiHeroVisual.tsx`)
+* **Description:** 
+  * Each ASCII character glyph (`@`, `%`, `#`, `O`, `R`, `A`, `N`, `G`, `E`, `*`, `+`, `=`) is modeled as an independent physics particle with velocity vectors $(v_x, v_y)$, origin anchors, and dynamic damping.
+  * When the user's cursor hovers near the ASCII glyphs, an inverse-radial repulsion force dynamically scatters and displaces the characters away from the mouse cursor in real-time.
+  * When the cursor moves away, a spring restitution force ($k_{\text{spring}} = 0.09$, friction damping $= 0.82$) smoothly snaps the characters back into the iconic `orrange` ZK Shield shape.
+  * Added dynamic kinetic color shifts and neon CRT glow flares (`#FFE082` / `#FFA726`) proportional to displacement velocity.
+
+
 
 
 
