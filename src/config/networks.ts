@@ -73,7 +73,7 @@ export const SEPOLIA_TOKENS: TokenInfo[] = [
   {
     symbol: 'USDC',
     name: 'USD Coin (Sepolia)',
-    address: '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343',
+    address: '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343',
     decimals: 6,
     icon: '💵',
   },

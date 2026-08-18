@@ -3,9 +3,9 @@ import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 
 export const metadata: Metadata = {
-  title: 'STRK20 Privacy Wallet | Starknet Confidential Payments',
+  title: 'orrange // Private Execution Layer for Starknet',
   description:
-    'Umbra-grade privacy wallet for Starknet. Shield tokens, send encrypted notes, and execute confidential DeFi on STRK20.',
+    'Web3 modern SaaS and Private Execution Layer on Starknet. Intent-based routing, shielded UTXO notes, private perpetuals, and zero-knowledge compliance.',
 };
 
 export default function RootLayout({

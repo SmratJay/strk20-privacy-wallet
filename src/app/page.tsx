@@ -13,7 +13,10 @@ import {
   TrendingUp, 
   Zap, 
   Lock, 
-  FileCheck2 
+  FileCheck2,
+  Terminal,
+  Activity,
+  Maximize2
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { PrivacyBanner } from '@/components/PrivacyBanner';
@@ -33,6 +36,10 @@ import { HistoryTab } from '@/components/tabs/HistoryTab';
 import { PublishAddressModal } from '@/components/PublishAddressModal';
 import { AuditorExportModal } from '@/components/AuditorExportModal';
 import { CompliancePassportModal } from '@/components/CompliancePassportModal';
+import { LandingHero } from '@/components/landing/LandingHero';
+import { ProblemSectorCards } from '@/components/landing/ProblemSectorCards';
+import { MoatArchitectureSection } from '@/components/landing/MoatArchitectureSection';
+import { InteractiveCliBar } from '@/components/landing/InteractiveCliBar';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { TokenInfo } from '@/config/tokens';
 import { ShieldedBalance, PrivacyTransaction, privacyService } from '@/services/privacyService';
@@ -78,6 +85,14 @@ function WalletAppContent() {
   const [isLoadingBalances, setIsLoadingBalances] = useState(false);
   const [transactions, setTransactions] = useState<PrivacyTransaction[]>([]);
 
+  const scrollToTerminal = (targetTab?: PELTabType) => {
+    if (targetTab) setActiveTab(targetTab);
+    const terminalEl = document.getElementById('terminal');
+    if (terminalEl) {
+      terminalEl.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   // Parse URL search parameters on client mount for Invoice Deep-Links
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -101,6 +116,7 @@ function WalletAppContent() {
 
       if (tabParam === 'SEND' || toParam) {
         setActiveTab('SEND');
+        scrollToTerminal('SEND');
         if (memoParam) {
           showToast({
             type: 'info',
@@ -118,322 +134,380 @@ function WalletAppContent() {
   // Load transaction history from localStorage on client load
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('strk20_privacy_txs');
-      if (saved) {
-        setTransactions(JSON.parse(saved));
+      const storedTxs = localStorage.getItem('strk20_privacy_txs');
+      if (storedTxs) {
+        setTransactions(JSON.parse(storedTxs));
       }
-    } catch (err) {
-      console.warn('Could not load history from localStorage', err);
+    } catch (e) {
+      console.warn('Failed to load transaction history', e);
     }
   }, []);
 
-  // Save transaction history to localStorage
-  const saveTransactions = (newTxs: PrivacyTransaction[]) => {
-    setTransactions(newTxs);
+  const saveTransactions = (txs: PrivacyTransaction[]) => {
+    setTransactions(txs);
     try {
-      localStorage.setItem('strk20_privacy_txs', JSON.stringify(newTxs));
-    } catch (err) {
-      console.warn('Could not save history to localStorage', err);
+      localStorage.setItem('strk20_privacy_txs', JSON.stringify(txs));
+    } catch (e) {
+      console.warn('Failed to save transaction history', e);
     }
   };
 
-  // Fetch balances when wallet connects or network changes
+  // Refresh public and shielded balances across all supported tokens
   const refreshBalances = useCallback(async () => {
-    if (!wallet.address) return;
+    if (!wallet.isConnected || !wallet.address) {
+      setBalances(
+        currentNetwork.tokens.map((token) => ({
+          token,
+          publicBalance: 0n,
+          shieldedBalance: 0n,
+          pendingNotesCount: 0,
+          privacyApiSupported: false,
+        }))
+      );
+      return;
+    }
+
     setIsLoadingBalances(true);
     try {
-      const updated = await privacyService.fetchBalances(
+      const results = await privacyService.fetchBalances(
         wallet.address,
         wallet.walletAccount,
         currentNetwork
       );
-      setBalances(updated);
+      setBalances(results);
     } catch (err) {
-      console.error('Error refreshing balances:', err);
+      console.error('Failed to fetch balances:', err);
     } finally {
       setIsLoadingBalances(false);
     }
-  }, [wallet.address, wallet.walletAccount, currentNetwork]);
+  }, [wallet.isConnected, wallet.address, wallet.walletAccount, currentNetwork]);
 
   useEffect(() => {
-    if (wallet.address) {
-      refreshBalances();
-    }
-  }, [wallet.address, currentNetwork, refreshBalances]);
+    refreshBalances();
+    const interval = setInterval(refreshBalances, 12000);
+    return () => clearInterval(interval);
+  }, [refreshBalances]);
 
-  // Handle successful transaction callbacks
   const handleTxSuccess = (tx: PrivacyTransaction) => {
     const updated = [tx, ...transactions];
     saveTransactions(updated);
     refreshBalances();
     showToast({
       type: 'success',
-      title: 'Transaction Submitted',
-      description: `${tx.type} for ${tx.amount} ${tx.tokenSymbol} confirmed.`,
+      title: 'Confidential Transaction Confirmed',
+      description: `Hash: ${tx.txHash ? tx.txHash.slice(0, 10) + '...' : 'Recorded in UTXO Vault'}`,
     });
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans selection:bg-purple-500 selection:text-white">
-      {/* Super-App Header */}
+    <div className="min-h-screen bg-background text-zinc-100 flex flex-col font-sans pb-24 selection:bg-orrange-500 selection:text-black">
       <Header
         wallet={wallet}
         onOpenPublishModal={() => setIsPublishModalOpen(true)}
         onOpenAuditorModal={() => setIsAuditorModalOpen(true)}
         onOpenPassportModal={() => setIsPassportModalOpen(true)}
+        onLaunchTerminal={() => scrollToTerminal('PORTFOLIO')}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
-        {/* Top Context & Anonymity Bar */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-          <div className="lg:col-span-8">
-            <PrivacyBanner />
-          </div>
-          <div className="lg:col-span-4">
-            <AnonymityScore balances={balances} />
-          </div>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+        {/* 1. Covalent-Style Landing Page Hero */}
+        <LandingHero onLaunchTerminal={() => scrollToTerminal('PORTFOLIO')} />
+
+        {/* 2. Onchain Finance Is Still Exposed Sector Breakdown */}
+        <ProblemSectorCards onLaunchTerminal={() => scrollToTerminal('SWAP')} />
+
+        {/* 3. Confidentiality Is The Only Moat Left */}
+        <div id="architecture">
+          <MoatArchitectureSection />
         </div>
 
-        {/* Global Super-App Navigation Menu */}
-        <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/80 overflow-x-auto shadow-lg backdrop-blur-md">
-          <button
-            onClick={() => setActiveTab('PORTFOLIO')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'PORTFOLIO'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <PieChart className="w-3.5 h-3.5" />
-            <span>Portfolio</span>
-          </button>
+        {/* 4. Live orrange Super-App Terminal Section */}
+        <div id="terminal" className="pt-16 border-t border-zinc-800/80 space-y-8 scroll-mt-20">
+          {/* Terminal Section Header */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-zinc-800">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-mono font-bold text-orrange-500 tracking-wider uppercase mb-1">
+                <Terminal className="w-4 h-4" />
+                <span>ORRANGE // TERMINAL WORKSTATION</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono tracking-tight uppercase">
+                Private Financial Terminal
+              </h2>
+            </div>
 
-          <button
-            onClick={() => setActiveTab('SWAP')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'SWAP'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>Trade (Spot)</span>
-          </button>
+            <div className="flex items-center gap-3 text-[11px] font-mono text-zinc-400">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-950 border border-zinc-800">
+                <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>BLOCK: #13551720</span>
+              </span>
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-950 border border-zinc-800 text-orrange-400 font-bold">
+                <span>POOL: ACTIVE</span>
+              </span>
+            </div>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('PERPS')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'PERPS'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Perpetuals</span>
-          </button>
+          <PrivacyBanner />
 
-          <button
-            onClick={() => setActiveTab('EARN')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'EARN'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span>Earn (Yield)</span>
-          </button>
+          {/* Core Wallet & Pool Metrics Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <BalanceCards
+                balances={balances}
+                isLoading={isLoadingBalances}
+                onRefresh={refreshBalances}
+                onSelectAction={(tab) => scrollToTerminal(tab)}
+              />
+            </div>
+            <div className="space-y-6">
+              <AnonymityScore balances={balances} />
+              <PoolMetrics />
+            </div>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('SEND')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'SEND'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
-            <span>Send Privately</span>
-          </button>
+          {/* 10 Terminal Navigation Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-zinc-800 no-scrollbar font-mono text-xs">
+            <button
+              onClick={() => setActiveTab('PORTFOLIO')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'PORTFOLIO'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <PieChart className="w-3.5 h-3.5" />
+              <span>Portfolio</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('REQUEST')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'REQUEST'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <QrCode className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Invoice (QR)</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('SWAP')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'SWAP'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Trade (Spot)</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('SHIELD')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'SHIELD'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <ArrowDownLeft className="w-3.5 h-3.5 text-purple-400" />
-            <span>Shield</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('PERPS')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'PERPS'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Perpetuals</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('UNSHIELD')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'UNSHIELD'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <Lock className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Unshield</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('EARN')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'EARN'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Earn (Yield)</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('SCANNER')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'SCANNER'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>UTXO Scanner</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('SEND')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'SEND'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <ArrowUpRight className="w-3.5 h-3.5" />
+              <span>Send Privately</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('HISTORY')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeTab === 'HISTORY'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/40'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <History className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Activity</span>
-          </button>
-        </div>
+            <button
+              onClick={() => setActiveTab('REQUEST')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'REQUEST'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>Invoice (QR)</span>
+            </button>
 
-        {/* Tab Viewport */}
-        <div className="pt-2">
-          {activeTab === 'PORTFOLIO' && (
-            <PortfolioTab
-              balances={balances}
-              walletAddress={wallet.address || ''}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-            />
-          )}
+            <button
+              onClick={() => setActiveTab('SHIELD')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'SHIELD'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <ArrowDownLeft className="w-3.5 h-3.5" />
+              <span>Shield</span>
+            </button>
 
-          {activeTab === 'SWAP' && (
-            <SwapTab
-              balances={balances}
-              wallet={wallet}
-              onSuccess={(txHash, fromToken, toToken, amount) => {
-                handleTxSuccess({
-                  id: `tx_${Date.now()}`,
-                  type: 'SWAP',
-                  tokenSymbol: `${fromToken.symbol} ➔ ${toToken.symbol}`,
-                  amount,
-                  txHash,
-                  timestamp: Date.now(),
-                  status: 'CONFIRMED',
-                  isPrivate: true,
-                  privacyDetails: 'Routed via PEL Intent Optimizer with Anonymizer Pool',
-                });
-              }}
-            />
-          )}
+            <button
+              onClick={() => setActiveTab('UNSHIELD')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'UNSHIELD'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Unshield</span>
+            </button>
 
-          {activeTab === 'PERPS' && (
-            <PerpsTab walletAddress={wallet.address || ''} />
-          )}
+            <button
+              onClick={() => setActiveTab('SCANNER')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'SCANNER'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>UTXO Scanner</span>
+            </button>
 
-          {activeTab === 'EARN' && (
-            <EarnTab walletAddress={wallet.address || ''} balances={balances} />
-          )}
+            <button
+              onClick={() => setActiveTab('HISTORY')}
+              className={`flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 uppercase font-bold corner-box ${
+                activeTab === 'HISTORY'
+                  ? 'border border-orrange-500 bg-orrange-500 text-black shadow-lg shadow-orrange-950/50'
+                  : 'border border-zinc-800/80 bg-zinc-950/80 text-zinc-400 hover:text-white hover:border-zinc-700'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Activity</span>
+            </button>
+          </div>
 
-          {activeTab === 'SHIELD' && (
-            <ShieldTab
-              balances={balances}
-              wallet={wallet}
-              onSuccess={(txHash, token, amount) => {
-                handleTxSuccess({
-                  id: `tx_${Date.now()}`,
-                  type: 'SHIELD',
-                  tokenSymbol: token.symbol,
-                  amount,
-                  txHash,
-                  timestamp: Date.now(),
-                  status: 'CONFIRMED',
-                  isPrivate: true,
-                  privacyDetails: 'Deposit into STRK20 Note-Based Pool',
-                });
-              }}
-            />
-          )}
+          {/* Active Workstation Viewport */}
+          <div className="p-4 sm:p-6 bg-zinc-950/90 border border-zinc-800 corner-box shadow-2xl">
+            {activeTab === 'PORTFOLIO' && (
+              <PortfolioTab
+                balances={balances}
+                walletAddress={wallet.address || ''}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+              />
+            )}
 
-          {activeTab === 'SEND' && (
-            <SendTab
-              balances={balances}
-              wallet={wallet}
-              initialRecipient={initialRecipient}
-              initialTokenSymbol={initialTokenSymbol}
-              initialAmount={initialAmount}
-              initialMemo={initialMemo}
-              onSuccess={(txHash, token, amount, recipient) => {
-                handleTxSuccess({
-                  id: `tx_${Date.now()}`,
-                  type: 'PRIVATE_TRANSFER',
-                  tokenSymbol: token.symbol,
-                  amount,
-                  recipient,
-                  txHash,
-                  timestamp: Date.now(),
-                  status: 'CONFIRMED',
-                  isPrivate: true,
-                  privacyDetails: 'Confidential UTXO Note Transfer to Stealth Recipient',
-                });
-              }}
-            />
-          )}
+            {activeTab === 'SWAP' && (
+              <SwapTab
+                balances={balances}
+                wallet={wallet}
+                onSuccess={(txHash, fromToken, toToken, amount) => {
+                  handleTxSuccess({
+                    id: `tx_${Date.now()}`,
+                    type: 'SWAP',
+                    tokenSymbol: `${fromToken.symbol} ➔ ${toToken.symbol}`,
+                    amount,
+                    txHash,
+                    timestamp: Date.now(),
+                    status: 'CONFIRMED',
+                    isPrivate: true,
+                    privacyDetails: 'Routed via orrange Intent Optimizer with Anonymizer Pool',
+                  });
+                }}
+              />
+            )}
 
-          {activeTab === 'REQUEST' && (
-            <RequestTab wallet={wallet} />
-          )}
+            {activeTab === 'PERPS' && (
+              <PerpsTab walletAddress={wallet.address || ''} />
+            )}
 
-          {activeTab === 'UNSHIELD' && (
-            <UnshieldTab
-              balances={balances}
-              wallet={wallet}
-              onSuccess={(txHash, token, amount, destination) => {
-                handleTxSuccess({
-                  id: `tx_${Date.now()}`,
-                  type: 'UNSHIELD',
-                  tokenSymbol: token.symbol,
-                  amount,
-                  recipient: destination,
-                  txHash,
-                  timestamp: Date.now(),
-                  status: 'CONFIRMED',
-                  isPrivate: true,
-                  privacyDetails: 'Burned Note & Transferred to Public Starknet Address',
-                });
-              }}
-            />
-          )}
+            {activeTab === 'EARN' && (
+              <EarnTab walletAddress={wallet.address || ''} balances={balances} />
+            )}
 
-          {activeTab === 'SCANNER' && (
-            <NoteScannerTab wallet={wallet} onShieldRedirect={() => setActiveTab('SHIELD')} />
-          )}
+            {activeTab === 'SHIELD' && (
+              <ShieldTab
+                balances={balances}
+                wallet={wallet}
+                onSuccess={(txHash, token, amount) => {
+                  handleTxSuccess({
+                    id: `tx_${Date.now()}`,
+                    type: 'SHIELD',
+                    tokenSymbol: token.symbol,
+                    amount,
+                    txHash,
+                    timestamp: Date.now(),
+                    status: 'CONFIRMED',
+                    isPrivate: true,
+                    privacyDetails: 'Deposit into STRK20 Note-Based Pool',
+                  });
+                }}
+              />
+            )}
 
-          {activeTab === 'HISTORY' && (
-            <HistoryTab transactions={transactions} onClear={() => saveTransactions([])} />
-          )}
+            {activeTab === 'SEND' && (
+              <SendTab
+                balances={balances}
+                wallet={wallet}
+                initialRecipient={initialRecipient}
+                initialTokenSymbol={initialTokenSymbol}
+                initialAmount={initialAmount}
+                initialMemo={initialMemo}
+                onSuccess={(txHash, token, amount, recipient) => {
+                  handleTxSuccess({
+                    id: `tx_${Date.now()}`,
+                    type: 'PRIVATE_TRANSFER',
+                    tokenSymbol: token.symbol,
+                    amount,
+                    recipient,
+                    txHash,
+                    timestamp: Date.now(),
+                    status: 'CONFIRMED',
+                    isPrivate: true,
+                    privacyDetails: 'Confidential UTXO Note Transfer to Stealth Recipient',
+                  });
+                }}
+              />
+            )}
+
+            {activeTab === 'REQUEST' && (
+              <RequestTab wallet={wallet} />
+            )}
+
+            {activeTab === 'UNSHIELD' && (
+              <UnshieldTab
+                balances={balances}
+                wallet={wallet}
+                onSuccess={(txHash, token, amount, destination) => {
+                  handleTxSuccess({
+                    id: `tx_${Date.now()}`,
+                    type: 'UNSHIELD',
+                    tokenSymbol: token.symbol,
+                    amount,
+                    recipient: destination,
+                    txHash,
+                    timestamp: Date.now(),
+                    status: 'CONFIRMED',
+                    isPrivate: true,
+                    privacyDetails: 'Burned Note & Transferred to Public Starknet Address',
+                  });
+                }}
+              />
+            )}
+
+            {activeTab === 'SCANNER' && (
+              <NoteScannerTab wallet={wallet} onShieldRedirect={() => setActiveTab('SHIELD')} />
+            )}
+
+            {activeTab === 'HISTORY' && (
+              <HistoryTab transactions={transactions} onClear={() => saveTransactions([])} />
+            )}
+          </div>
         </div>
       </main>
+
+      {/* 5. Sticky Interactive CLI Bar at Bottom */}
+      <InteractiveCliBar onExecuteCommand={(tab) => scrollToTerminal(tab)} />
 
       {/* Modals */}
       <PublishAddressModal
@@ -457,10 +531,10 @@ function WalletAppContent() {
   );
 }
 
-export default function Home() {
+export default function WalletApp() {
   return (
     <NetworkProvider>
-      <Suspense fallback={<div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Loading PEL Super-App...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center text-orrange-500 font-mono text-sm">INITIALIZING ORRANGE...</div>}>
         <WalletAppContent />
       </Suspense>
     </NetworkProvider>

@@ -3,33 +3,83 @@
 @tailwind utilities;
 
 :root {
-  --background: #090a0f;
+  --background: #040406;
   --foreground: #f4f4f5;
+  --orrange-primary: #FF6B00;
+  --orrange-glow: #FF8800;
 }
 
 body {
   color: var(--foreground);
-  background: var(--background);
+  background-color: var(--background);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(rgba(255, 107, 0, 0.05) 1px, transparent 0);
+  background-size: 24px 24px;
+  background-attachment: fixed;
+}
+
+/* Custom Selection */
+::selection {
+  background-color: #FF6B00;
+  color: #000000;
+}
+
+/* High-tech Cyberpunk Corner Brackets */
+.corner-box {
+  position: relative;
+}
+
+.corner-box::before,
+.corner-box::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: #FF6B00;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.corner-box::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1.5px solid #FF6B00;
+  border-left: 1.5px solid #FF6B00;
+}
+
+.corner-box::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1.5px solid #FF6B00;
+  border-right: 1.5px solid #FF6B00;
+}
+
+/* Terminal Scanline & CRT Effect */
+.terminal-glow {
+  text-shadow: 0 0 12px rgba(255, 107, 0, 0.5), 0 0 24px rgba(255, 107, 0, 0.2);
+}
+
+.terminal-green-glow {
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.5);
 }
 
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #090a0f;
+  background: #040406;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #262938;
-  border-radius: 3px;
+  background: #1c1c24;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f4459;
+  background: #FF6B00;
 }
