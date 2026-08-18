@@ -361,6 +361,42 @@
 #### 🟢 [SMALL CHANGE] — Documentation Updates (`README.md`)
 * **Description:** Updated features, comparison matrix, cryptographic formulas, pinned dependencies, getting-started commands, and live block explorer addresses.
 
+---
+
+### Tuesday, August 18, 2026 — 15:14:35 IST
+
+#### 🔴 [BIG CHANGE] — Implementation of PEL Financial Super-App (PEL Whitepaper v0.2)
+
+**Context:** Fully evolved the application from a standalone privacy wallet into the **Private Execution Layer (PEL) Financial Super-App & Router** as specified in the 22-page Technical White Paper.
+
+---
+
+#### 🔴 [BIG CHANGE] — Multi-Venue Intent & Privacy Router (`routerService.ts`, `SwapTab.tsx`)
+* **Description:** Implemented intent-based routing optimization:
+  $$C(r) = P(r) + F(r) + G(r) + S(r) + L(r) + \lambda \Lambda(r)$$
+  with dynamic Privacy Leakage Scoring ($\Lambda(r) = w_a A + w_t T + w_c C + w_m M$) comparing confidential STRK20 internal swaps, AVNU with anonymizer wrappers, and direct Ekubo CLMM routes.
+
+#### 🔴 [BIG CHANGE] — Privacy-Native Perpetual Derivatives Surface (`perpsService.ts`, `PerpsTab.tsx`)
+* **Description:** Built a leveraged derivatives terminal supporting `BTC-PERP`, `ETH-PERP`, and `STRK-PERP` with $1\times$–$50\times$ leverage, isolated margin calculations, real-time PnL, liquidation inequality checking ($E_t \le M_{\text{maint}}$), and ZK position commitments ($C_P = H(\text{domain}, \text{owner}, \text{market}, q, e, m, \text{nonce})$).
+
+#### 🔴 [BIG CHANGE] — Shielded Earn & Lending Vaults (`earnService.ts`, `EarnTab.tsx`)
+* **Description:** Enabled private yield accrual through overcollateralized lending markets (Vesu Lending, USDC Money Market, ETH Staking) directly from shielded STRK20 balances without revealing capital to public blockchain explorers.
+
+#### 🔴 [BIG CHANGE] — Unified Portfolio Surface (`PortfolioTab.tsx`)
+* **Description:** Implemented the Whitepaper's Portfolio aggregation formula:
+  $$\text{NetWorth} = \sum \text{Value}(N_i) + \sum \text{Equity}(\text{Pos}_j) + \sum \text{Value}(\text{Vault}_k)$$
+  giving users a clean, unified view of their shielded cash, perp equity, and lending deposits.
+
+#### 🔴 [BIG CHANGE] — Scoped Session Keys & 1-Click Fast Execution (`sessionKeyService.ts`, `Header.tsx`)
+* **Description:** Implemented ephemeral session keys ($SK = (pk, \text{exp}, \text{contracts}, \text{selectors}, \text{limits})$) enabling 1-click trading without repetitive signature popups.
+
+#### 🔴 [BIG CHANGE] — Reusable ZK Compliance Passports (`CompliancePassportModal.tsx`)
+* **Description:** Built verifiable selective disclosure credentials ($\text{Proof}(\text{KYC} = \text{true})$, $\text{Proof}(\text{TotalVolume} \ge \$50k)$, $\text{Proof}(\text{CleanJurisdiction})$) for regulatory auditability with zero privacy sacrifice.
+
+#### 🟢 [SMALL CHANGE] — Automated Vitest Test Suite Expansion (`pelRouter.test.ts`)
+* **Description:** Added 7 new mathematical and invariant tests covering route leakage scoring, liquidation boundaries, PnL math, and session key validation (17/17 tests passing).
+
+
 
 
 
