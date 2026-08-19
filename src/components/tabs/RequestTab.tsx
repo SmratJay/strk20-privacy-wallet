@@ -32,12 +32,22 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
     setSelectedToken(matching);
   }, [currentNetwork]);
 
-  const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : 'strk20:0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+  const privacyReceiveAddress = wallet.address ? `strk20:${wallet.address}` : '';
   
   const baseUrl = origin || 'https://orrange.xyz';
-  const paymentLink = `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`;
+  const paymentLink = wallet.address 
+    ? `${baseUrl}/?tab=SEND&to=${encodeURIComponent(privacyReceiveAddress)}&token=${selectedToken.symbol}&amount=${amount}&network=${currentNetwork.id}&memo=${encodeURIComponent(memo)}`
+    : '';
 
   const handleCopyLink = () => {
+    if (!wallet.address) {
+      showToast({
+        type: 'error',
+        title: 'Wallet Not Connected',
+        description: 'Please connect your Starknet wallet to generate your personal payment invoice link.',
+      });
+      return;
+    }
     navigator.clipboard.writeText(paymentLink);
     setCopied(true);
     showToast({
@@ -129,7 +139,7 @@ export const RequestTab: React.FC<RequestTabProps> = ({ wallet }) => {
               Scan to Pay {amount || '0'} {selectedToken.symbol} Privately
             </p>
             <p className="text-[10px] text-zinc-500 font-mono">
-              Channel: {shortenAddress(privacyReceiveAddress)}
+              Channel: {privacyReceiveAddress ? shortenAddress(privacyReceiveAddress) : '[ Connect Wallet to Generate Channel ]'}
             </p>
           </div>
         </div>

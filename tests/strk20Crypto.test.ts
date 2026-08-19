@@ -8,6 +8,8 @@ import {
   AUDITOR_ESCROW_TAG,
 } from '../src/services/strk20Crypto';
 import { privacyService } from '../src/services/privacyService';
+import { viewingKeyService } from '../src/services/viewingKeyService';
+import { priceService } from '../src/services/priceService';
 import { areFeltAddressesEqual, formatTokenAmount, parseTokenAmount, shortenAddress } from '../src/utils/formatters';
 
 describe('STRK20 Cryptographic Suite & Domain Tags', () => {
@@ -161,5 +163,32 @@ describe('Formatters & Utilities', () => {
     const amount6 = 50000000n; // 50 USDC (6 decimals)
     expect(formatTokenAmount(amount6, 6, 2)).toBe('50');
     expect(parseTokenAmount('50', 6)).toBe(amount6);
+  });
+});
+
+describe('Viewing Key Service (Whitepaper Section 4.3 & 14)', () => {
+  it('derives deterministic viewing keypair from wallet signature felt', () => {
+    const sigFelt = '0x123456789abcdef';
+    const vk1 = viewingKeyService.deriveViewingKeyFromSignature(sigFelt);
+    expect(vk1.privateViewingKey.startsWith('0x')).toBe(true);
+    expect(vk1.publicViewingKey.startsWith('0x')).toBe(true);
+
+    const vk2 = viewingKeyService.deriveViewingKeyFromSignature(sigFelt);
+    expect(vk1.privateViewingKey).toEqual(vk2.privateViewingKey);
+    expect(vk1.publicViewingKey).toEqual(vk2.publicViewingKey);
+  });
+
+  it('rejects empty or missing signatures', () => {
+    expect(() => viewingKeyService.deriveViewingKeyFromSignature('')).toThrow(/signature/i);
+  });
+});
+
+describe('Price Service (Real-Time Rates)', () => {
+  it('provides default fallback token prices with valid symbols', () => {
+    const prices = priceService.getCachedPrices();
+    expect(prices.STRK).toBeGreaterThan(0);
+    expect(prices.ETH).toBeGreaterThan(0);
+    expect(prices.USDC).toBe(1.0);
+    expect(prices.USDT).toBe(1.0);
   });
 });
