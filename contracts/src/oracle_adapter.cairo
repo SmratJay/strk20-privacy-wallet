@@ -12,7 +12,11 @@ pub trait IOracleAdapter<TContractState> {
 #[starknet::contract]
 pub mod OracleAdapter {
     use super::{IOracleAdapter, OraclePrice};
-    use starknet::{ContractAddress, get_block_timestamp};
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
+    use starknet::storage::{
+        StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess, Map
+    };
 
     const MAX_PRICE_AGE_SECONDS: u64 = 180; // 3 minute maximum freshness bound
 
@@ -20,7 +24,7 @@ pub mod OracleAdapter {
     struct Storage {
         admin: ContractAddress,
         pragma_oracle_address: ContractAddress,
-        manual_prices: LegacyMap<felt252, OraclePrice>,
+        manual_prices: Map<felt252, OraclePrice>,
     }
 
     #[event]
@@ -69,13 +73,13 @@ pub mod OracleAdapter {
         }
 
         fn set_oracle_address(ref self: ContractState, new_oracle: ContractAddress) {
-            let caller = starknet::get_caller_address();
+            let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.pragma_oracle_address.write(new_oracle);
         }
 
         fn update_manual_price(ref self: ContractState, market_id: felt252, price: u128) {
-            let caller = starknet::get_caller_address();
+            let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             let now = get_block_timestamp();
             self.manual_prices.write(market_id, OraclePrice { price, timestamp: now, is_valid: true });

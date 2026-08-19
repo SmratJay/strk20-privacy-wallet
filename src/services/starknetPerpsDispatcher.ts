@@ -16,9 +16,9 @@ export interface DeploymentConfig {
 export const PERPS_DEPLOYMENTS: Record<'sepolia' | 'mainnet', DeploymentConfig> = {
   sepolia: {
     network: 'sepolia',
-    pelCoreAddress: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
-    strk20AdapterAddress: '0x01243b3f2e1a3b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c',
-    oracleAdapterAddress: '0x036031dbdd236a73f004d3161b476ac89aaab2794be0d0417ee250ef4ed93a21',
+    pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x5be824b4b3771247ce6f85084dce536804ffaa8c5f8dbc5be0f9d6744c4c767',
+    strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0x390386e367645a27fc9219c29452e01bbd03891b6ae8e3cacbe693e516d35bb',
+    oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x401895d6416b08876c01a76bc618f3b7915376e6b57b1d65eb585769b5de848',
   },
   mainnet: {
     network: 'mainnet',
@@ -31,7 +31,7 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia' | 'mainnet', DeploymentConfig> 
 export class StarknetPerpsDispatcher {
   private provider: RpcProvider;
 
-  constructor(rpcUrl: string = 'https://starknet-sepolia.public.blastapi.io/rpc/v0_7') {
+  constructor(rpcUrl: string = 'https://api.cartridge.gg/x/starknet/sepolia') {
     this.provider = new RpcProvider({ nodeUrl: rpcUrl });
   }
 

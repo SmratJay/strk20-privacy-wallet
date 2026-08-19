@@ -12,13 +12,17 @@ pub trait ISTRK20Adapter<TContractState> {
 pub mod STRK20Adapter {
     use super::ISTRK20Adapter;
     use starknet::{ContractAddress, get_caller_address};
+    use starknet::storage::{
+        StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess, Map
+    };
 
     #[storage]
     struct Storage {
         admin: ContractAddress,
         pel_core_address: ContractAddress,
         total_locked_collateral: u128,
-        used_margin_nullifiers: LegacyMap<felt252, bool>,
+        used_margin_nullifiers: Map<felt252, bool>,
     }
 
     #[event]

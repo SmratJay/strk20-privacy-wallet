@@ -49,6 +49,10 @@ pub mod PELPerpsCore {
     use super::super::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
     use super::super::stwo_verifier::{IStwoVerifierDispatcher, IStwoVerifierDispatcherTrait};
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
+    use starknet::storage::{
+        StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess, Map
+    };
 
     #[storage]
     struct Storage {
@@ -58,13 +62,13 @@ pub mod PELPerpsCore {
         stwo_verifier: ContractAddress,
         
         // Nullifier Replay Registry (Whitepaper Section 21)
-        used_nullifiers: LegacyMap<felt252, bool>,
+        used_nullifiers: Map<felt252, bool>,
 
         // Active Position State Records
-        positions: LegacyMap<felt252, PositionRecord>,
+        positions: Map<felt252, PositionRecord>,
 
         // Markets Configuration
-        markets: LegacyMap<felt252, MarketConfig>,
+        markets: Map<felt252, MarketConfig>,
     }
 
     #[event]

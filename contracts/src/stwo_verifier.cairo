@@ -17,11 +17,15 @@ pub trait IStwoVerifier<TContractState> {
 pub mod StwoVerifier {
     use super::{IStwoVerifier, ProofFact};
     use starknet::{ContractAddress, get_caller_address};
+    use starknet::storage::{
+        StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess, Map
+    };
 
     #[storage]
     struct Storage {
         admin: ContractAddress,
-        verified_facts: LegacyMap<felt252, bool>,
+        verified_facts: Map<felt252, bool>,
     }
 
     #[event]
