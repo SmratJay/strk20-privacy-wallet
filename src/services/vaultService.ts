@@ -130,6 +130,31 @@ export class VaultService {
   }
 
   /**
+   * Mark notes as spent when allocating margin to a private perpetual position
+   */
+  spendNotesForMargin(address: string, networkId: string, amountToSpend: bigint, marginNullifier: string): UTXONote[] {
+    const notes = this.getNotes(address, networkId);
+    let remaining = amountToSpend;
+
+    const updated = notes.map((note) => {
+      if (!note.isSpent && remaining > 0n) {
+        if (note.amount <= remaining) {
+          remaining -= note.amount;
+          return { ...note, isSpent: true, nullifier: marginNullifier };
+        } else {
+          const leftover = note.amount - remaining;
+          remaining = 0n;
+          return { ...note, amount: leftover };
+        }
+      }
+      return note;
+    });
+
+    this.saveNotes(address, networkId, updated);
+    return updated;
+  }
+
+  /**
    * Save notes to persistent localStorage
    */
   private saveNotes(address: string, networkId: string, notes: UTXONote[]): void {

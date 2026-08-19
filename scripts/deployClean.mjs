@@ -21,11 +21,11 @@ async function main() {
   });
 
   console.log('=============================================================');
-  console.log('  DEPLOYING HARDENED INSTANCES TO STARKNET SEPOLIA');
+  console.log('  DEPLOYING HARDENED CONTRACT SUITE TO STARKNET SEPOLIA');
   console.log('  Deployer: ' + deployerData.accountAddress);
   console.log('=============================================================');
 
-  const getDynamicBounds = async () => {
+  const getDynamicBounds = async (isDeclare = false) => {
     let l1GasPrice = 200000000000000n;
     let l2GasPrice = 50000000000n;
     let l1DataGasPrice = 5000000000000n;
@@ -39,15 +39,15 @@ async function main() {
 
     return {
       l2_gas: {
-        max_amount: 80000000n,
+        max_amount: isDeclare ? 300000000n : 50000000n,
         max_price_per_unit: (l2GasPrice * 18n) / 10n,
       },
       l1_gas: {
-        max_amount: 2000n,
+        max_amount: 500n,
         max_price_per_unit: (l1GasPrice * 18n) / 10n,
       },
       l1_data_gas: {
-        max_amount: 4000n,
+        max_amount: 500n,
         max_price_per_unit: (l1DataGasPrice * 18n) / 10n,
       },
     };
@@ -55,26 +55,48 @@ async function main() {
 
   const loadArtifact = (name) => {
     const sierraPath = path.join(TARGET_DEV_DIR, `pel_perpetuals_core_${name}.contract_class.json`);
+    const casmPath = path.join(TARGET_DEV_DIR, `pel_perpetuals_core_${name}.compiled_contract_class.json`);
     const sierra = json.parse(fs.readFileSync(sierraPath, 'utf8'));
+    const casm = json.parse(fs.readFileSync(casmPath, 'utf8'));
     return {
       name,
+      sierra,
+      casm,
       sierraClassHash: hash.computeContractClassHash(sierra),
+      compiledClassHash: hash.computeCompiledClassHash(casm),
     };
   };
 
-  const stwoClassHash = loadArtifact('StwoVerifier').sierraClassHash;
-  const oracleClassHash = loadArtifact('OracleAdapter').sierraClassHash;
-  const strk20ClassHash = loadArtifact('STRK20Adapter').sierraClassHash;
-  const pelCoreClassHash = loadArtifact('PELPerpsCore').sierraClassHash;
+  const stwoArtifact = loadArtifact('StwoVerifier');
+  const oracleArtifact = loadArtifact('OracleAdapter');
+  const strk20Artifact = loadArtifact('STRK20Adapter');
+  const pelCoreArtifact = loadArtifact('PELPerpsCore');
 
-  console.log(`StwoVerifier Class  : ${stwoClassHash}`);
-  console.log(`OracleAdapter Class : ${oracleClassHash}`);
-  console.log(`STRK20Adapter Class : ${strk20ClassHash}`);
-  console.log(`PELPerpsCore Class  : ${pelCoreClassHash}`);
+  const declareContract = async (art) => {
+    console.log(`\nChecking declaration for ${art.name} (${art.sierraClassHash})...`);
+    try {
+      const existing = await provider.getClassByHash(art.sierraClassHash);
+      if (existing) {
+        console.log(`✓ ${art.name} already declared!`);
+        return art.sierraClassHash;
+      }
+    } catch (e) {}
+
+    console.log(`Declaring ${art.name}...`);
+    const bounds = await getDynamicBounds(true);
+    const res = await account.declare(
+      { contract: art.sierra, casm: art.casm, compiledClassHash: art.compiledClassHash },
+      { resourceBounds: bounds }
+    );
+    console.log(`Declare Tx: ${res.transaction_hash}`);
+    await provider.waitForTransaction(res.transaction_hash);
+    console.log(`✓ ${art.name} declared!`);
+    return art.sierraClassHash;
+  };
 
   const deployContract = async (name, classHash, constructorCalldata) => {
     console.log(`\nDeploying ${name}...`);
-    const bounds = await getDynamicBounds();
+    const bounds = await getDynamicBounds(false);
     const res = await account.deployContract(
       { classHash, constructorCalldata },
       { resourceBounds: bounds }
@@ -86,21 +108,27 @@ async function main() {
     return contractAddress;
   };
 
-  // 1. Deploy StwoVerifier
+  // 1. Declare all classes
+  const stwoClassHash = await declareContract(stwoArtifact);
+  const oracleClassHash = await declareContract(oracleArtifact);
+  const strk20ClassHash = await declareContract(strk20Artifact);
+  const pelCoreClassHash = await declareContract(pelCoreArtifact);
+
+  // 2. Deploy StwoVerifier
   const stwoAddress = await deployContract(
     'StwoVerifier',
     stwoClassHash,
     CallData.compile({ admin: deployerData.accountAddress })
   );
 
-  // 2. Deploy OracleAdapter
+  // 3. Deploy OracleAdapter
   const oracleAddress = await deployContract(
     'OracleAdapter',
     oracleClassHash,
     CallData.compile({ admin: deployerData.accountAddress, pragma_oracle: PRAGMA_ORACLE_SEPOLIA })
   );
 
-  // 3. Deploy PELPerpsCore
+  // 4. Deploy PELPerpsCore
   const pelCoreAddress = await deployContract(
     'PELPerpsCore',
     pelCoreClassHash,
@@ -112,7 +140,7 @@ async function main() {
     })
   );
 
-  // 4. Deploy STRK20Adapter
+  // 5. Deploy STRK20Adapter
   const strk20Address = await deployContract(
     'STRK20Adapter',
     strk20ClassHash,
@@ -122,9 +150,9 @@ async function main() {
     })
   );
 
-  // 5. Wire STRK20Adapter into PELPerpsCore on-chain
+  // 6. Wire STRK20Adapter into PELPerpsCore
   console.log('\nWiring STRK20Adapter into PELPerpsCore on-chain...');
-  const wireBounds = await getDynamicBounds();
+  const wireBounds = await getDynamicBounds(false);
   const wireRes = await account.execute(
     [
       {
@@ -191,8 +219,6 @@ async function main() {
   console.log(`  STRK20Adapter : ${strk20Address}`);
   console.log(`  OracleAdapter : ${oracleAddress}`);
   console.log(`  StwoVerifier  : ${stwoAddress}`);
-  console.log('  Saved to      : deployments/sepolia_contracts.json');
-  console.log('  Updated       : .env.local');
   console.log('=============================================================');
 }
 

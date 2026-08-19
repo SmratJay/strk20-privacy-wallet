@@ -12,6 +12,8 @@ pub trait ISTRK20Adapter<TContractState> {
         bounty_amount: u128,
         remaining_amount: u128,
     );
+    fn claim_keeper_bounty(ref self: TContractState, payout_note_commitment: felt252);
+    fn get_keeper_bounty_balance(self: @TContractState, keeper: ContractAddress) -> u128;
     fn set_pel_core_address(ref self: TContractState, pel_core: ContractAddress);
     fn get_total_locked_collateral(self: @TContractState) -> u128;
     fn is_margin_nullifier_used(self: @TContractState, nullifier: felt252) -> bool;
@@ -32,6 +34,7 @@ pub mod STRK20Adapter {
         pel_core_address: ContractAddress,
         total_locked_collateral: u128,
         used_margin_nullifiers: Map<felt252, bool>,
+        keeper_bounties: Map<ContractAddress, u128>,
     }
 
     #[event]
@@ -40,6 +43,7 @@ pub mod STRK20Adapter {
         MarginLocked: MarginLocked,
         PayoutReleased: PayoutReleased,
         CollateralLiquidated: CollateralLiquidated,
+        KeeperBountyClaimed: KeeperBountyClaimed,
         PelCoreAddressUpdated: PelCoreAddressUpdated,
     }
 
@@ -61,6 +65,13 @@ pub mod STRK20Adapter {
         pub keeper: ContractAddress,
         pub bounty_amount: u128,
         pub remaining_amount: u128,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct KeeperBountyClaimed {
+        pub keeper: ContractAddress,
+        pub note_commitment: felt252,
+        pub amount: u128,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -122,12 +133,33 @@ pub mod STRK20Adapter {
                 self.total_locked_collateral.write(0);
             }
 
+            // Real on-chain keeper bounty balance credit
+            let current_bounty = self.keeper_bounties.read(keeper_recipient);
+            self.keeper_bounties.write(keeper_recipient, current_bounty + bounty_amount);
+
             self.emit(CollateralLiquidated {
                 nullifier,
                 keeper: keeper_recipient,
                 bounty_amount,
                 remaining_amount,
             });
+        }
+
+        fn claim_keeper_bounty(ref self: ContractState, payout_note_commitment: felt252) {
+            let caller = get_caller_address();
+            let amount = self.keeper_bounties.read(caller);
+            assert(amount > 0, 'NO_KEEPER_BOUNTY_AVAILABLE');
+
+            self.keeper_bounties.write(caller, 0);
+            self.emit(KeeperBountyClaimed {
+                keeper: caller,
+                note_commitment: payout_note_commitment,
+                amount,
+            });
+        }
+
+        fn get_keeper_bounty_balance(self: @ContractState, keeper: ContractAddress) -> u128 {
+            self.keeper_bounties.read(keeper)
         }
 
         fn set_pel_core_address(ref self: ContractState, pel_core: ContractAddress) {

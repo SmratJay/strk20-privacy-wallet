@@ -261,13 +261,20 @@ class PerpsService {
       status: 'OPEN',
     };
 
+    return newPosition;
+  }
+
+  /**
+   * Save confirmed on-chain position to client cache
+   */
+  savePosition(walletAddress: string, position: PerpPosition): void {
     if (typeof window !== 'undefined') {
       const current = this.getPositions(walletAddress);
-      const updated = [newPosition, ...current];
+      // Avoid duplicate entries
+      const filtered = current.filter((p) => p.zkCommitment !== position.zkCommitment);
+      const updated = [position, ...filtered];
       localStorage.setItem(`pel_perps_positions_${walletAddress.toLowerCase()}`, JSON.stringify(updated));
     }
-
-    return newPosition;
   }
 
   /**

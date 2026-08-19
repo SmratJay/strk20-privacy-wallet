@@ -286,4 +286,64 @@
   * `npm run typecheck`: **0 TypeScript errors**.
   * `npm run build`: **Next.js 15 production build successful**.
 
+---
+
+## 📅 Wednesday, August 19, 2026 — 23:45:00 IST
+
+### 🏆 Protocol-Grade Hardening Across All 21 Architectural Directives
+
+#### 🔴 [BIG CHANGE] — Relayer Infrastructure & Elimination of Client-Side Private Keys
+* **Server-Side Relayer Route (`/api/relayer/execute`):**
+  * Created secure server-side execution endpoint reading testnet credentials strictly from server environment variables / deployment keystores.
+  * Completely eliminated all hardcoded private keys (`0x0374...`) from browser client code (`PerpsTab.tsx` and `keeperService.ts`).
+  * If a user connects ArgentX or Braavos, transactions execute directly through their browser wallet. If no wallet is connected, requests route through the backend relayer.
+
+#### 🔴 [BIG CHANGE] — Post-Confirmation Chain-First State Persistence
+* **No Pre-Confirmation State:**
+  * Removed premature `localStorage` position saving before transactions are mined.
+  * Positions are now persisted to the local cache *only* after `provider.waitForTransaction(txHash)` confirms and `starknetPerpsDispatcher.getPositionOnChain(commitment)` returns `isOpen = true`.
+  * `localStorage` is strictly treated as a read cache; the Starknet Sepolia blockchain is the sole source of truth.
+
+#### 🔴 [BIG CHANGE] — Real Shielded Collateral Note Spending & Minting
+* **STRK20 UTXO Integration:**
+  * When opening a position, `vaultService.spendNotesForMargin(...)` marks unspent notes as spent using the position's margin nullifier.
+  * When closing a position, `vaultService.addNote(...)` mints a new shielded payout note directly back into the user's STRK20 vault.
+  * Added on-chain keeper bounty tracking (`keeper_bounties: Map<ContractAddress, u128>`) and claiming (`claim_keeper_bounty`) in `STRK20Adapter.cairo`.
+
+#### 🔴 [BIG CHANGE] — Honest Cryptographic Fact Transition Narrative
+* **Accurate Terminology:**
+  * Refactored all UI badges, chips, and error strings from misleading "STARK AIR/FRI Proof" claims to honest, defensible **"Poseidon SNIP-36 Cryptographic Fact Commitment & Transition Machine"**.
+  * Replaced fake `LIMIT` and `STOP` tabs with a dedicated **Instant Market Execution (SNIP-36 Atomic Lock)** pro form.
+
+#### 🔴 [BIG CHANGE] — Complete On-Chain Re-Deployment & Proven Lifecycle Execution
+* **Hardened Contract Classes Declared on Sepolia:**
+  * `StwoVerifier`: `0x26e286a86abeef1503ba0d7e48c356bdf22d74899d92ed2b6962b7f47c4038b`
+  * `OracleAdapter`: `0x501a921124d4b0bb788bc18cb5829db0925c11791c5694829bc88abc25add7`
+  * `STRK20Adapter`: `0xda1171701585b3aa8afe39e82b8220e41ec4c62f6e5924c1dde8f81d1e721`
+  * `PELPerpsCore`: `0x164291d1a897e750b482bab2a66e0b1608b58818c88e027b51b381aa25ea086`
+* **Live Deployed & Wired Contract Instances:**
+  * **`PELPerpsCore`:** `0x3a2cc9918d9eacb403c8a7b8f187062cff495021fd1c79501b9b9a4bc1ca64a` ([Voyager](https://sepolia.voyager.online/contract/0x3a2cc9918d9eacb403c8a7b8f187062cff495021fd1c79501b9b9a4bc1ca64a))
+  * **`STRK20Adapter`:** `0x2b8d1dadd551c927f80e5e4bdf7aa2bde1f9c844817ed3624f56fc9b3521218` ([Voyager](https://sepolia.voyager.online/contract/0x2b8d1dadd551c927f80e5e4bdf7aa2bde1f9c844817ed3624f56fc9b3521218))
+  * **`OracleAdapter`:** `0x3f200a1cf746d6aa7a8787db7be677fe337ef877ab491055374698c3e186c06` ([Voyager](https://sepolia.voyager.online/contract/0x3f200a1cf746d6aa7a8787db7be677fe337ef877ab491055374698c3e186c06))
+  * **`StwoVerifier`:** `0x18c88558feff696faf8ef269a552812b8cf562161464e5a318e2a40e1392983` ([Voyager](https://sepolia.voyager.online/contract/0x18c88558feff696faf8ef269a552812b8cf562161464e5a318e2a40e1392983))
+* **Proven On-Chain Lifecycle Verification:**
+  * **Open Position Tx:** `0x253d07c82ad24fff9f32139c1502539821823fa6cc75eca454847c11dd4857e` ([Voyager Tx](https://sepolia.voyager.online/tx/0x253d07c82ad24fff9f32139c1502539821823fa6cc75eca454847c11dd4857e))
+  * **On-Chain Position Record (`get_position`):** Active (`0x1`), Locked Margin = 10,000 cents ($100.00).
+  * **Close & Settle Position Tx:** `0x47a5856af1558ba4103a4aadd832a7df222c1bf90c3f1feb2ba8030ca922208` ([Voyager Tx](https://sepolia.voyager.online/tx/0x47a5856af1558ba4103a4aadd832a7df222c1bf90c3f1feb2ba8030ca922208))
+  * **Post-Close State:** Successfully de-activated and settled on-chain.
+
+#### 🔴 [BIG CHANGE] — Protocol Invariant Test Suite
+* **`protocolInvariants.test.ts`:**
+  * Invariant 1 (Replay Protection): Nonces generate distinct nullifiers.
+  * Invariant 2 (Leverage Bounds): Opening circuit rejects leverage $> 50\times$.
+  * Invariant 3 (Solvency Inequality): Position is liquidatable if and only if $E_t \le M_{\text{maint}}$.
+  * Invariant 4 (Poseidon SNIP-36 Fact Binding): Mathematical equality between off-chain inputs and Cairo Poseidon state.
+  * Invariant 5 (Solvency Cap on Settlement): Calldata encodes bounded settlement payouts.
+  * Invariant 6 (Keeper Liquidation Call): Encodes keeper recipient and liquidation fact correctly.
+* **Test & Build Status:**
+  * `npm test`: **40/40 tests passed (100% pass rate)** across 5 test suites.
+  * `npm run typecheck`: **0 errors**.
+  * `npm run build`: **Compiled successfully in Next.js 15.5 production mode**.
+
+
 

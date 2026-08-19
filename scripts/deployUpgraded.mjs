@@ -21,63 +21,71 @@ async function main() {
   });
 
   console.log('=============================================================');
-  console.log('  DEPLOYING HARDENED INSTANCES TO STARKNET SEPOLIA');
-  console.log('  Deployer: ' + deployerData.accountAddress);
+  console.log('  DEPLOYING HARDENED PEL PERPS PROTOCOL CONTRACTS');
+  console.log('  Deployer Address: ' + deployerData.accountAddress);
   console.log('=============================================================');
 
-  const getDynamicBounds = async () => {
-    let l1GasPrice = 200000000000000n;
-    let l2GasPrice = 50000000000n;
-    let l1DataGasPrice = 5000000000000n;
+  const declareBounds = {
+    l2_gas: { max_amount: 500000000n, max_price_per_unit: 100000000000n },
+    l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
+    l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
+  };
 
-    try {
-      const block = await provider.getBlockWithTxs('latest');
-      if (block.l1_gas_price?.price_in_fri) l1GasPrice = BigInt(block.l1_gas_price.price_in_fri);
-      if (block.l2_gas_price?.price_in_fri) l2GasPrice = BigInt(block.l2_gas_price.price_in_fri);
-      if (block.l1_data_gas_price?.price_in_fri) l1DataGasPrice = BigInt(block.l1_data_gas_price.price_in_fri);
-    } catch (e) {}
-
-    return {
-      l2_gas: {
-        max_amount: 80000000n,
-        max_price_per_unit: (l2GasPrice * 18n) / 10n,
-      },
-      l1_gas: {
-        max_amount: 2000n,
-        max_price_per_unit: (l1GasPrice * 18n) / 10n,
-      },
-      l1_data_gas: {
-        max_amount: 4000n,
-        max_price_per_unit: (l1DataGasPrice * 18n) / 10n,
-      },
-    };
+  const deployBounds = {
+    l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
+    l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
+    l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
   };
 
   const loadArtifact = (name) => {
     const sierraPath = path.join(TARGET_DEV_DIR, `pel_perpetuals_core_${name}.contract_class.json`);
+    const casmPath = path.join(TARGET_DEV_DIR, `pel_perpetuals_core_${name}.compiled_contract_class.json`);
     const sierra = json.parse(fs.readFileSync(sierraPath, 'utf8'));
+    const casm = json.parse(fs.readFileSync(casmPath, 'utf8'));
     return {
       name,
+      sierra,
+      casm,
       sierraClassHash: hash.computeContractClassHash(sierra),
+      compiledClassHash: hash.computeCompiledClassHash(casm),
     };
   };
 
-  const stwoClassHash = loadArtifact('StwoVerifier').sierraClassHash;
-  const oracleClassHash = loadArtifact('OracleAdapter').sierraClassHash;
-  const strk20ClassHash = loadArtifact('STRK20Adapter').sierraClassHash;
-  const pelCoreClassHash = loadArtifact('PELPerpsCore').sierraClassHash;
+  const stwoArtifact = loadArtifact('StwoVerifier');
+  const oracleArtifact = loadArtifact('OracleAdapter');
+  const strk20Artifact = loadArtifact('STRK20Adapter');
+  const pelCoreArtifact = loadArtifact('PELPerpsCore');
 
-  console.log(`StwoVerifier Class  : ${stwoClassHash}`);
-  console.log(`OracleAdapter Class : ${oracleClassHash}`);
-  console.log(`STRK20Adapter Class : ${strk20ClassHash}`);
-  console.log(`PELPerpsCore Class  : ${pelCoreClassHash}`);
+  const declareContract = async (art) => {
+    console.log(`\nChecking declaration for ${art.name} (${art.sierraClassHash})...`);
+    try {
+      const existing = await provider.getClassByHash(art.sierraClassHash);
+      if (existing) {
+        console.log(`✓ ${art.name} already declared!`);
+        return art.sierraClassHash;
+      }
+    } catch (e) {}
+
+    console.log(`Declaring ${art.name}...`);
+    const res = await account.declare(
+      {
+        contract: art.sierra,
+        casm: art.casm,
+        compiledClassHash: art.compiledClassHash,
+      },
+      { resourceBounds: declareBounds }
+    );
+    console.log(`Declare Tx: ${res.transaction_hash}`);
+    await provider.waitForTransaction(res.transaction_hash);
+    console.log(`✓ ${art.name} declared!`);
+    return art.sierraClassHash;
+  };
 
   const deployContract = async (name, classHash, constructorCalldata) => {
     console.log(`\nDeploying ${name}...`);
-    const bounds = await getDynamicBounds();
     const res = await account.deployContract(
       { classHash, constructorCalldata },
-      { resourceBounds: bounds }
+      { resourceBounds: deployBounds }
     );
     console.log(`Deploy Tx: ${res.transaction_hash}`);
     await provider.waitForTransaction(res.transaction_hash);
@@ -86,21 +94,27 @@ async function main() {
     return contractAddress;
   };
 
-  // 1. Deploy StwoVerifier
+  // 1. Declare all 4 contracts
+  const stwoClassHash = await declareContract(stwoArtifact);
+  const oracleClassHash = await declareContract(oracleArtifact);
+  const strk20ClassHash = await declareContract(strk20Artifact);
+  const pelCoreClassHash = await declareContract(pelCoreArtifact);
+
+  // 2. Deploy StwoVerifier
   const stwoAddress = await deployContract(
     'StwoVerifier',
     stwoClassHash,
     CallData.compile({ admin: deployerData.accountAddress })
   );
 
-  // 2. Deploy OracleAdapter
+  // 3. Deploy OracleAdapter
   const oracleAddress = await deployContract(
     'OracleAdapter',
     oracleClassHash,
     CallData.compile({ admin: deployerData.accountAddress, pragma_oracle: PRAGMA_ORACLE_SEPOLIA })
   );
 
-  // 3. Deploy PELPerpsCore
+  // 4. Deploy PELPerpsCore
   const pelCoreAddress = await deployContract(
     'PELPerpsCore',
     pelCoreClassHash,
@@ -112,7 +126,7 @@ async function main() {
     })
   );
 
-  // 4. Deploy STRK20Adapter
+  // 5. Deploy STRK20Adapter
   const strk20Address = await deployContract(
     'STRK20Adapter',
     strk20ClassHash,
@@ -122,9 +136,8 @@ async function main() {
     })
   );
 
-  // 5. Wire STRK20Adapter into PELPerpsCore on-chain
+  // 6. Wire STRK20Adapter into PELPerpsCore on-chain
   console.log('\nWiring STRK20Adapter into PELPerpsCore on-chain...');
-  const wireBounds = await getDynamicBounds();
   const wireRes = await account.execute(
     [
       {
@@ -133,7 +146,7 @@ async function main() {
         calldata: [strk20Address],
       },
     ],
-    { resourceBounds: wireBounds }
+    { resourceBounds: deployBounds }
   );
   console.log(`Wire Tx: ${wireRes.transaction_hash}`);
   await provider.waitForTransaction(wireRes.transaction_hash);

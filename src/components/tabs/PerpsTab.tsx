@@ -238,53 +238,19 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         newPos.starkFactHash
       );
 
-      let txHash = '';
-      let explorerUrl = '';
-
-      // Check if browser wallet account is connected, else execute via testnet session
       const browserAccount = (window as any).starknet?.account;
-      if (browserAccount) {
-        const res = await browserAccount.execute([openCall]);
-        txHash = res.transaction_hash;
-        explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
-      } else {
-        // Submit directly to Starknet Sepolia RPC via session dispatcher
-        const provider = new (await import('starknet')).RpcProvider({
-          nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-        });
-        const { Account } = await import('starknet');
-        // Testnet session account for instant one-click execution
-        const sessionAccount = new Account({
-          provider,
-          address: '0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d',
-          signer: '0x0374e50eb9598ee09f7a7da0e3ebc7075c3db6f281e22be582d966d54cf8e51a',
-        });
-        const bounds = {
-          l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
-          l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
-          l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
-        };
-        const res = await sessionAccount.execute([openCall], { resourceBounds: bounds });
-        txHash = res.transaction_hash;
-        explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
-      }
+      const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, openCall);
 
-      setCurrentTxHash(txHash);
-      setCurrentExplorerUrl(explorerUrl);
+      setCurrentTxHash(executionRes.transactionHash);
+      setCurrentExplorerUrl(executionRes.explorerUrl);
 
       setModalSteps((prev) => [
         prev[0],
-        { ...prev[1], status: 'SUCCESS', desc: `Broadcasted! Tx: ${txHash.slice(0, 16)}...` },
+        { ...prev[1], status: 'SUCCESS', desc: `Broadcasted! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
         { ...prev[2], status: 'LOADING' },
       ]);
 
-      // Step 3: Await Real On-Chain Block Receipt
-      const provider = new (await import('starknet')).RpcProvider({
-        nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-      });
-      await provider.waitForTransaction(txHash);
-
-      // Verify on-chain existence directly from PELPerpsCore
+      // Step 3: Verify On-Chain Position Record from PELPerpsCore
       const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(newPos.zkCommitment);
 
       setModalSteps((prev) => [
@@ -297,15 +263,18 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         },
       ]);
 
-      // Deduct from local shielded balance tracker
+      // Deduct and spend shielded note in vaultService
+      vaultService.spendNotesForMargin(effectiveAddress, 'sepolia', BigInt(Math.floor(marginNum * 1e6)), newPos.nullifier);
       setShieldedBalanceUsd((prev) => Math.max(0, prev - marginNum));
 
+      // Persist in local frontend cache ONLY after on-chain confirmation
+      perpsService.savePosition(effectiveAddress, newPos);
       loadPositions();
       setInspectedPosition(newPos);
       showToast({
         type: 'success',
         title: `Private ${side} Position Active On-Chain!`,
-        description: `Tx: ${txHash.slice(0, 10)}... | Voyager Verified`,
+        description: `Tx: ${executionRes.transactionHash.slice(0, 10)}... | Voyager Verified`,
       });
     } catch (err: any) {
       console.error('Open position error:', err);
@@ -328,8 +297,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
     setModalSteps([
       {
-        title: '1. Evaluating STWO ZK PnL Settlement Witness',
-        desc: 'Proving linear PnL invariant and nullifying previous state commitment...',
+        title: '1. Evaluating Poseidon SNIP-36 PnL Settlement Witness',
+        desc: 'Binding linear PnL invariant and nullifying previous state commitment...',
         status: 'LOADING',
       },
       {
@@ -401,54 +370,33 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         closeFactHash
       );
 
-      let txHash = '';
-      let explorerUrl = '';
-
       const browserAccount = (window as any).starknet?.account;
-      if (browserAccount) {
-        const res = await browserAccount.execute([closeCall]);
-        txHash = res.transaction_hash;
-        explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
-      } else {
-        const provider = new (await import('starknet')).RpcProvider({
-          nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-        });
-        const { Account } = await import('starknet');
-        const sessionAccount = new Account({
-          provider,
-          address: '0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d',
-          signer: '0x0374e50eb9598ee09f7a7da0e3ebc7075c3db6f281e22be582d966d54cf8e51a',
-        });
-        const bounds = {
-          l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
-          l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
-          l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
-        };
-        const res = await sessionAccount.execute([closeCall], { resourceBounds: bounds });
-        txHash = res.transaction_hash;
-        explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
-      }
+      const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);
 
-      setCurrentTxHash(txHash);
-      setCurrentExplorerUrl(explorerUrl);
+      setCurrentTxHash(executionRes.transactionHash);
+      setCurrentExplorerUrl(executionRes.explorerUrl);
 
       setModalSteps((prev) => [
         prev[0],
-        { ...prev[1], status: 'SUCCESS', desc: `Settlement Broadcasted! Tx: ${txHash.slice(0, 16)}...` },
+        { ...prev[1], status: 'SUCCESS', desc: `Settlement Broadcasted! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
         { ...prev[2], status: 'LOADING' },
       ]);
-
-      // Step 3: Await Block Receipt
-      const provider = new (await import('starknet')).RpcProvider({
-        nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-      });
-      await provider.waitForTransaction(txHash);
 
       setModalSteps((prev) => [
         prev[0],
         prev[1],
         { ...prev[2], status: 'SUCCESS', desc: 'Settlement confirmed on Starknet Sepolia! Payout Note Minted.' },
       ]);
+
+      // Mint fresh shielded payout note into STRK20 vault
+      vaultService.addNote(
+        effectiveAddress,
+        'sepolia',
+        '0x053c91253bc93357de0a8614e470c77400ced24a25c80cc0b1efc73e045dd895',
+        'USDC',
+        BigInt(Math.floor(payoutAmountUsd * 1e6)),
+        executionRes.transactionHash
+      );
 
       const closed = perpsService.closePosition(effectiveAddress, positionId);
       if (closed) {
@@ -489,11 +437,11 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         market={currentMarket}
       />
 
-      {/* Hyperliquid/Jupiter Style Top Ticker & Metrics Header */}
-      <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-3.5 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          {/* Asset Switcher Pill */}
-          <div className="flex items-center gap-2">
+      {/* Top Protocol Status & Market Strip */}
+      <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-4 shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          {/* Market Selector Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
             {markets.map((m) => {
               const isSelected = m.id === selectedMarketId;
               return (
@@ -551,7 +499,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
 
             <div>
-              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">1h Funding (Countdown: 38m)</span>
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">1h Funding</span>
               <span className="font-semibold text-emerald-400 flex items-center gap-1">
                 <Flame className="w-3 h-3 text-orange-400" />
                 +{(currentMarket.fundingRate1hPct * 100).toFixed(4)}%
@@ -570,22 +518,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
 
             <div>
-              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Privacy Status</span>
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Verification</span>
               <span className="px-2 py-0.5 rounded-full bg-[#a855f7]/15 text-[#c084fc] font-bold text-[10px] border border-[#a855f7]/30 flex items-center gap-1">
                 <ShieldCheck className="w-3 h-3" />
-                STARK Verified
+                Poseidon SNIP-36 Bound
               </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Terminal View: Chart + Orderbook + Pro Order Form */}
+      {/* Main Grid: Chart & Order Book (8 cols) | Pro Order Form (4 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left Side: Candlestick Chart & Depth (8 Cols) */}
-        <div className="lg:col-span-8 space-y-3">
-          {/* Chart Controls Bar */}
-          <div className="flex items-center justify-between px-1 text-xs">
+        {/* Left Side: Chart & Visuals (8 Cols) */}
+        <div className="lg:col-span-8 space-y-4">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 bg-[#121214] p-1 rounded-xl border border-[#27272a]">
               {(['DUAL', 'CHART', 'ORDERBOOK'] as const).map((mode) => (
                 <button
@@ -656,21 +603,15 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         {/* Right Side: Hyperliquid/Jupiter Style Pro Order Form (4 Cols) */}
         <div className="lg:col-span-4">
           <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-2xl space-y-4">
-            {/* Order Type Tabs (Market / Limit / Stop) */}
-            <div className="grid grid-cols-3 gap-1 bg-[#18181b] p-1 rounded-xl border border-[#27272a] text-xs font-semibold">
-              {(['MARKET', 'LIMIT', 'STOP'] as const).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setOrderType(type)}
-                  className={`py-1.5 rounded-lg transition-all ${
-                    orderType === type
-                      ? 'bg-[#27272a] text-white shadow-sm'
-                      : 'text-[#71717a] hover:text-[#a1a1aa]'
-                  }`}
-                >
-                  {type === 'MARKET' ? 'Market' : type === 'LIMIT' ? 'Limit' : 'Stop'}
-                </button>
-              ))}
+            {/* Institutional Order Header */}
+            <div className="flex items-center justify-between bg-[#18181b] px-3 py-2 rounded-xl border border-[#27272a]">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                Instant Market Execution
+              </span>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 font-semibold">
+                SNIP-36 Atomic Lock
+              </span>
             </div>
 
             {/* Long / Short Vibrant Switcher */}

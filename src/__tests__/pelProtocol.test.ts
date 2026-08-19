@@ -75,7 +75,7 @@ describe('PEL Private Perpetuals Protocol Test Suite', () => {
       0.02
     );
 
-    expect(proof.starkVerifierStatus).toBe('STARK_VALID_SNIP36');
+    expect(proof.starkVerifierStatus).toBe('POSEIDON_SNIP36_FACT_VALID');
     expect(proof.circuitResults.openingValid).toBe(true);
     expect(proof.circuitResults.solvencyValid).toBe(true);
     expect(proof.factHash.startsWith('0x')).toBe(true);

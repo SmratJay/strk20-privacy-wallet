@@ -4,7 +4,7 @@
  * Encodes and dispatches real Cairo contract transactions via Starknet.js & connected wallets.
  */
 
-import { Account, Call, Contract, RpcProvider, hash, num } from 'starknet';
+import { Call, RpcProvider } from 'starknet';
 
 export interface DeploymentConfig {
   network: 'sepolia';
@@ -17,10 +17,10 @@ export interface DeploymentConfig {
 export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
   sepolia: {
     network: 'sepolia',
-    pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x5be824b4b3771247ce6f85084dce536804ffaa8c5f8dbc5be0f9d6744c4c767',
-    strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0x390386e367645a27fc9219c29452e01bbd03891b6ae8e3cacbe693e516d35bb',
-    oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x401895d6416b08876c01a76bc618f3b7915376e6b57b1d65eb585769b5de848',
-    stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x57902806d2d74d86e35d7329cda40122f80d4b4d7cdda4997f2412d4ed1067a',
+    pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x3a2cc9918d9eacb403c8a7b8f187062cff495021fd1c79501b9b9a4bc1ca64a',
+    strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0x2b8d1dadd551c927f80e5e4bdf7aa2bde1f9c844817ed3624f56fc9b3521218',
+    oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x3f200a1cf746d6aa7a8787db7be677fe337ef877ab491055374698c3e186c06',
+    stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x18c88558feff696faf8ef269a552812b8cf562161464e5a318e2a40e1392983',
   },
 };
 
@@ -34,7 +34,7 @@ export interface ExecutionResult {
 export class StarknetPerpsDispatcher {
   private provider: RpcProvider;
 
-  constructor(rpcUrl: string = 'https://api.cartridge.gg/x/starknet/sepolia') {
+  constructor(rpcUrl: string = process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia') {
     this.provider = new RpcProvider({ nodeUrl: rpcUrl });
   }
 
@@ -129,7 +129,7 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Execute real on-chain transaction via connected Starknet account
+   * Execute real on-chain transaction via connected Starknet browser wallet or server relayer
    */
   async executeOnChain(
     account: any,
@@ -137,11 +137,41 @@ export class StarknetPerpsDispatcher {
     network: 'sepolia' = 'sepolia'
   ): Promise<ExecutionResult> {
     const callArray = Array.isArray(calls) ? calls : [calls];
-    const response = await account.execute(callArray);
-    const txHash = response.transaction_hash;
-    const explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
 
-    // Await real on-chain block receipt
+    if (account && typeof account.execute === 'function') {
+      const response = await account.execute(callArray);
+      const txHash = response.transaction_hash;
+      const explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
+      await this.provider.waitForTransaction(txHash);
+      return {
+        transactionHash: txHash,
+        explorerUrl,
+        status: 'SUCCESS',
+      };
+    }
+
+    // Fallback to secure server-side relayer route (private key stays on server)
+    return this.executeViaRelayer(callArray);
+  }
+
+  /**
+   * Execute transaction via server-side relayer endpoint
+   */
+  async executeViaRelayer(calls: Call[]): Promise<ExecutionResult> {
+    const res = await fetch('/api/relayer/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calls }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.transaction_hash) {
+      throw new Error(data.error || 'Server relayer transaction execution failed');
+    }
+
+    const txHash = data.transaction_hash;
+    const explorerUrl = data.explorerUrl || `https://sepolia.voyager.online/tx/${txHash}`;
+
     await this.provider.waitForTransaction(txHash);
 
     return {

@@ -87,11 +87,12 @@ describe('PEL Private Perpetuals ZK Prover Subsystem (Whitepaper Section 11)', (
       longWitness,
       'BTC-PERP',
       96420.50,
+      5000,
       50,
       0.02
     );
 
-    expect(proofResult.starkVerifierStatus).toBe('STARK_VALID_SNIP36');
+    expect(proofResult.starkVerifierStatus).toBe('POSEIDON_SNIP36_FACT_VALID');
     expect(proofResult.factHash.startsWith('0x')).toBe(true);
     expect(proofResult.publicInputsHash.startsWith('0x')).toBe(true);
     expect(proofResult.circuitResults.solvencyValid).toBe(true);

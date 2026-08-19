@@ -106,34 +106,11 @@ class KeeperService {
       keeperRecipient
     );
 
-    let accountToUse = signerAccount;
-    if (!accountToUse) {
-      const provider = new (await import('starknet')).RpcProvider({
-        nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-      });
-      const { Account } = await import('starknet');
-      accountToUse = new Account({
-        provider,
-        address: '0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d',
-        signer: '0x0374e50eb9598ee09f7a7da0e3ebc7075c3db6f281e22be582d966d54cf8e51a',
-      });
-    }
-
-    const bounds = {
-      l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
-      l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
-      l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
-    };
-
-    const res = await accountToUse.execute([call], { resourceBounds: bounds });
-    const provider = new (await import('starknet')).RpcProvider({
-      nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
-    });
-    await provider.waitForTransaction(res.transaction_hash);
+    const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
 
     return {
-      txHash: res.transaction_hash,
-      explorerUrl: `https://sepolia.voyager.online/tx/${res.transaction_hash}`,
+      txHash: executionRes.transactionHash,
+      explorerUrl: executionRes.explorerUrl,
     };
   }
 

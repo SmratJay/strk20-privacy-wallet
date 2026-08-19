@@ -1,7 +1,7 @@
 /**
  * @file zkProverService.ts
- * @description PEL Zero-Knowledge Proving Subsystem (Whitepaper Sections 10 & 11)
- * Executes algebraic STARK circuits and generates cryptographically bound SNIP-36 proof facts.
+ * @description PEL Cryptographic Proving Subsystem (Whitepaper Sections 10 & 11)
+ * Executes algebraic transition constraints and generates cryptographically bound Poseidon SNIP-36 proof facts.
  */
 
 import { hash } from 'starknet';
@@ -35,7 +35,7 @@ export interface STARKProofResult {
   publicInputsHash: string;
   circuitResults: CircuitEvaluationResult;
   proofType: 'OPEN' | 'UPDATE' | 'LIQUIDATE' | 'CLOSE';
-  starkVerifierStatus: 'STARK_VALID_SNIP36' | 'INVALID';
+  starkVerifierStatus: 'POSEIDON_SNIP36_FACT_VALID' | 'INVALID';
   timestamp: number;
 }
 
@@ -53,6 +53,7 @@ export class ZKProverService {
 
   /**
    * Circuit 2: Opening Circuit (§11 & §12)
+   * Invariant: 1 <= (q * e) / m <= L_max
    */
   evaluateOpeningCircuit(
     witness: PositionWitness,
@@ -161,7 +162,7 @@ export class ZKProverService {
   }
 
   /**
-   * Master STARK Proof Generation Pipeline
+   * Master Cryptographic Proof Generation Pipeline
    * Deterministically binds public inputs and generates the SNIP-36 fact hash matching StwoVerifier.cairo
    */
   generateTransitionProof(
@@ -244,7 +245,7 @@ export class ZKProverService {
         nullifier,
       },
       proofType,
-      starkVerifierStatus: 'STARK_VALID_SNIP36',
+      starkVerifierStatus: 'POSEIDON_SNIP36_FACT_VALID',
       timestamp: Date.now(),
     };
   }
