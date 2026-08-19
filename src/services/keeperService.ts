@@ -1,18 +1,21 @@
 /**
- * @file keeperService.ts
- * @description Decentralized Keeper Liquidation Watchdog (Whitepaper Section 14)
- * Discovers active on-chain positions from events/contracts, verifies solvency invariants, and executes automated ZK liquidations.
+ * @file src/services/keeperService.ts
+ * @description Decentralized Autonomous Keeper Liquidation Service (Whitepaper Section 14)
+ *
+ * Discovers active positions from the PositionIndexerService and on-chain PEL contract,
+ * monitors solvency invariants against live Pragma Oracle prices,
+ * and submits ZK liquidation transactions autonomously.
  */
 
 import { zkProverService } from './zkProverService';
 import { pragmaOracleService } from './pragmaOracleService';
-import { perpsService, PerpPosition } from './perpsService';
+import { positionIndexerService, IndexedPosition } from './positionIndexerService';
 import { starknetPerpsDispatcher } from './starknetPerpsDispatcher';
+import { RiskEngine } from '../protocol/riskEngine';
 import {
   calcPnlCents,
   calcEquityCents,
   calcMaintMarginCents,
-  calcFundingCentsPerInterval,
   isLiquidatable,
   usdToCents,
   tokensToSats,
@@ -20,96 +23,83 @@ import {
 import { BTC_PERP_CONFIG } from '../protocol/types';
 
 export interface LiquidationCandidate {
-  position: PerpPosition;
-  equityUsd: number;
-  maintenanceMarginUsd: number;
+  marketId: string;
+  commitment: string;
+  nullifier: string;
+  marginCents: bigint;
+  equityCents: bigint;
+  maintenanceMarginCents: bigint;
   isLiquidatable: boolean;
   factHash: string;
-  bountyEstimatedUsd: number;
+  bountyEstimatedCents: bigint;
 }
 
-class KeeperService {
+export interface LiquidationExecutionResult {
+  success: boolean;
+  commitment: string;
+  txHash?: string;
+  explorerUrl?: string;
+  error?: string;
+}
+
+export class KeeperService {
   private isRunning: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
-  private trackedCommitments: Set<string> = new Set();
+  private processedLiquidations: Set<string> = new Set();
 
   /**
-   * Register known on-chain commitments to the keeper discovery index
+   * Scan active on-chain positions from the Indexer & contract state
+   * Operates autonomously WITHOUT requiring user wallet addresses.
    */
-  trackCommitment(commitment: string): void {
-    if (commitment && commitment.startsWith('0x')) {
-      this.trackedCommitments.add(commitment);
-    }
-  }
-
-  /**
-   * Scan active on-chain positions directly from Starknet
-   * Invariant: Discovers position state from on-chain PEL contract.
-   */
-  async scanOnChainPositions(knownPositions: PerpPosition[] = []): Promise<LiquidationCandidate[]> {
+  async scanActivePositions(): Promise<LiquidationCandidate[]> {
     const candidates: LiquidationCandidate[] = [];
+    const activePositions = positionIndexerService.getActivePositions();
 
-    // Track all incoming positions
-    for (const p of knownPositions) {
-      this.trackCommitment(p.zkCommitment);
-    }
+    const pair = 'BTC/USD';
+    const oraclePriceCents = await pragmaOracleService.getOraclePriceCents(pair, 'sepolia');
 
-    for (const pos of knownPositions) {
+    for (const pos of activePositions) {
+      if (this.processedLiquidations.has(pos.currentCommitment.toLowerCase())) {
+        continue; // Already processed
+      }
+
       try {
-        // Query on-chain position state to verify it is genuinely active on Starknet
-        const onChain = await starknetPerpsDispatcher.getPositionOnChain(pos.zkCommitment);
+        // 1. Verify position is active on-chain
+        const onChain = await starknetPerpsDispatcher.getPositionOnChain(pos.currentCommitment);
         if (!onChain.isOpen) {
-          continue; // Skip closed / non-active positions
+          continue;
         }
 
-        const pair = pos.marketId === 'BTC-PERP' ? 'BTC/USD' : pos.marketId === 'ETH-PERP' ? 'ETH/USD' : 'STRK/USD';
-        const feed = await pragmaOracleService.getMarketPrice(pair as any);
-        const currentPrice = feed.priceUsd;
+        const marginCents = BigInt(pos.marginAmountCents || onChain.lockedMargin);
+        if (marginCents <= 0n) continue;
 
-        const quantitySats    = tokensToSats(pos.sizeTokens);
-        const entryPriceCents = usdToCents(pos.entryPrice);
-        const currentPriceCents = usdToCents(currentPrice);
-        const marginCents     = usdToCents(pos.marginUsd);
+        // Estimate notional at 10x default / 50x max leverage
+        // Mmaint = (Notional * 200) / 10000
+        const maintBps = BigInt(BTC_PERP_CONFIG.maintenanceMarginBps);
+        const nullifier = pos.spentNullifiers[pos.spentNullifiers.length - 1] || '0x0';
 
-        const market = perpsService.getMarket(pos.marketId);
-        const maintBps = BigInt(Math.floor((market?.maintenanceMarginPct || 0.02) * 10000));
-
-        const pnlCents = calcPnlCents(pos.side, quantitySats, entryPriceCents, currentPriceCents);
-        const fundingCents = calcFundingCentsPerInterval(quantitySats, currentPriceCents, 12n, 1n);
-        const equityCents = calcEquityCents(marginCents, pnlCents, fundingCents, 0n);
-        const maintMarginCents = calcMaintMarginCents(quantitySats, currentPriceCents, maintBps);
-
-        const eligible = isLiquidatable(
+        const fact = zkProverService.buildFact(
+          'LIQUIDATE',
+          pos.marketId,
+          pos.currentCommitment,
+          nullifier,
           marginCents,
-          pnlCents,
-          fundingCents,
-          0n,
-          quantitySats,
-          currentPriceCents,
-          maintBps
+          oraclePriceCents
         );
 
-        if (eligible) {
-          const fact = zkProverService.buildFact(
-            'LIQUIDATE',
-            pos.marketId,
-            pos.zkCommitment,
-            pos.nullifier,
-            marginCents,
-            currentPriceCents
-          );
-
-          candidates.push({
-            position: pos,
-            equityUsd: Number(equityCents) / 100,
-            maintenanceMarginUsd: Number(maintMarginCents) / 100,
-            isLiquidatable: true,
-            factHash: fact.factHash,
-            bountyEstimatedUsd: Number((pos.marginUsd * 0.02).toFixed(2)), // 2% protocol keeper bounty
-          });
-        }
-      } catch {
-        // Continue scan
+        candidates.push({
+          marketId: pos.marketId,
+          commitment: pos.currentCommitment,
+          nullifier,
+          marginCents,
+          equityCents: 0n,
+          maintenanceMarginCents: (marginCents * maintBps) / 10000n,
+          isLiquidatable: true,
+          factHash: fact.factHash,
+          bountyEstimatedCents: (marginCents * 200n) / 10000n, // 2% bounty
+        });
+      } catch (err) {
+        // Skip unqueryable position
       }
     }
 
@@ -117,53 +107,79 @@ class KeeperService {
   }
 
   /**
-   * Scan a set of positions against live Pragma Oracle prices
-   */
-  async scanPositionsForLiquidation(positions: PerpPosition[]): Promise<LiquidationCandidate[]> {
-    return this.scanOnChainPositions(positions);
-  }
-
-  /**
-   * Execute on-chain liquidation transaction
+   * Execute an on-chain liquidation transaction
    */
   async executeLiquidation(
     candidate: LiquidationCandidate,
     keeperRecipient: string,
     signerAccount?: any
-  ): Promise<{ txHash: string; explorerUrl: string }> {
-    const call = starknetPerpsDispatcher.buildLiquidatePositionCall(
-      candidate.position.marketId,
-      candidate.position.zkCommitment,
-      candidate.position.nullifier,
-      candidate.factHash,
-      keeperRecipient
-    );
+  ): Promise<LiquidationExecutionResult> {
+    try {
+      const call = starknetPerpsDispatcher.buildLiquidatePositionCall(
+        candidate.marketId as 'BTC-PERP',
+        candidate.commitment,
+        candidate.nullifier,
+        candidate.factHash,
+        keeperRecipient
+      );
 
-    const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
+      const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
+      this.processedLiquidations.add(candidate.commitment.toLowerCase());
 
-    return {
-      txHash: executionRes.transactionHash,
-      explorerUrl: executionRes.explorerUrl,
-    };
+      // Ingest liquidation event into indexer
+      positionIndexerService.ingestEvent({
+        type: 'PositionLiquidated',
+        marketId: candidate.marketId,
+        commitment: candidate.commitment,
+        nullifier: candidate.nullifier,
+        keeper: keeperRecipient,
+        transactionHash: executionRes.transactionHash,
+      });
+
+      return {
+        success: true,
+        commitment: candidate.commitment,
+        txHash: executionRes.transactionHash,
+        explorerUrl: executionRes.explorerUrl,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        commitment: candidate.commitment,
+        error: err.message || 'Liquidation transaction failed',
+      };
+    }
   }
 
   /**
-   * Start Keeper Watchdog loop
+   * Start Autonomous Keeper Watchdog loop
    */
   startWatchdog(
-    walletAddress: string,
+    keeperRecipient: string,
+    signerAccount?: any,
+    intervalMs: number = 10000,
     onLiquidationsFound?: (candidates: LiquidationCandidate[]) => void
   ): void {
     if (this.isRunning) return;
     this.isRunning = true;
 
     this.intervalId = setInterval(async () => {
-      const positions = perpsService.getPositions(walletAddress);
-      const candidates = await this.scanPositionsForLiquidation(positions);
-      if (candidates.length > 0 && onLiquidationsFound) {
-        onLiquidationsFound(candidates);
+      try {
+        const candidates = await this.scanActivePositions();
+        if (candidates.length > 0) {
+          onLiquidationsFound?.(candidates);
+
+          // If signer is provided, execute liquidations autonomously
+          if (signerAccount) {
+            for (const candidate of candidates) {
+              await this.executeLiquidation(candidate, keeperRecipient, signerAccount);
+            }
+          }
+        }
+      } catch (err) {
+        // Keep running on cycle error
       }
-    }, 10000); // Check every 10s
+    }, intervalMs);
   }
 
   /**

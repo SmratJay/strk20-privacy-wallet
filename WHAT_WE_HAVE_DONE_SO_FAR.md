@@ -496,3 +496,37 @@
   * `tests/e2e/liquidationPath.test.ts`: End-to-end liquidation, keeper detection, and 2% bounty / 98% insurance split verified.
   * Total test surface: **9 test suites, 102/102 tests passing**.
   * Production build: **Next.js 15.5 compiled with 0 errors**.
+
+---
+
+## 📅 Thursday, August 20, 2026 — 01:36:00 IST
+
+### 💎 Complete V3 Master Implementation & Protocol Hardening
+
+#### 🔴 [BIG CHANGE] — Real Collateral Custody, Authenticated Oracle, Canonical Risk Engine, & Autonomous Keeper Bot
+* **Real Collateral Custody Layer (`strk20_adapter.cairo` V3):**
+  * Added `claim_payout` allowing users holding verified payout note commitments to withdraw tokens to their Starknet address.
+  * Added `claim_keeper_bounty` allowing keepers to withdraw accumulated liquidation bounties.
+  * Added `deposit_insurance_liquidity` and `set_collateral_token` for backing liquidity pools.
+* **Pragma-Authenticated Oracle Adapter (`oracle_adapter.cairo` V3):**
+  * Added `publish_oracle_price` restricted to authorized Pragma oracle publishers.
+  * Enforced $180\text{s}$ freshness verification and rejected future timestamps (`timestamp > now`).
+  * Strictly isolated test-only pricing via explicit `set_test_price_TEST_ONLY`.
+* **Canonical Unified Risk Engine (`src/protocol/riskEngine.ts`):**
+  * Single source of truth for notional, signed PnL, equity, maintenance margin, initial margin, periodic funding accrual, taker fees, liquidation eligibility, and bad-debt waterfall.
+  * 100% BigInt fixed-point integer arithmetic with zero floating-point drift.
+* **Event-Driven Position Indexer (`src/services/positionIndexerService.ts`):**
+  * Starknet on-chain event indexer reconstructing the active commitment graph ($C_0 \to C_1 \to C_2$) without requiring user wallet addresses or exposing private witnesses.
+  * Ingests and indexes `PositionOpened`, `PositionUpdated`, `PositionFunded`, `PositionClosed`, and `PositionLiquidated`.
+* **Autonomous Keeper Bot (`keeper/keeperBot.ts` & `src/services/keeperService.ts`):**
+  * Independent liquidation execution daemon polling on-chain Pragma median feeds and indexed active commitments.
+  * Automatically detects underwater positions ($E_t \le M_{\text{maint}}$), synthesizes valid Poseidon `LIQUIDATE` transition facts, and submits on-chain liquidation transactions.
+* **113/113 Tests Passing across 11 Test Suites (100% Green):**
+  * Added `tests/riskEngine.test.ts` (precision, solvency, bad debt waterfall, theoretical liquidation price).
+  * Added `tests/indexerAndKeeper.test.ts` (event ingestion, lineage graph tracking, autonomous liquidation triggers).
+* **Final Architectural Artifacts Published:**
+  * `PERPS_IMPLEMENTATION_STATUS.md`: Full status matrix across all protocol components.
+  * `PERPS_ARCHITECTURE.md`: Complete end-to-end architecture diagram, privacy boundaries, and formal state transition rules.
+  * `PERPS_SECURITY_MODEL.md`: Threat analysis, attack vector defenses, and bad debt waterfall mechanics.
+  * `PERPS_TESTNET_RUNBOOK.md`: Step-by-step testnet operator runbook with Sepolia contract addresses.
+

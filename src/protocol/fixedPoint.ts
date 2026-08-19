@@ -12,7 +12,8 @@
  * - RATE_SCALE   = 1e8  (funding rate: 0.0001 = 10000n)
  */
 
-import { QTY_SCALE, BPS_SCALE } from './types';
+import { PRICE_SCALE, QTY_SCALE, RATE_SCALE, BPS_SCALE } from './types';
+export { PRICE_SCALE, QTY_SCALE, RATE_SCALE, BPS_SCALE };
 
 // ─── Low-Level Primitives ─────────────────────────────────────────────────────
 
