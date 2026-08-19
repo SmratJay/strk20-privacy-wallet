@@ -39,7 +39,7 @@ export interface PerpPosition {
   nullifier: string;             // NF = H(NULLIFIER_TAG, commitment, nonce)
   starkFactHash: string;         // SNIP-36 STARK Fact Hash
   publicInputsHash: string;      // Public inputs hash
-  proofStatus: 'STARK_VALID_SNIP36' | 'PENDING';
+  proofStatus: 'POSEIDON_FACT_VALID' | 'PENDING' | 'FAILED';
   status: 'OPEN' | 'CLOSED' | 'LIQUIDATED';
 }
 
@@ -202,7 +202,11 @@ class PerpsService {
     marginUsd: number,
     leverage: number
   ): PerpPosition {
-    const market = this.getMarket(marketId) || DEFAULT_MARKETS[0];
+    const market = this.getMarket(marketId);
+    if (!market) {
+      throw new Error(`INVALID_MARKET: Market '${marketId}' is not registered`);
+    }
+
     const notionalUsd = marginUsd * leverage;
     const sizeTokens = notionalUsd / market.markPrice;
     const liquidationPrice = this.calculateLiquidationPrice(
@@ -221,7 +225,7 @@ class PerpsService {
 
     const witness: PositionWitness = {
       side,
-      sizeTokens: Number(sizeTokens.toFixed(6)),
+      sizeTokens,
       entryPrice: market.markPrice,
       marginUsd,
       fundingAccumulator: 0,
@@ -229,67 +233,97 @@ class PerpsService {
       ownerAddress: walletAddress,
     };
 
-    // Execute STARK ZK Prover Pipeline
-    const proofResult: STARKProofResult = zkProverService.generateTransitionProof(
+    const proofResult = zkProverService.generateTransitionProof(
       'OPEN',
       witness,
-      marketId,
+      market.id,
       market.markPrice,
+      marginUsd,
       market.maxLeverage,
       market.maintenanceMarginPct
     );
 
-    const newPosition: PerpPosition = {
-      id: `pos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    const position: PerpPosition = {
+      id: `pos_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       marketId,
       side,
-      sizeTokens: Number(sizeTokens.toFixed(6)),
-      notionalUsd: Number(notionalUsd.toFixed(2)),
+      sizeTokens,
+      notionalUsd,
       entryPrice: market.markPrice,
-      marginUsd: Number(marginUsd.toFixed(2)),
+      marginUsd,
       leverage,
       unrealizedPnlUsd: 0,
       pnlPercentage: 0,
-      liquidationPrice: Number(liquidationPrice.toFixed(2)),
+      liquidationPrice,
       cumulativeFundingUsd: 0,
       openedAt: Date.now(),
       zkCommitment: proofResult.circuitResults.commitment,
       nullifier: proofResult.circuitResults.nullifier,
       starkFactHash: proofResult.factHash,
       publicInputsHash: proofResult.publicInputsHash,
-      proofStatus: 'STARK_VALID_SNIP36',
+      proofStatus: 'POSEIDON_FACT_VALID',
       status: 'OPEN',
     };
 
-    return newPosition;
+    return position;
   }
 
   /**
-   * Save confirmed on-chain position to client cache
+   * Save a position into the local cache only AFTER on-chain transaction confirmation
    */
   savePosition(walletAddress: string, position: PerpPosition): void {
-    if (typeof window !== 'undefined') {
-      const current = this.getPositions(walletAddress);
-      // Avoid duplicate entries
-      const filtered = current.filter((p) => p.zkCommitment !== position.zkCommitment);
+    if (typeof window === 'undefined') return;
+    try {
+      const existing = this.getPositions(walletAddress);
+      const filtered = existing.filter((p) => p.zkCommitment !== position.zkCommitment);
       const updated = [position, ...filtered];
-      localStorage.setItem(`pel_perps_positions_${walletAddress.toLowerCase()}`, JSON.stringify(updated));
+      const key = `pel_perps_positions_${walletAddress.toLowerCase()}`;
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Could not cache confirmed position:', err);
     }
   }
 
   /**
-   * Close a position with STARK proof settlement
+   * Close a position with on-chain settlement and update local cache
    */
   closePosition(walletAddress: string, positionId: string): PerpPosition | null {
     if (typeof window === 'undefined') return null;
-    const key = `pel_perps_positions_${walletAddress.toLowerCase()}`;
-    const current = this.getPositions(walletAddress);
-    const targetIdx = current.findIndex((p) => p.id === positionId);
-    if (targetIdx === -1) return null;
+    try {
+      const positions = this.getPositions(walletAddress);
+      const pos = positions.find((p) => p.id === positionId);
+      if (!pos) return null;
 
-    current[targetIdx].status = 'CLOSED';
-    localStorage.setItem(key, JSON.stringify(current));
-    return current[targetIdx];
+      const updated = positions.map((p) =>
+        p.id === positionId ? { ...p, status: 'CLOSED' as const } : p
+      );
+      const key = `pel_perps_positions_${walletAddress.toLowerCase()}`;
+      localStorage.setItem(key, JSON.stringify(updated));
+      return { ...pos, status: 'CLOSED' };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Liquidate position
+   */
+  liquidatePosition(walletAddress: string, positionId: string): PerpPosition | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const positions = this.getPositions(walletAddress);
+      const pos = positions.find((p) => p.id === positionId);
+      if (!pos) return null;
+
+      const updated = positions.map((p) =>
+        p.id === positionId ? { ...p, status: 'LIQUIDATED' as const } : p
+      );
+      const key = `pel_perps_positions_${walletAddress.toLowerCase()}`;
+      localStorage.setItem(key, JSON.stringify(updated));
+      return { ...pos, status: 'LIQUIDATED' };
+    } catch {
+      return null;
+    }
   }
 }
 

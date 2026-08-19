@@ -4,10 +4,41 @@ import { num } from 'starknet';
 
 const VAULT_STORAGE_PREFIX = 'strk20_vault';
 
+// In-memory fallback for testing / SSR
+const memoryStorage = new Map<string, string>();
+
 export class VaultService {
   private getStorageKey(address: string, networkId: string): string {
     const normalized = address.toLowerCase();
     return `${VAULT_STORAGE_PREFIX}_${normalized}_${networkId}`;
+  }
+
+  private getItem(key: string): string | null {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        return localStorage.getItem(key);
+      } catch {}
+    }
+    return memoryStorage.get(key) || null;
+  }
+
+  private setItem(key: string, value: string): void {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(key, value);
+        return;
+      } catch {}
+    }
+    memoryStorage.set(key, value);
+  }
+
+  private removeItem(key: string): void {
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    }
+    memoryStorage.delete(key);
   }
 
   /**
@@ -17,7 +48,7 @@ export class VaultService {
     if (!address) return [];
     try {
       const key = this.getStorageKey(address, networkId);
-      const raw = localStorage.getItem(key);
+      const raw = this.getItem(key);
       if (!raw) return [];
       const parsed: any[] = JSON.parse(raw);
       return parsed.map((n) => ({
@@ -109,6 +140,14 @@ export class VaultService {
     const notes = this.getNotes(address, networkId);
     const tokenNormalized = tokenAddress.toLowerCase();
 
+    const available = notes
+      .filter((n) => !n.isSpent && n.tokenAddress.toLowerCase() === tokenNormalized)
+      .reduce((acc, n) => acc + n.amount, 0n);
+
+    if (available < amountToSpend) {
+      throw new Error(`INSUFFICIENT_SHIELDED_BALANCE: Required ${amountToSpend}, available ${available}`);
+    }
+
     let remaining = amountToSpend;
     const updated = notes.map((note) => {
       if (!note.isSpent && note.tokenAddress.toLowerCase() === tokenNormalized && remaining > 0n) {
@@ -131,16 +170,29 @@ export class VaultService {
 
   /**
    * Mark notes as spent when allocating margin to a private perpetual position
+   * Invariant: Requires sufficient unspent balance and preserves note's STRK20 nullifier domain.
    */
   spendNotesForMargin(address: string, networkId: string, amountToSpend: bigint, marginNullifier: string): UTXONote[] {
     const notes = this.getNotes(address, networkId);
-    let remaining = amountToSpend;
 
+    const totalUnspent = notes
+      .filter((n) => !n.isSpent)
+      .reduce((acc, n) => acc + n.amount, 0n);
+
+    if (totalUnspent < amountToSpend) {
+      throw new Error(`INSUFFICIENT_SHIELDED_BALANCE: Required ${amountToSpend}, available ${totalUnspent}`);
+    }
+
+    let remaining = amountToSpend;
     const updated = notes.map((note) => {
       if (!note.isSpent && remaining > 0n) {
         if (note.amount <= remaining) {
           remaining -= note.amount;
-          return { ...note, isSpent: true, nullifier: marginNullifier };
+          return {
+            ...note,
+            isSpent: true,
+            spentForPositionNullifier: marginNullifier, // Retain note.nullifier cleanly
+          };
         } else {
           const leftover = note.amount - remaining;
           remaining = 0n;
@@ -155,7 +207,7 @@ export class VaultService {
   }
 
   /**
-   * Save notes to persistent localStorage
+   * Save notes to persistent storage
    */
   private saveNotes(address: string, networkId: string, notes: UTXONote[]): void {
     try {
@@ -164,7 +216,7 @@ export class VaultService {
         ...n,
         amount: n.amount.toString(),
       }));
-      localStorage.setItem(key, JSON.stringify(serializable));
+      this.setItem(key, JSON.stringify(serializable));
     } catch (err) {
       console.warn('Could not save vault notes:', err);
     }
@@ -176,7 +228,7 @@ export class VaultService {
   clearVault(address: string, networkId: string): void {
     try {
       const key = this.getStorageKey(address, networkId);
-      localStorage.removeItem(key);
+      this.removeItem(key);
     } catch {}
   }
 }

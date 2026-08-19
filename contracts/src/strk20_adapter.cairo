@@ -14,6 +14,8 @@ pub trait ISTRK20Adapter<TContractState> {
     );
     fn claim_keeper_bounty(ref self: TContractState, payout_note_commitment: felt252);
     fn get_keeper_bounty_balance(self: @TContractState, keeper: ContractAddress) -> u128;
+    fn get_insurance_fund_balance(self: @TContractState) -> u128;
+    fn get_registered_note_amount(self: @TContractState, commitment: felt252) -> u128;
     fn set_pel_core_address(ref self: TContractState, pel_core: ContractAddress);
     fn get_total_locked_collateral(self: @TContractState) -> u128;
     fn is_margin_nullifier_used(self: @TContractState, nullifier: felt252) -> bool;
@@ -33,8 +35,10 @@ pub mod STRK20Adapter {
         admin: ContractAddress,
         pel_core_address: ContractAddress,
         total_locked_collateral: u128,
+        insurance_fund_balance: u128,
         used_margin_nullifiers: Map<felt252, bool>,
         keeper_bounties: Map<ContractAddress, u128>,
+        registered_notes: Map<felt252, u128>,
     }
 
     #[event]
@@ -84,6 +88,7 @@ pub mod STRK20Adapter {
         self.admin.write(admin);
         self.pel_core_address.write(pel_core);
         self.total_locked_collateral.write(0);
+        self.insurance_fund_balance.write(0);
     }
 
     #[abi(embed_v0)]
@@ -112,6 +117,9 @@ pub mod STRK20Adapter {
                 self.total_locked_collateral.write(0);
             }
 
+            // Register verifiable note commitment on-chain
+            self.registered_notes.write(recipient_note_commitment, amount);
+
             self.emit(PayoutReleased { note_commitment: recipient_note_commitment, amount });
         }
 
@@ -133,9 +141,13 @@ pub mod STRK20Adapter {
                 self.total_locked_collateral.write(0);
             }
 
-            // Real on-chain keeper bounty balance credit
+            // Credit 2% liquidation bounty to keeper ledger
             let current_bounty = self.keeper_bounties.read(keeper_recipient);
             self.keeper_bounties.write(keeper_recipient, current_bounty + bounty_amount);
+
+            // Credit 98% non-bounty seized collateral to insurance fund (Zero Accounting Hole)
+            let current_fund = self.insurance_fund_balance.read();
+            self.insurance_fund_balance.write(current_fund + remaining_amount);
 
             self.emit(CollateralLiquidated {
                 nullifier,
@@ -151,6 +163,10 @@ pub mod STRK20Adapter {
             assert(amount > 0, 'NO_KEEPER_BOUNTY_AVAILABLE');
 
             self.keeper_bounties.write(caller, 0);
+
+            // Register keeper payout note in on-chain note registry
+            self.registered_notes.write(payout_note_commitment, amount);
+
             self.emit(KeeperBountyClaimed {
                 keeper: caller,
                 note_commitment: payout_note_commitment,
@@ -160,6 +176,14 @@ pub mod STRK20Adapter {
 
         fn get_keeper_bounty_balance(self: @ContractState, keeper: ContractAddress) -> u128 {
             self.keeper_bounties.read(keeper)
+        }
+
+        fn get_insurance_fund_balance(self: @ContractState) -> u128 {
+            self.insurance_fund_balance.read()
+        }
+
+        fn get_registered_note_amount(self: @ContractState, commitment: felt252) -> u128 {
+            self.registered_notes.read(commitment)
         }
 
         fn set_pel_core_address(ref self: ContractState, pel_core: ContractAddress) {

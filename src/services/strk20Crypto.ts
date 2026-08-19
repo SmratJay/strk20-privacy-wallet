@@ -21,6 +21,7 @@ export interface UTXONote {
   blockNumber: number;
   timestamp: number;
   txHash?: string;
+  spentForPositionNullifier?: string;
 }
 
 export class Strk20Crypto {

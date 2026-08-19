@@ -1,19 +1,28 @@
+/**
+ * @file route.ts
+ * @description Secure Gasless Relayer Endpoint for PEL Private Perpetuals
+ * Enforces strict destination contract and selector allowlists to prevent server account draining.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { Account, RpcProvider, Call } from 'starknet';
 import * as fs from 'fs';
 import * as path from 'path';
+import { validateRelayerCalls } from '@/services/relayerSecurity';
 
 const SEPOLIA_RPC = process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { calls } = body;
+    const calls: Call[] = body.calls;
 
-    if (!calls || !Array.isArray(calls) || calls.length === 0) {
+    // Strict Security & Whitelist validation
+    const validation = validateRelayerCalls(calls);
+    if (!validation.isValid) {
       return NextResponse.json(
-        { error: 'Invalid payload: calls array is required' },
-        { status: 400 }
+        { error: validation.error },
+        { status: 403 }
       );
     }
 
@@ -44,10 +53,22 @@ export async function POST(req: NextRequest) {
       signer: deployerPrivateKey,
     });
 
+    // Dynamic gas bounds query
+    let l1GasPrice = 200000000000000n;
+    let l2GasPrice = 40000000000n;
+    let l1DataGasPrice = 1000000000000n;
+
+    try {
+      const block = await provider.getBlockWithTxs('latest');
+      if (block.l1_gas_price?.price_in_fri) l1GasPrice = BigInt(block.l1_gas_price.price_in_fri);
+      if (block.l2_gas_price?.price_in_fri) l2GasPrice = BigInt(block.l2_gas_price.price_in_fri);
+      if (block.l1_data_gas_price?.price_in_fri) l1DataGasPrice = BigInt(block.l1_data_gas_price.price_in_fri);
+    } catch (e) {}
+
     const bounds = {
-      l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
-      l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
-      l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
+      l2_gas: { max_amount: 25000000n, max_price_per_unit: (l2GasPrice * 12n) / 10n },
+      l1_gas: { max_amount: 15n, max_price_per_unit: (l1GasPrice * 12n) / 10n },
+      l1_data_gas: { max_amount: 3000n, max_price_per_unit: (l1DataGasPrice * 12n) / 10n },
     };
 
     const res = await account.execute(calls, { resourceBounds: bounds });
@@ -59,10 +80,10 @@ export async function POST(req: NextRequest) {
       transaction_hash: txHash,
       explorerUrl,
     });
-  } catch (err: any) {
-    console.error('Relayer execution error:', err);
+  } catch (error: any) {
+    console.error('Relayer execution failed:', error);
     return NextResponse.json(
-      { error: err.message || 'Transaction submission failed' },
+      { error: error?.message || 'Transaction execution failed in relayer' },
       { status: 500 }
     );
   }

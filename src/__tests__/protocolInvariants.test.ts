@@ -7,6 +7,9 @@ import { describe, it, expect } from 'vitest';
 import { hash } from 'starknet';
 import { zkProverService, PositionWitness } from '../services/zkProverService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '../services/starknetPerpsDispatcher';
+import { validateRelayerCalls } from '../services/relayerSecurity';
+import { vaultService } from '../services/vaultService';
+import { perpsService } from '../services/perpsService';
 
 describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
   const dummyWallet = '0x020cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d';
@@ -43,6 +46,10 @@ describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
 
     const { isValid } = zkProverService.evaluateOpeningCircuit(invalidWitness, 'BTC-PERP', 50);
     expect(isValid).toBe(false);
+
+    expect(() => {
+      zkProverService.generateTransitionProof('OPEN', invalidWitness, 'BTC-PERP', 95000, 100, 50, 0.02);
+    }).toThrow(/CANNOT_GENERATE_OPEN_PROOF/);
   });
 
   it('Invariant 3 [Solvency Inequality]: Position is liquidatable IF AND ONLY IF Et <= Mmaint', () => {
@@ -138,5 +145,95 @@ describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
     const calldata = liqCall.calldata as string[];
     expect(calldata[0]).toBe('0x4554482d50455250'); // 'ETH-PERP'
     expect(calldata[4]).toBe(keeperAddress);
+  });
+
+  it('Invariant 7 [Relayer Security]: Rejects non-whitelisted contracts and non-whitelisted selectors with HTTP 403', () => {
+    const maliciousCall = [
+      {
+        contractAddress: '0x01234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', // Random contract
+        entrypoint: 'transfer',
+        calldata: ['0x1', '0x2'],
+      },
+    ];
+
+    const result = validateRelayerCalls(maliciousCall);
+    expect(result.isValid).toBe(false);
+    expect(result.error).toMatch(/UNAUTHORIZED_CONTRACT/);
+
+    const unauthorizedSelectorCall = [
+      {
+        contractAddress: PERPS_DEPLOYMENTS.sepolia.pelCoreAddress,
+        entrypoint: 'set_admin', // Admin call
+        calldata: ['0x123'],
+      },
+    ];
+
+    const resultSelector = validateRelayerCalls(unauthorizedSelectorCall);
+    expect(resultSelector.isValid).toBe(false);
+    expect(resultSelector.error).toMatch(/UNAUTHORIZED_SELECTOR/);
+  });
+
+  it('Invariant 8 [Shielded Vault Balance Enforcement]: Rejects spending when unspent balance is insufficient', () => {
+    vaultService.clearVault(dummyWallet, 'sepolia');
+
+    // Attempting to spend 1000 STRK when vault is empty must throw an explicit error
+    expect(() => {
+      vaultService.spendNotesForMargin(dummyWallet, 'sepolia', 1000n, '0xmarginnullifier');
+    }).toThrow(/INSUFFICIENT_SHIELDED_BALANCE/);
+  });
+
+  it('Invariant 9 [Note Domain Separation]: Preserves STRK20 UTXO nullifier domain when margin is locked', () => {
+    vaultService.clearVault(dummyWallet, 'sepolia');
+    const note = vaultService.addNote(
+      dummyWallet,
+      'sepolia',
+      '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
+      'STRK',
+      500n,
+      '0xtxhash123'
+    );
+
+    const originalNullifier = note.nullifier;
+    const marginNullifier = '0xpel_margin_nullifier_999';
+
+    const updated = vaultService.spendNotesForMargin(dummyWallet, 'sepolia', 500n, marginNullifier);
+    const spentNote = updated.find((n) => n.noteId === note.noteId);
+
+    expect(spentNote).toBeDefined();
+    expect(spentNote!.isSpent).toBe(true);
+    // Note's own nullifier MUST remain preserved
+    expect(spentNote!.nullifier).toBe(originalNullifier);
+    // Position margin nullifier stored in separate field
+    expect(spentNote!.spentForPositionNullifier).toBe(marginNullifier);
+  });
+
+  it('Invariant 10 [Strict Market Validation]: Rejects invalid market IDs without silent fallback', () => {
+    expect(() => {
+      perpsService.openPosition(dummyWallet, 'INVALID-PERP' as any, 'LONG', 100, 10);
+    }).toThrow(/INVALID_MARKET/);
+  });
+
+  it('Invariant 11 [Liquidation Circuit Solvency Gate]: Prover strictly rejects generating liquidation proof for solvent position', () => {
+    const solventWitness: PositionWitness = {
+      side: 'LONG',
+      sizeTokens: 0.1,
+      entryPrice: 95000,
+      marginUsd: 1000, // $1,000 margin -> high equity
+      fundingAccumulator: 0,
+      nonce: dummyNonce,
+      ownerAddress: dummyWallet,
+    };
+
+    expect(() => {
+      zkProverService.generateTransitionProof(
+        'LIQUIDATE',
+        solventWitness,
+        'BTC-PERP',
+        95000, // mark price equal to entry -> equity is $1000
+        1000,
+        50,
+        0.02
+      );
+    }).toThrow(/CANNOT_GENERATE_LIQUIDATION_PROOF: Position is solvent/);
   });
 });

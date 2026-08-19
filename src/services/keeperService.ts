@@ -59,12 +59,14 @@ class KeeperService {
           const marketFelt = '0x' + Buffer.from(pos.marketId).toString('hex');
           const oraclePriceFelt = '0x' + Math.floor(currentPrice * 100).toString(16);
 
+          const marginCentsFelt = '0x' + Math.floor(pos.marginUsd * 100).toString(16);
+
           const liqPublicInputsHash = hash.computePoseidonHashOnElements([
             liqProofTypeFelt,
             marketFelt,
             pos.zkCommitment,
             pos.nullifier,
-            '0x0',
+            marginCentsFelt,
             oraclePriceFelt,
           ]);
 

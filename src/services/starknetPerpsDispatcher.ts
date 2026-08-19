@@ -17,10 +17,10 @@ export interface DeploymentConfig {
 export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
   sepolia: {
     network: 'sepolia',
-    pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x3a2cc9918d9eacb403c8a7b8f187062cff495021fd1c79501b9b9a4bc1ca64a',
-    strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0x2b8d1dadd551c927f80e5e4bdf7aa2bde1f9c844817ed3624f56fc9b3521218',
-    oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x3f200a1cf746d6aa7a8787db7be677fe337ef877ab491055374698c3e186c06',
-    stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x18c88558feff696faf8ef269a552812b8cf562161464e5a318e2a40e1392983',
+    pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b',
+    strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897',
+    oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f',
+    stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
   },
 };
 

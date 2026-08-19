@@ -130,6 +130,7 @@ export class ZKProverService {
 
   /**
    * Circuit 6: Zero-Knowledge Liquidation Circuit (§14 & §14.1)
+   * Proves the inequality Et <= Mmaint mathematically.
    */
   evaluateLiquidationCircuit(
     marginUsd: number,
@@ -181,6 +182,10 @@ export class ZKProverService {
       maxLeverage
     );
 
+    if (proofType === 'OPEN' && !openingValid) {
+      throw new Error(`CANNOT_GENERATE_OPEN_PROOF: Implied leverage exceeds maximum allowed bound of ${maxLeverage}x`);
+    }
+
     const calculatedPnlUsd = this.evaluatePnLCircuit(
       witness.side,
       witness.sizeTokens,
@@ -204,6 +209,10 @@ export class ZKProverService {
       currentMarkPrice,
       maintenanceMarginPct
     );
+
+    if (proofType === 'LIQUIDATE' && isSolvent) {
+      throw new Error(`CANNOT_GENERATE_LIQUIDATION_PROOF: Position is solvent (Equity $${equityUsd.toFixed(2)} > M_maint $${maintenanceMarginUsd.toFixed(2)})`);
+    }
 
     const nullifier = this.computePositionNullifier(commitment, witness.nonce);
 
@@ -251,7 +260,7 @@ export class ZKProverService {
   }
 
   /**
-   * Compute Poseidon Position State Commitment (§5.1 & §7.3)
+   * Section 6.1: Compute Position Commitment CP = H(domain, owner, market, q, e, m, nonce)
    */
   computePositionCommitment(
     ownerAddress: string,
@@ -261,33 +270,30 @@ export class ZKProverService {
     margin: number,
     nonce: string
   ): string {
-    const ownerHex = ownerAddress.startsWith('0x') ? ownerAddress : '0x' + ownerAddress;
-    const marketHex = '0x' + Buffer.from(marketId).toString('hex');
-    const notionalHex = '0x' + Math.floor(notional * 100).toString(16);
-    const entryHex = '0x' + Math.floor(entryPrice * 100).toString(16);
-    const marginHex = '0x' + Math.floor(margin * 100).toString(16);
-    const nonceHex = nonce.startsWith('0x') ? nonce : '0x' + nonce;
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const notionalFelt = '0x' + Math.floor(notional * 100).toString(16);
+    const entryFelt = '0x' + Math.floor(entryPrice * 100).toString(16);
+    const marginFelt = '0x' + Math.floor(margin * 100).toString(16);
 
     return hash.computePoseidonHashOnElements([
       this.POSITION_TAG,
-      ownerHex,
-      marketHex,
-      notionalHex,
-      entryHex,
-      marginHex,
-      nonceHex,
+      ownerAddress,
+      marketFelt,
+      notionalFelt,
+      entryFelt,
+      marginFelt,
+      nonce,
     ]);
   }
 
   /**
-   * Compute Deterministic Nullifier (§21)
+   * Section 6.2: Compute Position Nullifier NF = H(NULLIFIER_TAG, commitment, nonce)
    */
   computePositionNullifier(commitment: string, nonce: string): string {
-    const nonceHex = nonce.startsWith('0x') ? nonce : '0x' + nonce;
     return hash.computePoseidonHashOnElements([
       this.NULLIFIER_TAG,
       commitment,
-      nonceHex,
+      nonce,
     ]);
   }
 }

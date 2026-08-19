@@ -345,5 +345,76 @@
   * `npm run typecheck`: **0 errors**.
   * `npm run build`: **Compiled successfully in Next.js 15.5 production mode**.
 
+---
+
+## 📅 Wednesday, August 19, 2026 — 23:55:00 IST
+
+### 🛡️ Critical P0/P1 Security Hardening, Relayer Whitelisting & On-Chain Note Conservation
+
+#### 🔴 [BIG CHANGE] — Relayer Security Lockdown (`src/services/relayerSecurity.ts`)
+* **Strict Contract & Entrypoint Allowlist:**
+  * Created `validateRelayerCalls` enforcing that `/api/relayer/execute` only accepts calls to verified protocol deployments (`PELPerpsCore`, `STRK20Adapter`).
+  * Restricted allowed entrypoints strictly to `open_position`, `close_position`, `liquidate_position`, and `claim_keeper_bounty`.
+  * Returns HTTP 403 Forbidden on any unauthorized contract or selector, protecting server testnet funds from arbitrary drainage.
+  * Calibrated dynamic resource bounds (`l2_gas: 25,000,000`, `l1_gas: 15`, `l1_data_gas: 3000`).
+
+#### 🔴 [BIG CHANGE] — Collateral Conservation & On-Chain Note Registry (`STRK20Adapter.cairo`)
+* **Insurance Fund Accounting:**
+  * Added `insurance_fund_balance: u128` to `STRK20Adapter.cairo` which receives the remaining 98% non-bounty seized collateral on position liquidation, completely eliminating the protocol accounting leak.
+  * Added `get_insurance_fund_balance` view function.
+* **On-Chain Note Commitment Registry:**
+  * Added `registered_notes: Map<felt252, u128>` mapping note commitment hashes to their on-chain stored value.
+  * `release_shielded_payout` and `claim_keeper_bounty` now register the minted note commitments on-chain.
+  * Added `get_registered_note_amount` view function for trustless settlement verification.
+
+#### 🔴 [BIG CHANGE] — Shielded Vault Domain Separation & Balance Guard (`vaultService.ts`)
+* **Balance Enforcement:**
+  * Added balance pre-check in `spendNotesForMargin` throwing `INSUFFICIENT_SHIELDED_BALANCE` if unspent notes $< \text{amountToSpend}$.
+* **Nullifier Domain Separation:**
+  * Note UTXO nullifiers (`note.nullifier`) are permanently preserved in their STRK20 privacy domain.
+  * Position margin nullifiers are stored in a dedicated `spentForPositionNullifier` field, eliminating domain collision.
+* **Universal Storage Engine:**
+  * Added in-memory map fallback enabling seamless execution across browser, SSR, and Node.js test environments.
+
+#### 🔴 [BIG CHANGE] — Solvency Gating in ZK Prover & Strict Market Routing (`zkProverService.ts`, `perpsService.ts`)
+* **Solvency Gating:**
+  * `zkProverService.generateTransitionProof` strictly rejects generating a `LIQUIDATE` proof if the position is solvent ($E_t > M_{\text{maint}}$).
+  * `zkProverService.generateTransitionProof` strictly rejects generating an `OPEN` proof if leverage exceeds $L_{\text{max}}$ (50x).
+* **Strict Market Validation:**
+  * `perpsService.ts` throws `INVALID_MARKET` on unknown market identifiers instead of silently falling back to BTC.
+
+#### 🔴 [BIG CHANGE] — On-Chain Sepolia Deployment & End-to-End Lifecycle Proof
+* **Live Contract Instances on Starknet Sepolia:**
+  * **`PELPerpsCore`:** `0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b` ([Voyager](https://sepolia.voyager.online/contract/0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b))
+  * **`STRK20Adapter`:** `0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897` ([Voyager](https://sepolia.voyager.online/contract/0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897))
+  * **`OracleAdapter`:** `0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f` ([Voyager](https://sepolia.voyager.online/contract/0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f))
+  * **`StwoVerifier`:** `0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde` ([Voyager](https://sepolia.voyager.online/contract/0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde))
+  * **Authorization Wiring Tx:** `0x1a671e319d9e66e883dd69d5162d70f4d704fb20ba462f65d97df82239586d9`
+* **Proven On-Chain Lifecycle Execution:**
+  * **1. Oracle Price:** BTC-PERP live on-chain price queried at $96,420.50.
+  * **2. Open Position Tx:** `0x6edbe4ed70af1524d88f2959c5ef9008ef9f68bb331f45cf8d42e90e8afa3aa` ([Voyager](https://sepolia.voyager.online/tx/0x6edbe4ed70af1524d88f2959c5ef9008ef9f68bb331f45cf8d42e90e8afa3aa))
+  * **3. On-Chain State Verification (`get_position`):** Verified commitment `0x576a...`, nullifier `0x2d19...`, locked margin = $100.00 (`0x2710`), `is_active = true`.
+  * **4. Close & Settlement Tx:** `0x54eefeaa1025651f23fe0a79b76d952b5f0016bbcbd8cebeed60cc94df085ff` ([Voyager](https://sepolia.voyager.online/tx/0x54eefeaa1025651f23fe0a79b76d952b5f0016bbcbd8cebeed60cc94df085ff))
+  * **5. Position Deactivation:** Verified `is_active = false` on-chain.
+  * **6. Payout Note Registration:** Verified note commitment `0x17cb2e2650dafa1330d4b9fd7852bbb70af17127aceae8750c3b5098a0caa97` stored with exact value `$125.50` in `STRK20Adapter`.
+
+#### 🔴 [BIG CHANGE] — Complete Invariant Test Suite Expansion
+* **11 Security & Invariant Tests in `src/__tests__/protocolInvariants.test.ts`:**
+  * Invariant 1: Replay Protection across distinct nonces.
+  * Invariant 2: Leverage Bounds ($L_{\text{max}} = 50\times$).
+  * Invariant 3: Solvency Inequality ($E_t \le M_{\text{maint}}$).
+  * Invariant 4: Deterministic Poseidon SNIP-36 Fact Binding.
+  * Invariant 5: Solvency Cap on Settlement.
+  * Invariant 6: Keeper Liquidation Call encoding.
+  * Invariant 7: Relayer Security (HTTP 403 on unauthorized contract or selector).
+  * Invariant 8: Shielded Vault Balance Enforcement.
+  * Invariant 9: Note Domain Separation (`note.nullifier` vs `spentForPositionNullifier`).
+  * Invariant 10: Strict Market Validation.
+  * Invariant 11: Liquidation Circuit Solvency Gate.
+* **Verification Status:**
+  * `npm test`: **45/45 tests passed (100% pass rate)**.
+  * `npm run build`: **Compiled successfully in Next.js 15.5 production mode (0 errors)**.
+
+
 
 
