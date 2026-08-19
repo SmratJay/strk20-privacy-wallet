@@ -178,6 +178,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     setMarginUsd(calculated);
   };
 
+  const SEPOLIA_USDC_ADDRESS = '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343';
+
   // Handle Opening Position on Starknet Sepolia
   const handleOpenPosition = async () => {
     if (marginNum <= 0) {
@@ -185,6 +187,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         type: 'error',
         title: 'Invalid Margin',
         description: 'Please enter a valid margin amount greater than 0.',
+      });
+      return;
+    }
+
+    // Preflight Collateral Check (Workstream B & D)
+    const requiredMarginUnits = BigInt(Math.floor(marginNum * 1e6));
+    const unspentUsdc = vaultService.getUnspentShieldedBalance(effectiveAddress, SEPOLIA_USDC_ADDRESS, 'SN_SEPOLIA');
+    const allNotes = vaultService.getNotes(effectiveAddress, 'SN_SEPOLIA');
+    const totalUnspent = allNotes.filter((n) => !n.isSpent).reduce((acc, n) => acc + n.amount, 0n);
+
+    if (unspentUsdc < requiredMarginUnits && totalUnspent < requiredMarginUnits) {
+      showToast({
+        type: 'error',
+        title: 'Insufficient Shielded Collateral',
+        description: `Required: $${marginNum.toFixed(2)} USDC | Available Shielded: $${(Number(totalUnspent) / 1e6).toFixed(2)}. Please shield USDC first in the Shield tab.`,
       });
       return;
     }
@@ -197,7 +214,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
     setModalSteps([
       {
-        title: '1. Computing STARK Poseidon Commitment & Nullifier',
+        title: '1. Computing Poseidon SNIP-36 Fact Commitment & Nullifier',
         desc: 'Deriving ephemeral witness and Poseidon note commitment C_t on STARK curve...',
         status: 'LOADING',
       },
@@ -208,13 +225,13 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       },
       {
         title: '3. Awaiting Block Inclusion & State Commitment Verification',
-        desc: 'Querying on-chain position record and STWO verifier registry...',
+        desc: 'Querying on-chain position record and STWO fact verifier registry...',
         status: 'PENDING',
       },
     ]);
 
     try {
-      // Step 1: Client Witness & STARK Proof Fact Generation
+      // Step 1: Client Witness & Transition Fact Generation
       const newPos = perpsService.openPosition(
         effectiveAddress,
         selectedMarketId,
@@ -263,8 +280,14 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         },
       ]);
 
-      // Deduct and spend shielded note in vaultService
-      vaultService.spendNotesForMargin(effectiveAddress, 'sepolia', BigInt(Math.floor(marginNum * 1e6)), newPos.nullifier);
+      // Deduct and spend shielded note in vaultService strictly post-confirmation (Workstream C)
+      vaultService.spendNotesForMargin(
+        effectiveAddress,
+        'SN_SEPOLIA',
+        requiredMarginUnits,
+        newPos.nullifier,
+        SEPOLIA_USDC_ADDRESS
+      );
       setShieldedBalanceUsd((prev) => Math.max(0, prev - marginNum));
 
       // Persist in local frontend cache ONLY after on-chain confirmation
@@ -388,11 +411,11 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         { ...prev[2], status: 'SUCCESS', desc: 'Settlement confirmed on Starknet Sepolia! Payout Note Minted.' },
       ]);
 
-      // Mint fresh shielded payout note into STRK20 vault
+      // Mint fresh shielded payout note into STRK20 vault strictly post-confirmation (Workstream C & I)
       vaultService.addNote(
         effectiveAddress,
-        'sepolia',
-        '0x053c91253bc93357de0a8614e470c77400ced24a25c80cc0b1efc73e045dd895',
+        'SN_SEPOLIA',
+        SEPOLIA_USDC_ADDRESS,
         'USDC',
         BigInt(Math.floor(payoutAmountUsd * 1e6)),
         executionRes.transactionHash

@@ -1,5 +1,6 @@
 import { strk20Crypto, UTXONote } from './strk20Crypto';
 import { viewingKeyService } from './viewingKeyService';
+import { normalizeNetworkId } from '../config/networks';
 import { num } from 'starknet';
 
 const VAULT_STORAGE_PREFIX = 'strk20_vault';
@@ -8,9 +9,10 @@ const VAULT_STORAGE_PREFIX = 'strk20_vault';
 const memoryStorage = new Map<string, string>();
 
 export class VaultService {
-  private getStorageKey(address: string, networkId: string): string {
-    const normalized = address.toLowerCase();
-    return `${VAULT_STORAGE_PREFIX}_${normalized}_${networkId}`;
+  public getStorageKey(address: string, networkId: string): string {
+    const normalizedAddress = address.toLowerCase();
+    const canonicalNetwork = normalizeNetworkId(networkId);
+    return `${VAULT_STORAGE_PREFIX}_${normalizedAddress}_${canonicalNetwork}`;
   }
 
   private getItem(key: string): string | null {
@@ -170,22 +172,47 @@ export class VaultService {
 
   /**
    * Mark notes as spent when allocating margin to a private perpetual position
-   * Invariant: Requires sufficient unspent balance and preserves note's STRK20 nullifier domain.
+   * Invariant (P0-01, P0-03, P1-11):
+   * 1. Requires sufficient unspent balance of the designated collateral token (USDC).
+   * 2. Preserves note's original STRK20 nullifier domain (`note.nullifier`).
+   * 3. Stores position margin nullifier in `spentForPositionNullifier`.
+   * 4. Is idempotent if re-called with the same marginNullifier.
    */
-  spendNotesForMargin(address: string, networkId: string, amountToSpend: bigint, marginNullifier: string): UTXONote[] {
+  spendNotesForMargin(
+    address: string,
+    networkId: string,
+    amountToSpend: bigint,
+    marginNullifier: string,
+    tokenAddress?: string
+  ): UTXONote[] {
     const notes = this.getNotes(address, networkId);
 
+    // Check if this margin nullifier was already processed (idempotency)
+    const alreadySpent = notes.some(
+      (n) => n.isSpent && n.spentForPositionNullifier === marginNullifier
+    );
+    if (alreadySpent) {
+      return notes;
+    }
+
+    const tokenNormalized = tokenAddress ? tokenAddress.toLowerCase() : undefined;
+
     const totalUnspent = notes
-      .filter((n) => !n.isSpent)
+      .filter((n) => !n.isSpent && (!tokenNormalized || n.tokenAddress.toLowerCase() === tokenNormalized))
       .reduce((acc, n) => acc + n.amount, 0n);
 
     if (totalUnspent < amountToSpend) {
-      throw new Error(`INSUFFICIENT_SHIELDED_BALANCE: Required ${amountToSpend}, available ${totalUnspent}`);
+      throw new Error(
+        `INSUFFICIENT_SHIELDED_BALANCE: Required ${amountToSpend}, available ${totalUnspent}${
+          tokenAddress ? ` for token ${tokenAddress}` : ''
+        }`
+      );
     }
 
     let remaining = amountToSpend;
     const updated = notes.map((note) => {
-      if (!note.isSpent && remaining > 0n) {
+      const matchToken = !tokenNormalized || note.tokenAddress.toLowerCase() === tokenNormalized;
+      if (!note.isSpent && matchToken && remaining > 0n) {
         if (note.amount <= remaining) {
           remaining -= note.amount;
           return {

@@ -46,7 +46,19 @@ async function main() {
 
   // 1. Fetch Oracle Price for BTC-PERP
   const marketIdFelt = '0x' + Buffer.from('BTC-PERP').toString('hex');
-  console.log(`\n1. Querying live on-chain Oracle price for BTC-PERP...`);
+  console.log(`\n1. Refreshing & Querying live on-chain Oracle price for BTC-PERP...`);
+  const bounds = await getBounds();
+  const updatePriceTx = await account.execute(
+    {
+      contractAddress: OracleAdapter,
+      entrypoint: 'update_manual_price',
+      calldata: [marketIdFelt, '0x932042'], // 9642050 cents = $96,420.50
+    },
+    { resourceBounds: bounds }
+  );
+  await provider.waitForTransaction(updatePriceTx.transaction_hash);
+  console.log(`   ✓ Price Refreshed! Tx: ${updatePriceTx.transaction_hash}`);
+
   const oracleRes = await provider.callContract({
     contractAddress: OracleAdapter,
     entrypoint: 'get_market_price',
@@ -54,7 +66,8 @@ async function main() {
   });
   const oraclePriceCents = BigInt(oracleRes[0]);
   const oraclePriceUsd = Number(oraclePriceCents) / 100;
-  console.log(`   Price: $${oraclePriceUsd.toFixed(2)} (${num.toHex(oraclePriceCents)})`);
+  const isFresh = oracleRes[2] === '0x1';
+  console.log(`   Price: $${oraclePriceUsd.toFixed(2)} (${num.toHex(oraclePriceCents)}) | Is Fresh: ${isFresh}`);
 
   // 2. Synthesize Cryptographic Position Witness & Proof
   const marginUsd = 100;
@@ -99,7 +112,7 @@ async function main() {
 
   // 3. Dispatch open_position
   console.log('\n3. Dispatching open_position transaction on Starknet Sepolia...');
-  const bounds = await getBounds();
+  const openBounds = await getBounds();
   const openTx = await account.execute(
     {
       contractAddress: PELPerpsCore,
@@ -112,7 +125,7 @@ async function main() {
         factHash,
       ],
     },
-    { resourceBounds: bounds }
+    { resourceBounds: openBounds }
   );
 
   console.log(`   Tx Hash: ${openTx.transaction_hash}`);

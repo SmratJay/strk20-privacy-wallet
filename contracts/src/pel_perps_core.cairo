@@ -332,10 +332,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
-            // 2. Verify Closing & Equity Settlement Proof
-            let max_allowed_payout = pos.locked_margin * 50; // Max 50x solvency bound
-            assert(payout_amount <= max_allowed_payout, 'PAYOUT_EXCEEDS_SOLVENCY');
-
+            // 2. Verify Closing & Equity Settlement Proof (Workstream F)
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'CLOSE',

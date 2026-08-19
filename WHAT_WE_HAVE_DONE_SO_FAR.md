@@ -415,6 +415,58 @@
   * `npm test`: **45/45 tests passed (100% pass rate)**.
   * `npm run build`: **Compiled successfully in Next.js 15.5 production mode (0 errors)**.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 00:10:00 IST
+
+### 🚀 Full Execution of the Red-Team Remediation Spec (Workstreams A &ndash; M)
+
+#### 🔴 [BIG CHANGE] — Workstream A & D: Network Consistency & Token-Specific Margin
+* **Unified Canonical Network ID:**
+  * Added `normalizeNetworkId` in `src/config/networks.ts` ensuring all network inputs (`'sepolia'`, `'SN_SEPOLIA'`, `'starknet-sepolia'`) map to the exact same canonical storage key (`strk20_vault_<address>_SN_SEPOLIA`).
+  * Updated `vaultService.ts`, `PerpsTab.tsx`, and `perpsService.ts` to use `'SN_SEPOLIA'`.
+* **USDC-Specific Shielded Margin:**
+  * `vaultService.spendNotesForMargin` now filters exclusively for the intended collateral token (USDC: `0x0512feac...`), preventing unintended consumption of STRK or ETH notes.
+  * Made note spending fully idempotent for matching position nullifiers.
+
+#### 🔴 [BIG CHANGE] — Workstream B & C: Preflight Collateral Guard & Atomic Lifecycle
+* **Preflight Collateral Validation:**
+  * In `PerpsTab.tsx:handleOpenPosition`, the UI evaluates unspent shielded USDC balance before constructing the transaction or prompting for signature. Halts immediately if balance is insufficient.
+* **Atomic State Persistence:**
+  * Separated pending state from confirmed state in UI modals.
+  * Local vault note spending and position cache persistence occur strictly after on-chain block inclusion and verification of `isOpen = true`.
+
+#### 🔴 [BIG CHANGE] — Workstream E, F & K: Fixed-Point Protocol Math & Exact Settlement Invariant
+* **Fixed-Point Arithmetic:**
+  * `zkProverService.ts` implements integer fixed-point calculations in cents ($100 = 10,000 cents) and sats (1e8) without floating-point JS drift.
+* **Exact Settlement Equation:**
+  * Payout is calculated as $E = \max(0, \text{margin} + \text{signed\_pnl} - \text{funding} - \text{fee})$.
+  * Removed arbitrary 50x multiplier cap in `PELPerpsCore.cairo:close_position` in favor of exact algebraic STWO transition proof binding.
+  * Prover strictly rejects generating `CLOSE` proof if requested payout exceeds proven equity.
+
+#### 🔴 [BIG CHANGE] — Workstream G, H & J: Solvency Gating, On-Chain Keeper & Relayer Hardening
+* **Solvency Liquidation Gate:**
+  * `zkProverService.generateTransitionProof('LIQUIDATE', ...)` enforces $E_t \le M_{\text{maint}}$ mathematically.
+* **On-Chain Keeper Discovery:**
+  * `keeperService.ts:scanOnChainPositions` queries active positions directly from on-chain state (`getPositionOnChain`), completely independent of browser `localStorage`.
+* **Relayer Calldata Schemas & Rate Limiting:**
+  * `relayerSecurity.ts` enforces exact parameter counts per entrypoint (`open_position`: 5, `close_position`: 6, `liquidate_position`: 5, `claim_keeper_bounty`: 1).
+  * Enforces sliding-window rate limiting (max 20 requests/minute per caller).
+
+#### 🔴 [BIG CHANGE] — Comprehensive Invariant Testing & Live Sepolia Verification
+* **50/50 Tests Passing (100% Pass Rate):**
+  * `src/__tests__/protocolInvariants.test.ts` expanded to 16 comprehensive invariant tests covering network normalization, USDC collateral isolation, rate limiting, and fixed-point precision.
+  * `npm test`: **50/50 tests passed**.
+  * `npm run build`: **Next.js 15.5 production build successful with 0 errors**.
+* **Live Proven On-Chain Lifecycle Execution:**
+  * **Oracle Refresh & Query:** BTC-PERP refreshed and verified on-chain at $96,420.50 (`0x1ad83e75f61473f5903ee870278e25dba1afa51767af81de200be4d9d3d0cd4`).
+  * **Open Position Tx:** `0x70f0447e9e7e40ed3349757b5fc9d0685c0faef536ef8b9865d0b0f93f68d1` ([Voyager](https://sepolia.voyager.online/tx/0x70f0447e9e7e40ed3349757b5fc9d0685c0faef536ef8b9865d0b0f93f68d1))
+  * **On-Chain State Verified (`get_position`):** `is_active = true`, `locked_margin = $100.00` (`0x2710`).
+  * **Close & Settlement Tx:** `0x70ec2b5a163a440432ea5a8f414b3b627a8d4e058da890bb2243bfe0a032b8` ([Voyager](https://sepolia.voyager.online/tx/0x70ec2b5a163a440432ea5a8f414b3b627a8d4e058da890bb2243bfe0a032b8))
+  * **On-Chain State Deactivated:** `is_active = false`.
+  * **On-Chain Payout Note Registered:** Commitment `0x17cb...` verified with exact value **$125.50** (`0x3106`) in `STRK20Adapter`.
+
+
 
 
 

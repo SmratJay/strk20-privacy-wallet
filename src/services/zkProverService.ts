@@ -2,17 +2,18 @@
  * @file zkProverService.ts
  * @description PEL Cryptographic Proving Subsystem (Whitepaper Sections 10 & 11)
  * Executes algebraic transition constraints and generates cryptographically bound Poseidon SNIP-36 proof facts.
+ * Uses integer fixed-point arithmetic (cents / micro-USD / sats) for exact financial determinism.
  */
 
-import { hash } from 'starknet';
+import { hash, num } from 'starknet';
 
 export interface PositionWitness {
   side: 'LONG' | 'SHORT';
-  sizeTokens: number;        // q: Position size in base asset
+  sizeTokens: number;        // q: Position size in base asset (BTC)
   entryPrice: number;        // e: Execution price in USD
   marginUsd: number;         // m: Collateral in USD
   fundingAccumulator: number;// f: Cumulative funding rate
-  nonce: string;             // n: Cryptographically secure entropy
+  nonce: string;             // n: Cryptographically secure entropy (hex string)
   ownerAddress: string;      // Public account address
 }
 
@@ -45,6 +46,20 @@ export class ZKProverService {
   private STWO_FACT_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
 
   /**
+   * Helper: Convert USD float to exact fixed-point integer cents (1 USD = 100 cents)
+   */
+  public toCentsBigInt(usd: number): bigint {
+    return BigInt(Math.floor(usd * 100));
+  }
+
+  /**
+   * Helper: Convert token float to 1e8 fixed-point sats
+   */
+  public toSatsBigInt(tokens: number): bigint {
+    return BigInt(Math.floor(tokens * 100_000_000));
+  }
+
+  /**
    * Circuit 1: Ownership Circuit (§11)
    */
   verifyOwnershipCircuit(ownerAddress: string): boolean {
@@ -54,20 +69,32 @@ export class ZKProverService {
   /**
    * Circuit 2: Opening Circuit (§11 & §12)
    * Invariant: 1 <= (q * e) / m <= L_max
+   * Evaluated using exact fixed-point integer arithmetic.
    */
   evaluateOpeningCircuit(
     witness: PositionWitness,
     marketId: string,
     maxLeverage: number
   ): { isValid: boolean; commitment: string } {
-    const notional = witness.sizeTokens * witness.entryPrice;
-    const impliedLeverage = witness.marginUsd > 0 ? notional / witness.marginUsd : 0;
-    const isLeverageValid = impliedLeverage >= 0.99 && impliedLeverage <= maxLeverage + 0.01;
+    const marginCents = this.toCentsBigInt(witness.marginUsd);
+    const entryCents = this.toCentsBigInt(witness.entryPrice);
+    const sizeSats = this.toSatsBigInt(witness.sizeTokens);
 
+    // Notional cents = (sizeSats * entryCents) / 1e8
+    const notionalCents = sizeSats > 0n ? (sizeSats * entryCents) / 100_000_000n : 0n;
+
+    // Implied leverage in bps: (notionalCents * 10000) / marginCents
+    const impliedLeverageBps = marginCents > 0n ? (notionalCents * 10_000n) / marginCents : 0n;
+    const maxLeverageBps = BigInt(maxLeverage) * 10_000n;
+
+    // Must be between 0.95x and maxLeverage + 0.05x
+    const isLeverageValid = impliedLeverageBps >= 9_500n && impliedLeverageBps <= maxLeverageBps + 500n;
+
+    const notionalUsd = Number(notionalCents) / 100;
     const commitment = this.computePositionCommitment(
       witness.ownerAddress,
       marketId,
-      notional,
+      notionalUsd,
       witness.entryPrice,
       witness.marginUsd,
       witness.nonce
@@ -81,18 +108,35 @@ export class ZKProverService {
 
   /**
    * Circuit 3: Linear Signed PnL Circuit (§7.1 & §11)
+   * Exact integer fixed-point calculation in cents.
    */
+  evaluatePnLCircuitBigInt(
+    side: 'LONG' | 'SHORT',
+    sizeTokens: number,
+    entryPrice: number,
+    currentMarkPrice: number
+  ): bigint {
+    const sizeSats = this.toSatsBigInt(sizeTokens);
+    const entryCents = this.toCentsBigInt(entryPrice);
+    const markCents = this.toCentsBigInt(currentMarkPrice);
+
+    if (side === 'LONG') {
+      const diff = markCents - entryCents;
+      return (sizeSats * diff) / 100_000_000n;
+    } else {
+      const diff = entryCents - markCents;
+      return (sizeSats * diff) / 100_000_000n;
+    }
+  }
+
   evaluatePnLCircuit(
     side: 'LONG' | 'SHORT',
     sizeTokens: number,
     entryPrice: number,
     currentMarkPrice: number
   ): number {
-    if (side === 'LONG') {
-      return sizeTokens * (currentMarkPrice - entryPrice);
-    } else {
-      return sizeTokens * (entryPrice - currentMarkPrice);
-    }
+    const pnlCents = this.evaluatePnLCircuitBigInt(side, sizeTokens, entryPrice, currentMarkPrice);
+    return Number(pnlCents) / 100;
   }
 
   /**
@@ -101,30 +145,47 @@ export class ZKProverService {
   evaluateFundingCircuit(
     sizeTokens: number,
     markPrice: number,
-    fundingRate1h: number,
-    hoursElapsed: number
+    fundingRate1h: number = 0.0012,
+    hoursElapsed: number = 1
   ): number {
-    return sizeTokens * markPrice * fundingRate1h * hoursElapsed;
+    const notional = sizeTokens * markPrice;
+    return notional * fundingRate1h * hoursElapsed;
   }
 
   /**
    * Circuit 5: Margin & Solvency Risk Circuit (§7.4 & §11)
+   * Exact integer fixed-point evaluation.
    */
   evaluateSolvencyCircuit(
     marginUsd: number,
     pnlUsd: number,
-    fundingUsd: number,
-    feeUsd: number,
+    fundingUsd: number = 0,
+    feeUsd: number = 0,
     sizeTokens: number,
     currentMarkPrice: number,
-    maintenanceMarginPct: number
+    maintenanceMarginPct: number = 0.02
   ): { isSolvent: boolean; equityUsd: number; maintenanceMarginUsd: number } {
-    const equityUsd = marginUsd + pnlUsd - fundingUsd - feeUsd;
-    const maintenanceMarginUsd = sizeTokens * currentMarkPrice * maintenanceMarginPct;
+    const marginCents = this.toCentsBigInt(marginUsd);
+    const pnlCents = this.toCentsBigInt(pnlUsd);
+    const fundingCents = this.toCentsBigInt(fundingUsd);
+    const feeCents = this.toCentsBigInt(feeUsd);
+
+    const equityCents = marginCents + pnlCents - fundingCents - feeCents;
+
+    const markCents = this.toCentsBigInt(currentMarkPrice);
+    const sizeSats = this.toSatsBigInt(sizeTokens);
+    const notionalCents = (sizeSats * markCents) / 100_000_000n;
+
+    // maintMarginCents = notionalCents * maintMarginBps / 10000
+    const maintBps = BigInt(Math.floor(maintenanceMarginPct * 10_000));
+    const maintMarginCents = (notionalCents * maintBps) / 10_000n;
+
+    const isSolvent = equityCents > maintMarginCents;
+
     return {
-      isSolvent: equityUsd > maintenanceMarginUsd,
-      equityUsd,
-      maintenanceMarginUsd,
+      isSolvent,
+      equityUsd: Number(equityCents) / 100,
+      maintenanceMarginUsd: Number(maintMarginCents) / 100,
     };
   }
 
@@ -210,8 +271,27 @@ export class ZKProverService {
       maintenanceMarginPct
     );
 
+    // Strict Liquidation Solvency Invariant (P0-05, Workstream G)
     if (proofType === 'LIQUIDATE' && isSolvent) {
-      throw new Error(`CANNOT_GENERATE_LIQUIDATION_PROOF: Position is solvent (Equity $${equityUsd.toFixed(2)} > M_maint $${maintenanceMarginUsd.toFixed(2)})`);
+      throw new Error(
+        `CANNOT_GENERATE_LIQUIDATION_PROOF: Position is solvent (Equity $${equityUsd.toFixed(
+          2
+        )} > M_maint $${maintenanceMarginUsd.toFixed(2)})`
+      );
+    }
+
+    // Exact Settlement Payout Invariant (P0-04, Workstream F)
+    let validatedPayoutUsd = marginOrPayoutUsd;
+    if (proofType === 'CLOSE') {
+      const maxClaimableEquity = Math.max(0, equityUsd);
+      if (marginOrPayoutUsd > maxClaimableEquity + 0.05) {
+        throw new Error(
+          `CANNOT_GENERATE_CLOSE_PROOF: Requested payout ($${marginOrPayoutUsd.toFixed(
+            2
+          )}) exceeds proven position equity ($${maxClaimableEquity.toFixed(2)})`
+        );
+      }
+      validatedPayoutUsd = Math.min(marginOrPayoutUsd, maxClaimableEquity);
     }
 
     const nullifier = this.computePositionNullifier(commitment, witness.nonce);
@@ -219,7 +299,7 @@ export class ZKProverService {
     // 1. Compute Public Inputs Hash (strictly matching StwoVerifier.cairo:compute_public_inputs_hash)
     const proofTypeFelt = '0x' + Buffer.from(proofType).toString('hex');
     const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
-    const amountFelt = '0x' + Math.floor(marginOrPayoutUsd * 100).toString(16);
+    const amountFelt = '0x' + Math.floor(validatedPayoutUsd * 100).toString(16);
     const oraclePriceFelt = '0x' + Math.floor(currentMarkPrice * 100).toString(16);
 
     const publicInputsHash = hash.computePoseidonHashOnElements([

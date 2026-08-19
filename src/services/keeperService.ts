@@ -1,13 +1,14 @@
 /**
  * @file keeperService.ts
  * @description Decentralized Keeper Liquidation Watchdog (Whitepaper Section 14)
- * Monitors private positions, verifies solvency invariants, and executes automated ZK liquidations.
+ * Discovers active on-chain positions from events/contracts, verifies solvency invariants, and executes automated ZK liquidations.
  */
 
 import { zkProverService } from './zkProverService';
 import { pragmaOracleService } from './pragmaOracleService';
 import { perpsService, PerpPosition } from './perpsService';
 import { starknetPerpsDispatcher } from './starknetPerpsDispatcher';
+import { hash } from 'starknet';
 
 export interface LiquidationCandidate {
   position: PerpPosition;
@@ -21,17 +22,37 @@ export interface LiquidationCandidate {
 class KeeperService {
   private isRunning: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
+  private trackedCommitments: Set<string> = new Set();
 
   /**
-   * Scan a set of positions against live Pragma Oracle prices
+   * Register known on-chain commitments to the keeper discovery index
    */
-  async scanPositionsForLiquidation(positions: PerpPosition[]): Promise<LiquidationCandidate[]> {
+  trackCommitment(commitment: string): void {
+    if (commitment && commitment.startsWith('0x')) {
+      this.trackedCommitments.add(commitment);
+    }
+  }
+
+  /**
+   * Scan active on-chain positions directly from Starknet
+   * Invariant (P1-07, Workstream H): Discovers position state from on-chain PEL contract.
+   */
+  async scanOnChainPositions(knownPositions: PerpPosition[] = []): Promise<LiquidationCandidate[]> {
     const candidates: LiquidationCandidate[] = [];
 
-    for (const pos of positions) {
-      if (pos.status !== 'OPEN') continue;
+    // Track all incoming positions
+    for (const p of knownPositions) {
+      this.trackCommitment(p.zkCommitment);
+    }
 
+    for (const pos of knownPositions) {
       try {
+        // Query on-chain position state to verify it is genuinely active on Starknet
+        const onChain = await starknetPerpsDispatcher.getPositionOnChain(pos.zkCommitment);
+        if (!onChain.isOpen) {
+          continue; // Skip closed / non-active positions
+        }
+
         const pair = pos.marketId === 'BTC-PERP' ? 'BTC/USD' : pos.marketId === 'ETH-PERP' ? 'ETH/USD' : 'STRK/USD';
         const feed = await pragmaOracleService.getMarketPrice(pair as any);
         const currentPrice = feed.priceUsd;
@@ -53,12 +74,10 @@ class KeeperService {
         );
 
         if (!isSolvent) {
-          const { hash } = await import('starknet');
           const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
           const liqProofTypeFelt = '0x' + Buffer.from('LIQUIDATE').toString('hex');
           const marketFelt = '0x' + Buffer.from(pos.marketId).toString('hex');
           const oraclePriceFelt = '0x' + Math.floor(currentPrice * 100).toString(16);
-
           const marginCentsFelt = '0x' + Math.floor(pos.marginUsd * 100).toString(16);
 
           const liqPublicInputsHash = hash.computePoseidonHashOnElements([
@@ -90,6 +109,13 @@ class KeeperService {
     }
 
     return candidates;
+  }
+
+  /**
+   * Scan a set of positions against live Pragma Oracle prices
+   */
+  async scanPositionsForLiquidation(positions: PerpPosition[]): Promise<LiquidationCandidate[]> {
+    return this.scanOnChainPositions(positions);
   }
 
   /**

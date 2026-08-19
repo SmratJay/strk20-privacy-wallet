@@ -120,6 +120,15 @@ export const DEFAULT_NETWORK_ID: NetworkId = 'mainnet';
 export const NOTE_MATURITY_BLOCKS = 10;
 export const ESTIMATED_POOL_FEE_STRK = '4';
 
+export function normalizeNetworkId(networkId?: string): 'SN_SEPOLIA' | 'SN_MAIN' {
+  if (!networkId) return 'SN_SEPOLIA';
+  const lower = networkId.toLowerCase();
+  if (lower.includes('main')) return 'SN_MAIN';
+  return 'SN_SEPOLIA';
+}
+
 export function getNetworkConfig(networkId: string = DEFAULT_NETWORK_ID): NetworkConfig {
-  return NETWORKS[networkId as NetworkId] || NETWORKS.mainnet;
+  const norm = normalizeNetworkId(networkId);
+  const key = norm === 'SN_MAIN' ? 'mainnet' : 'sepolia';
+  return NETWORKS[key] || NETWORKS.sepolia;
 }
