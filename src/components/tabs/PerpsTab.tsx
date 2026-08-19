@@ -19,7 +19,9 @@ import {
 } from 'lucide-react';
 import { perpsService, PerpMarket, PerpPosition } from '@/services/perpsService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
+import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { DualViewInspector } from './DualViewInspector';
+import { InteractivePerpChart } from '../terminal/InteractivePerpChart';
 import { useToast } from '@/components/Toast';
 
 interface PerpsTabProps {
@@ -228,47 +230,19 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
       {/* Main Terminal View: Chart + Order Entry */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Orderbook Depth & ZK Invariants (7 Cols) */}
+        {/* Left Side: Real-Time Candlestick Chart & ZK Invariants (7 Cols) */}
         <div className="lg:col-span-7 space-y-4">
-          <div className="bg-zinc-950 border border-zinc-800 p-5 corner-box space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-900">
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-orrange-400" />
-                <span className="font-bold text-xs text-white uppercase">{currentMarket.id} LIVE DEPTH FEED</span>
-              </div>
-              <span className="text-[10px] text-zinc-500 font-mono">[ PRAGMA_ORACLE_V2 ]</span>
-            </div>
+          <InteractivePerpChart
+            pair={currentMarket.id}
+            currentPrice={currentMarket.markPrice}
+          />
 
-            {/* Depth Visual Bars */}
-            <div className="p-4 bg-zinc-900/40 border border-zinc-800/80 space-y-3">
-              <div className="flex items-center justify-between text-xs text-zinc-400">
-                <span>ORDERBOOK SPREAD</span>
-                <span className="text-emerald-400 font-bold">SPREAD: $0.15 (0.00%)</span>
-              </div>
-
-              <div className="h-36 flex items-end gap-1.5 pt-2">
-                {[35, 45, 60, 50, 70, 85, 75, 90, 80, 95, 100, 85, 90, 95, 70, 80, 65, 85, 90, 98].map((h, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 bg-gradient-to-t from-orrange-950/40 to-orrange-500 hover:opacity-100 transition-opacity"
-                    style={{ height: `${h}%` }}
-                  />
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                <span>Low: ${(currentMarket.markPrice * 0.98).toFixed(2)}</span>
-                <span>High: ${(currentMarket.markPrice * 1.02).toFixed(2)}</span>
-              </div>
-            </div>
-
-            {/* Privacy Architecture Notice */}
-            <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-orrange-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] leading-relaxed">
-                <span className="font-bold text-white uppercase">ZK Proof & Value Conservation: </span>
-                Every order transition generates a STARK proof that linear PnL and maintenance solvency (<code className="text-orrange-400">Et &gt; Mmaint</code>) hold without disclosing your position size or margin on-chain.
-              </div>
+          {/* Privacy Architecture Notice */}
+          <div className="p-3.5 bg-zinc-950 border border-zinc-800 corner-box text-xs text-zinc-400 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-orrange-400 shrink-0 mt-0.5" />
+            <div className="text-[11px] leading-relaxed">
+              <span className="font-bold text-white uppercase">ZK Proof & Value Conservation (Whitepaper §11): </span>
+              Every order transition generates a STARK proof that linear PnL and maintenance solvency (<code className="text-orrange-400">Et &gt; Mmaint</code>) hold without disclosing your position size, entry price, or margin to observers on-chain.
             </div>
           </div>
         </div>
