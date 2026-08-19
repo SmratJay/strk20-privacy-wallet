@@ -40,31 +40,37 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [inspectedPosition, setInspectedPosition] = useState<PerpPosition | null>(null);
   const [activeViewMode, setActiveViewMode] = useState<'TERMINAL' | 'INSPECTOR'>('TERMINAL');
 
-  // Load and sync live market prices from Pragma Oracle
+  // Load and sync live market prices from live market stream (Binance + Pragma)
   const syncOraclePrices = useCallback(async () => {
     try {
-      const [btcFeed, ethFeed, strkFeed] = await Promise.all([
-        pragmaOracleService.getMarketPrice('BTC/USD'),
-        pragmaOracleService.getMarketPrice('ETH/USD'),
-        pragmaOracleService.getMarketPrice('STRK/USD'),
+      const [btcTicker, ethTicker, strkTicker] = await Promise.all([
+        liveMarketDataService.fetchLiveTicker('BTC-PERP'),
+        liveMarketDataService.fetchLiveTicker('ETH-PERP'),
+        liveMarketDataService.fetchLiveTicker('STRK-PERP'),
       ]);
 
-      setMarkets((prev) =>
-        prev.map((m) => {
-          if (m.id === 'BTC-PERP') return { ...m, markPrice: btcFeed.priceUsd };
-          if (m.id === 'ETH-PERP') return { ...m, markPrice: ethFeed.priceUsd };
-          if (m.id === 'STRK-PERP') return { ...m, markPrice: strkFeed.priceUsd };
-          return m;
-        })
-      );
+      if (btcTicker && btcTicker.price > 0) {
+        perpsService.updateMarketPrice('BTC-PERP', btcTicker.price, btcTicker.change24h, btcTicker.volume24h);
+      }
+      if (ethTicker && ethTicker.price > 0) {
+        perpsService.updateMarketPrice('ETH-PERP', ethTicker.price, ethTicker.change24h, ethTicker.volume24h);
+      }
+      if (strkTicker && strkTicker.price > 0) {
+        perpsService.updateMarketPrice('STRK-PERP', strkTicker.price, strkTicker.change24h, strkTicker.volume24h);
+      }
+
+      setMarkets([...perpsService.getMarkets()]);
+      if (walletAddress) {
+        setPositions(perpsService.getPositions(walletAddress));
+      }
     } catch {
       // Fallback to existing rates
     }
-  }, []);
+  }, [walletAddress]);
 
   useEffect(() => {
     syncOraclePrices();
-    const interval = setInterval(syncOraclePrices, 10000);
+    const interval = setInterval(syncOraclePrices, 2500); // 2.5s fast real-time tick rate
     return () => clearInterval(interval);
   }, [syncOraclePrices]);
 

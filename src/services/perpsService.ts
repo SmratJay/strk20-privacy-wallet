@@ -96,6 +96,21 @@ class PerpsService {
     return this.markets.find((m) => m.id === id);
   }
 
+  updateMarketPrice(
+    id: string,
+    markPrice: number,
+    change24hPct?: number,
+    volume24hUsd?: number
+  ): void {
+    const market = this.markets.find((m) => m.id === id);
+    if (market && markPrice > 0) {
+      market.markPrice = markPrice;
+      market.indexPrice = markPrice * 0.9998;
+      if (change24hPct !== undefined) market.change24hPct = change24hPct;
+      if (volume24hUsd !== undefined) market.volume24hUsd = volume24hUsd;
+    }
+  }
+
   /**
    * Calculate Liquidation Price according to Section 7.1 & A.6:
    * Long: EntryPrice * (1 - 1/leverage + maintenanceMarginPct)

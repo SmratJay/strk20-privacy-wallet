@@ -34,12 +34,11 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
 }) => {
   const [tokenPrices, setTokenPrices] = React.useState<Record<string, number>>(() => ({
     ...priceService.getCachedPrices(),
-    BTC: 96420.50,
   }));
 
   React.useEffect(() => {
     priceService.getPrices().then((prices) => {
-      setTokenPrices({ ...prices, BTC: 96420.50 });
+      setTokenPrices({ ...prices });
     }).catch(() => {});
   }, []);
 
