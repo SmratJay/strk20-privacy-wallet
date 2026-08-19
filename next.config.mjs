@@ -1,7 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ['@starknet-io/get-starknet-discovery', '@starknet-io/get-starknet-wallet-standard'],
+  transpilePackages: [
+    '@starknet-io/get-starknet-discovery', 
+    '@starknet-io/get-starknet-wallet-standard',
+    'lucide-react'
+  ],
+  experimental: {
+    optimizePackageImports: ['lucide-react'],
+  },
   webpack: (config) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
