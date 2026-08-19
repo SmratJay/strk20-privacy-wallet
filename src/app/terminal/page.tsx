@@ -218,6 +218,8 @@ function TerminalContent() {
     }
   };
 
+  const [isSidebarPinned, setIsSidebarPinned] = useState(true);
+
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-mono flex">
       {/* 1. Jupiter-Style Left Sidebar (Hover-expandable desktop + mobile drawer) */}
@@ -227,10 +229,14 @@ function TerminalContent() {
         onOpenPassportModal={() => setIsPassportModalOpen(true)}
         onOpenAuditorModal={() => setIsAuditorModalOpen(true)}
         onOpenPublishModal={() => setIsPublishModalOpen(true)}
+        isPinned={isSidebarPinned}
+        onTogglePin={() => setIsSidebarPinned(!isSidebarPinned)}
       />
 
       {/* 2. Main Terminal Content Area (Offset for desktop left sidebar) */}
-      <div className="flex-1 flex flex-col min-w-0 md:pl-16 transition-all duration-300 pb-20 md:pb-10">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 pb-20 md:pb-10 ${
+        isSidebarPinned ? 'md:pl-64' : 'md:pl-20'
+      }`}>
         {/* Terminal Top Bar */}
         <TerminalTopBar
           wallet={wallet}
