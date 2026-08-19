@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { ArrowRight, ShieldCheck, Zap, Terminal, Lock, FileText, Sparkles } from 'lucide-react';
 import { AsciiHeroVisual } from './AsciiHeroVisual';
 
@@ -33,13 +34,13 @@ export const LandingHero: React.FC<LandingHeroProps> = ({ onLaunchTerminal }) =>
 
           {/* CTA Action Buttons */}
           <div className="flex flex-wrap items-center gap-4 pt-2">
-            <button
-              onClick={onLaunchTerminal}
+            <Link
+              href="/terminal"
               className="px-6 py-3.5 rounded-none border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black font-mono text-xs font-black tracking-widest uppercase transition-all shadow-xl shadow-orrange-950/50 hover:scale-[1.02] flex items-center gap-2.5 corner-box cursor-pointer"
             >
               <span>Get Started with orrange</span>
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </Link>
 
             <a
               href="#architecture"

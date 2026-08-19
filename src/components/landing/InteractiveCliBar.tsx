@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Terminal, ArrowRight, CornerDownLeft, Sparkles, Shield, Zap } from 'lucide-react';
-import { PELTabType } from '@/app/page';
+import { PELTabType } from '@/components/terminal/JupiterSidebar';
 
 interface InteractiveCliBarProps {
   onExecuteCommand: (tab: PELTabType) => void;

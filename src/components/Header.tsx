@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { 
   Shield, 
   Key, 
@@ -170,17 +171,18 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
 
-            <a href="#terminal" onClick={onLaunchTerminal} className="hover:text-orrange-400 transition-colors uppercase">
-              SUPER-APP
-            </a>
+            <Link href="/terminal" className="hover:text-orrange-400 transition-colors uppercase font-bold text-white flex items-center gap-1">
+              <span>TERMINAL</span>
+              <span className="text-[9px] px-1 py-0.2 bg-orrange-500/20 text-orrange-400 border border-orrange-500/30">APP</span>
+            </Link>
 
-            <a href="#architecture" className="hover:text-orrange-400 transition-colors uppercase">
+            <a href="/#architecture" className="hover:text-orrange-400 transition-colors uppercase">
               ARCHITECTURE
             </a>
 
             <button
               onClick={onOpenPassportModal || onOpenAuditorModal}
-              className="hover:text-orrange-400 transition-colors uppercase text-left"
+              className="hover:text-orrange-400 transition-colors uppercase text-left cursor-pointer"
             >
               COMPLIANCE
             </button>
@@ -189,6 +191,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Actions, Network Switcher & Wallet */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Launch App Button */}
+          <Link
+            href="/terminal"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 text-black font-mono text-xs font-black uppercase tracking-wider transition-all shadow-md shadow-orrange-950/40"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>Launch App</span>
+          </Link>
           {/* Faucet Link (Sepolia) */}
           {isSepolia && (
             <a
