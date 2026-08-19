@@ -62,7 +62,7 @@ pub mod StwoVerifier {
             false
         }
 
-        fn register_verified_fact(ref self: TContractState, fact_hash: felt252) {
+        fn register_verified_fact(ref self: ContractState, fact_hash: felt252) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.verified_facts.write(fact_hash, true);

@@ -8,6 +8,14 @@ out/
 .env.local
 .env.*.local
 
+# Starknet Contract Build & Deployments (Security & Privacy)
+contracts/target/
+deployments/
+*.keystore.json
+starknet_accounts.json
+.starkli/
+.sncast/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -22,7 +30,6 @@ Thumbs.db
 dist/
 build/
 tsconfig.tsbuildinfo
-.next/
 
 # Logs
 *.log

@@ -49,7 +49,7 @@ pub mod STRK20Adapter {
 
     #[abi(embed_v0)]
     impl STRK20AdapterImpl of ISTRK20Adapter<ContractState> {
-        fn lock_shielded_margin(ref self: TContractState, nullifier: felt252, amount: u128) {
+        fn lock_shielded_margin(ref self: ContractState, nullifier: felt252, amount: u128) {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
             assert(!self.used_margin_nullifiers.read(nullifier), 'MARGIN_NULLIFIER_ALREADY_USED');
@@ -61,7 +61,7 @@ pub mod STRK20Adapter {
             self.emit(MarginLocked { nullifier, amount });
         }
 
-        fn release_shielded_payout(ref self: TContractState, recipient_note_commitment: felt252, amount: u128) {
+        fn release_shielded_payout(ref self: ContractState, recipient_note_commitment: felt252, amount: u128) {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
 
