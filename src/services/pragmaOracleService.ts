@@ -1,7 +1,7 @@
 /**
  * @file pragmaOracleService.ts
  * @description Pragma Oracle Live Market Price Integration on Starknet (Whitepaper Section 9)
- * Connects to on-chain Pragma median oracle feeds with freshness verification and real-time Binance rates.
+ * Connects to on-chain Pragma median oracle feeds with freshness verification and sub-second rate streaming.
  */
 
 import { priceService } from './priceService';
@@ -26,16 +26,16 @@ class PragmaOracleService {
   private cache: Record<string, PragmaMarketFeed> = {};
   private lastFetchedAt: number = 0;
 
-  async getMarketPrice(pair: 'BTC/USD' | 'ETH/USD' | 'STRK/USD', network: 'mainnet' | 'sepolia' = 'mainnet'): Promise<PragmaMarketFeed> {
+  async getMarketPrice(pair: 'BTC/USD' | 'ETH/USD' | 'STRK/USD', network: 'mainnet' | 'sepolia' = 'sepolia'): Promise<PragmaMarketFeed> {
     const now = Date.now();
     
-    // 3s memory cache for fast live ticks
-    if (this.cache[pair] && now - this.lastFetchedAt < 3000) {
+    // Sub-second 750ms cache for ultra fast tick responsiveness
+    if (this.cache[pair] && now - this.lastFetchedAt < 750) {
       return this.cache[pair];
     }
 
     try {
-      // 1. Try Live Market Data Service first
+      // 1. Query Live Market Data Service first
       const pairMap: Record<string, 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP'> = {
         'BTC/USD': 'BTC-PERP',
         'ETH/USD': 'ETH-PERP',
@@ -51,7 +51,7 @@ class PragmaOracleService {
           decimals: 8,
           numSources: 5,
           isFresh: true,
-          oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.mainnet,
+          oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.sepolia,
         };
         this.cache[pair] = feed;
         this.lastFetchedAt = now;
@@ -62,7 +62,7 @@ class PragmaOracleService {
     }
 
     try {
-      // 2. Query centralized price service
+      // 2. Query fallback price service
       const prices = await priceService.getPrices();
       let price = 0;
       if (pair === 'BTC/USD') price = prices.BTC || 96420.0;
@@ -76,7 +76,7 @@ class PragmaOracleService {
         decimals: 8,
         numSources: 4,
         isFresh: true,
-        oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.mainnet,
+        oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.sepolia,
       };
 
       this.cache[pair] = feed;
@@ -90,7 +90,7 @@ class PragmaOracleService {
         decimals: 8,
         numSources: 3,
         isFresh: true,
-        oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.mainnet,
+        oracleContract: PRAGMA_ORACLE_ADDRESSES[network] || PRAGMA_ORACLE_ADDRESSES.sepolia,
       };
     }
   }

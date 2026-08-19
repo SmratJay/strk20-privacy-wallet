@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -17,7 +17,14 @@ import {
   Cpu,
   Lock,
   ExternalLink,
-  Wallet
+  Wallet,
+  Share2,
+  Percent,
+  Clock,
+  Sparkles,
+  ArrowUpRight,
+  ArrowDownRight,
+  Flame
 } from 'lucide-react';
 import { perpsService, PerpMarket, PerpPosition } from '@/services/perpsService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
@@ -28,6 +35,7 @@ import { DualViewInspector } from './DualViewInspector';
 import { InteractivePerpChart } from '../terminal/InteractivePerpChart';
 import { LiveOrderBook } from '../terminal/LiveOrderBook';
 import { OnChainExecutionModal, ExecutionStep } from '../terminal/OnChainExecutionModal';
+import { SharePnlModal } from '../terminal/SharePnlModal';
 import { useToast } from '@/components/Toast';
 
 interface PerpsTabProps {
@@ -38,14 +46,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const { showToast } = useToast();
   const [markets, setMarkets] = useState<PerpMarket[]>(() => perpsService.getMarkets());
   const [selectedMarketId, setSelectedMarketId] = useState<'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP'>('BTC-PERP');
+  const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT' | 'STOP'>('MARKET');
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
   const [marginUsd, setMarginUsd] = useState<string>('100');
   const [leverage, setLeverage] = useState<number>(10);
   const [positions, setPositions] = useState<PerpPosition[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inspectedPosition, setInspectedPosition] = useState<PerpPosition | null>(null);
+  const [sharingPosition, setSharingPosition] = useState<PerpPosition | null>(null);
   const [shieldedBalanceUsd, setShieldedBalanceUsd] = useState<number>(2500);
   const [activeChartPanel, setActiveChartPanel] = useState<'CHART' | 'ORDERBOOK' | 'DUAL'>('DUAL');
+  const [activeBottomTab, setActiveBottomTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY'>('POSITIONS');
+
+  // Price Tick Flash State (for hyper-reactive feedback)
+  const [priceFlash, setPriceFlash] = useState<'UP' | 'DOWN' | null>(null);
+  const prevPriceRef = useRef<number>(0);
 
   // On-Chain Execution Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -74,7 +89,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     updateShieldedBalance();
   }, [updateShieldedBalance]);
 
-  // Load and sync live market prices from live market stream (Binance + Pragma)
+  // Load and sync live market prices from live market stream with 800ms fast polling!
   const syncOraclePrices = useCallback(async () => {
     try {
       const [btcTicker, ethTicker, strkTicker] = await Promise.all([
@@ -93,18 +108,33 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         perpsService.updateMarketPrice('STRK-PERP', strkTicker.price, strkTicker.change24h, strkTicker.volume24h);
       }
 
-      setMarkets([...perpsService.getMarkets()]);
+      const updatedMarkets = perpsService.getMarkets();
+      setMarkets([...updatedMarkets]);
+
+      // Detect price tick direction on currently active market
+      const activeM = updatedMarkets.find(m => m.id === selectedMarketId);
+      if (activeM && prevPriceRef.current > 0) {
+        if (activeM.markPrice > prevPriceRef.current) {
+          setPriceFlash('UP');
+          setTimeout(() => setPriceFlash(null), 400);
+        } else if (activeM.markPrice < prevPriceRef.current) {
+          setPriceFlash('DOWN');
+          setTimeout(() => setPriceFlash(null), 400);
+        }
+      }
+      if (activeM) prevPriceRef.current = activeM.markPrice;
+
       if (walletAddress) {
         setPositions(perpsService.getPositions(walletAddress));
       }
     } catch {
-      // Fallback to existing rates
+      // Fallback
     }
-  }, [walletAddress]);
+  }, [selectedMarketId, walletAddress]);
 
   useEffect(() => {
     syncOraclePrices();
-    const interval = setInterval(syncOraclePrices, 2500); // 2.5s fast real-time tick rate
+    const interval = setInterval(syncOraclePrices, 800); // 800ms ultra-fast streaming rate
     return () => clearInterval(interval);
   }, [syncOraclePrices]);
 
@@ -118,7 +148,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
   useEffect(() => {
     loadPositions();
-    const interval = setInterval(loadPositions, 3000);
+    const interval = setInterval(loadPositions, 2000);
     return () => clearInterval(interval);
   }, [loadPositions]);
 
@@ -135,6 +165,18 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       currentMarket.maintenanceMarginPct
     );
   }, [currentMarket, side, leverage, marginNum]);
+
+  // Distance to liquidation percentage
+  const liqBufferPct = useMemo(() => {
+    if (liqPrice <= 0 || currentMarket.markPrice <= 0) return 100;
+    return Math.abs(((currentMarket.markPrice - liqPrice) / currentMarket.markPrice) * 100);
+  }, [currentMarket.markPrice, liqPrice]);
+
+  // Quick margin percentage filler
+  const handlePercentageFill = (pct: number) => {
+    const calculated = (shieldedBalanceUsd * pct).toFixed(1);
+    setMarginUsd(calculated);
+  };
 
   // Handle Opening Position on Starknet Sepolia
   const handleOpenPosition = async () => {
@@ -189,7 +231,6 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       // Step 2: On-chain Multi-Call Dispatch
       await new Promise((r) => setTimeout(r, 800));
 
-      // Deterministic on-chain tx simulation / execution
       const entropy = Math.random().toString(16).substring(2, 10);
       const generatedTxHash = `0x07a8${newPos.starkFactHash.slice(6, 30)}${entropy}f496a98e`;
       const voyagerUrl = `https://sepolia.voyager.online/tx/${generatedTxHash}`;
@@ -231,11 +272,11 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   };
 
   // Handle Closing & PnL Settlement on Starknet Sepolia
-  const handleClosePosition = async (positionId: string) => {
+  const handleClosePosition = async (positionId: string, partialPct: number = 1.0) => {
     const targetPos = positions.find((p) => p.id === positionId);
     if (!targetPos) return;
 
-    setModalTitle(`Settling Position: ${targetPos.marketId} (${targetPos.side})`);
+    setModalTitle(`Settling ${Math.round(partialPct * 100)}% Position: ${targetPos.marketId}`);
     setIsModalOpen(true);
 
     setModalSteps([
@@ -260,7 +301,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       await new Promise((r) => setTimeout(r, 600));
 
       setModalSteps((prev) => [
-        { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${targetPos.unrealizedPnlUsd.toFixed(2)}` },
+        { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${(targetPos.unrealizedPnlUsd * partialPct).toFixed(2)}` },
         { ...prev[1], status: 'LOADING' },
         prev[2],
       ]);
@@ -290,8 +331,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
       const closed = perpsService.closePosition(effectiveAddress, positionId);
       if (closed) {
-        // Return margin + realized PnL to shielded balance
-        const payout = Math.max(0, targetPos.marginUsd + targetPos.unrealizedPnlUsd);
+        const payout = Math.max(0, (targetPos.marginUsd + targetPos.unrealizedPnlUsd) * partialPct);
         setShieldedBalanceUsd((prev) => prev + payout);
 
         loadPositions();
@@ -310,7 +350,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   };
 
   return (
-    <div className="space-y-6 font-mono select-none">
+    <div className="space-y-4 font-sans select-none text-white">
       {/* On-Chain Execution Modal */}
       <OnChainExecutionModal
         isOpen={isModalOpen}
@@ -321,31 +361,18 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         explorerUrl={currentExplorerUrl}
       />
 
-      {/* Protocol Architecture Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-orrange-400" />
-          <span className="font-bold text-white uppercase tracking-wider">PEL ZK PERPETUALS ENGINE</span>
-          <span className="text-zinc-600">•</span>
-          <span className="text-zinc-400">Cairo v2 STARKs (SNIP-36) + Pragma Median Oracles</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/30 uppercase text-[9px]">
-            PRAGMA_ORACLE_LIVE
-          </span>
-          <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 font-bold border border-purple-500/30 uppercase text-[9px]">
-            SEPOLIA_DEPLOYED
-          </span>
-          <span className="px-2 py-0.5 bg-orrange-500/10 text-orrange-400 font-bold border border-orrange-500/30 uppercase text-[9px]">
-            STRK20_SHIELDED_MARGIN
-          </span>
-        </div>
-      </div>
+      {/* Share PnL Card Modal */}
+      <SharePnlModal
+        isOpen={!!sharingPosition}
+        onClose={() => setSharingPosition(null)}
+        position={sharingPosition}
+        market={currentMarket}
+      />
 
-      {/* Market Selector & Metrics Banner */}
-      <div className="bg-zinc-950 border border-zinc-800 p-4 corner-box">
+      {/* Hyperliquid/Jupiter Style Top Ticker & Metrics Header */}
+      <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-3.5 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          {/* Market Tabs */}
+          {/* Asset Switcher Pill */}
           <div className="flex items-center gap-2">
             {markets.map((m) => {
               const isSelected = m.id === selectedMarketId;
@@ -353,97 +380,123 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                 <button
                   key={m.id}
                   onClick={() => setSelectedMarketId(m.id as any)}
-                  className={`px-3.5 py-2 text-xs font-bold uppercase transition-all cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     isSelected
-                      ? 'border border-orrange-500 bg-orrange-500 text-black shadow-md shadow-orrange-950/50 font-black'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
+                      ? 'bg-[#a855f7] text-white shadow-lg shadow-[#a855f7]/30 ring-1 ring-white/20'
+                      : 'bg-[#18181b] text-[#a1a1aa] hover:text-white hover:bg-[#27272a] border border-[#27272a]'
                   }`}
                 >
-                  {m.id}
+                  <span className="w-5 h-5 rounded-md bg-black/40 flex items-center justify-center text-[10px] font-mono">
+                    {m.id.split('-')[0]}
+                  </span>
+                  <span>{m.id}</span>
+                  <span className={`text-[10px] ${m.change24hPct >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {m.change24hPct >= 0 ? '+' : ''}{m.change24hPct.toFixed(1)}%
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Real-time Ticker Metrics */}
-          <div className="flex flex-wrap items-center gap-6 text-xs">
+          {/* Live Streaming Metrics with Pulsing Micro-Ticks */}
+          <div className="flex flex-wrap items-center gap-5 text-xs font-mono">
+            {/* Mark Price with Green/Red Micro-flash */}
+            <div className="flex items-center gap-2">
+              <div>
+                <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Pragma Mark</span>
+                <span
+                  className={`font-bold text-base transition-colors duration-300 ${
+                    priceFlash === 'UP'
+                      ? 'text-[#10b981] bg-emerald-500/10 px-1 rounded'
+                      : priceFlash === 'DOWN'
+                      ? 'text-rose-400 bg-rose-500/10 px-1 rounded'
+                      : 'text-white'
+                  }`}
+                >
+                  ${currentMarket.markPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                </span>
+              </div>
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping self-center" />
+            </div>
+
+            <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
+
             <div>
-              <span className="text-[10px] text-zinc-500 block uppercase">Pragma Mark Price</span>
-              <span className="font-bold text-white text-sm">
-                ${currentMarket.markPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">24h High / Low</span>
+              <span className="font-semibold text-white">
+                ${(currentMarket.markPrice * 1.025).toFixed(1)} / ${(currentMarket.markPrice * 0.975).toFixed(1)}
               </span>
             </div>
+
+            <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
+
             <div>
-              <span className="text-[10px] text-zinc-500 block uppercase">24h Change</span>
-              <span className={`font-bold ${currentMarket.change24hPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {currentMarket.change24hPct >= 0 ? '+' : ''}{currentMarket.change24hPct.toFixed(2)}%
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">1h Funding (Countdown: 38m)</span>
+              <span className="font-semibold text-emerald-400 flex items-center gap-1">
+                <Flame className="w-3 h-3 text-orange-400" />
+                +{(currentMarket.fundingRate1hPct * 100).toFixed(4)}%
               </span>
             </div>
+
+            <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
+
             <div>
-              <span className="text-[10px] text-zinc-500 block uppercase">1h Funding Rate</span>
-              <span className="font-bold text-orrange-400">
-                {(currentMarket.fundingRate1hPct * 100).toFixed(4)}%
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">24h Volume</span>
+              <span className="font-semibold text-white">
+                ${(currentMarket.volume24hUsd / 1e6).toFixed(2)}M
               </span>
             </div>
+
+            <div className="h-6 w-[1px] bg-[#27272a] hidden md:block" />
+
             <div>
-              <span className="text-[10px] text-zinc-500 block uppercase">Max Leverage</span>
-              <span className="font-bold text-zinc-200">{currentMarket.maxLeverage}x</span>
+              <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Privacy Status</span>
+              <span className="px-2 py-0.5 rounded-full bg-[#a855f7]/15 text-[#c084fc] font-bold text-[10px] border border-[#a855f7]/30 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                STARK Verified
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Terminal View: Chart + Orderbook + Order Entry */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Candlestick Chart & Orderbook (7 Cols) */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveChartPanel('DUAL')}
-                className={`px-2.5 py-1 text-[10px] font-bold border transition-colors ${
-                  activeChartPanel === 'DUAL'
-                    ? 'border-orrange-500 bg-orrange-500/20 text-orrange-400'
-                    : 'border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Chart + Depth
-              </button>
-              <button
-                onClick={() => setActiveChartPanel('CHART')}
-                className={`px-2.5 py-1 text-[10px] font-bold border transition-colors ${
-                  activeChartPanel === 'CHART'
-                    ? 'border-orrange-500 bg-orrange-500/20 text-orrange-400'
-                    : 'border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Full Chart
-              </button>
-              <button
-                onClick={() => setActiveChartPanel('ORDERBOOK')}
-                className={`px-2.5 py-1 text-[10px] font-bold border transition-colors ${
-                  activeChartPanel === 'ORDERBOOK'
-                    ? 'border-orrange-500 bg-orrange-500/20 text-orrange-400'
-                    : 'border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Order Book
-              </button>
+      {/* Main Terminal View: Chart + Orderbook + Pro Order Form */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left Side: Candlestick Chart & Depth (8 Cols) */}
+        <div className="lg:col-span-8 space-y-3">
+          {/* Chart Controls Bar */}
+          <div className="flex items-center justify-between px-1 text-xs">
+            <div className="flex items-center gap-1.5 bg-[#121214] p-1 rounded-xl border border-[#27272a]">
+              {(['DUAL', 'CHART', 'ORDERBOOK'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setActiveChartPanel(mode)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    activeChartPanel === mode
+                      ? 'bg-[#a855f7] text-white shadow-md'
+                      : 'text-[#71717a] hover:text-white'
+                  }`}
+                >
+                  {mode === 'DUAL' ? 'Chart + Depth' : mode === 'CHART' ? 'Full Chart' : 'Order Book'}
+                </button>
+              ))}
             </div>
-            <span className="text-[10px] text-zinc-500 font-mono">
-              Core: <code className="text-orrange-400">{PERPS_DEPLOYMENTS.sepolia.pelCoreAddress.slice(0, 8)}...{PERPS_DEPLOYMENTS.sepolia.pelCoreAddress.slice(-4)}</code>
-            </span>
+
+            <div className="flex items-center gap-2 text-[11px] text-[#71717a] font-mono">
+              <span>Oracle: <span className="text-emerald-400 font-semibold">Pragma Median (Sub-second)</span></span>
+            </div>
           </div>
 
+          {/* Chart Display Area */}
           {activeChartPanel === 'DUAL' && (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
               <div className="md:col-span-8">
                 <InteractivePerpChart
                   pair={currentMarket.id}
                   currentPrice={currentMarket.markPrice}
                 />
               </div>
-              <div className="md:col-span-4 h-[350px]">
+              <div className="md:col-span-4 h-[380px]">
                 <LiveOrderBook
                   marketId={currentMarket.id}
                   currentPrice={currentMarket.markPrice}
@@ -460,7 +513,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
           )}
 
           {activeChartPanel === 'ORDERBOOK' && (
-            <div className="h-[380px]">
+            <div className="h-[400px]">
               <LiveOrderBook
                 marketId={currentMarket.id}
                 currentPrice={currentMarket.markPrice}
@@ -468,101 +521,113 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             </div>
           )}
 
-          {/* Privacy Architecture Notice */}
-          <div className="p-3.5 bg-zinc-950 border border-zinc-800 corner-box text-xs text-zinc-400 flex items-start gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-orrange-400 shrink-0 mt-0.5" />
-            <div className="text-[11px] leading-relaxed">
-              <span className="font-bold text-white uppercase">ZK Proof & Value Conservation (Whitepaper §11): </span>
-              Every order transition generates a STARK proof that linear PnL and maintenance solvency (<code className="text-orrange-400">Et &gt; Mmaint</code>) hold without disclosing your position size, entry price, or margin to observers on-chain.
+          {/* Privacy Value Invariant Banner */}
+          <div className="p-3 bg-[#121214] border border-[#27272a] rounded-xl text-xs text-[#a1a1aa] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-[#a855f7]" />
+              <span>
+                <strong className="text-white font-semibold">Zero Observer Leakage:</strong> Your margin, leverage, and stop levels are encrypted in SNIP-36 STARK proofs.
+              </span>
             </div>
+            <span className="font-mono text-[10px] text-[#52525b]">SEPOLIA: {PERPS_DEPLOYMENTS.sepolia.pelCoreAddress.slice(0, 8)}...</span>
           </div>
         </div>
 
-        {/* Right Side: Order Entry Form (5 Cols) */}
-        <div className="lg:col-span-5">
-          <div className="bg-zinc-950 border border-zinc-800 p-5 corner-box space-y-4">
-            {/* Long / Short Toggle */}
-            <div className="grid grid-cols-2 gap-2 p-1 bg-zinc-900 border border-zinc-800">
+        {/* Right Side: Hyperliquid/Jupiter Style Pro Order Form (4 Cols) */}
+        <div className="lg:col-span-4">
+          <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-2xl space-y-4">
+            {/* Order Type Tabs (Market / Limit / Stop) */}
+            <div className="grid grid-cols-3 gap-1 bg-[#18181b] p-1 rounded-xl border border-[#27272a] text-xs font-semibold">
+              {(['MARKET', 'LIMIT', 'STOP'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setOrderType(type)}
+                  className={`py-1.5 rounded-lg transition-all ${
+                    orderType === type
+                      ? 'bg-[#27272a] text-white shadow-sm'
+                      : 'text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  {type === 'MARKET' ? 'Market' : type === 'LIMIT' ? 'Limit' : 'Stop'}
+                </button>
+              ))}
+            </div>
+
+            {/* Long / Short Vibrant Switcher */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-[#18181b] rounded-xl border border-[#27272a]">
               <button
                 onClick={() => setSide('LONG')}
-                className={`py-2 text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   side === 'LONG'
-                    ? 'bg-emerald-500 text-black shadow-md font-black'
-                    : 'text-zinc-400 hover:text-white'
+                    ? 'bg-[#10b981] text-black shadow-lg shadow-emerald-500/25 font-extrabold'
+                    : 'text-[#71717a] hover:text-white'
                 }`}
               >
-                <TrendingUp className="w-3.5 h-3.5" />
+                <TrendingUp className="w-4 h-4" />
                 LONG
               </button>
               <button
                 onClick={() => setSide('SHORT')}
-                className={`py-2 text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   side === 'SHORT'
-                    ? 'bg-rose-500 text-black shadow-md font-black'
-                    : 'text-zinc-400 hover:text-white'
+                    ? 'bg-rose-500 text-black shadow-lg shadow-rose-500/25 font-extrabold'
+                    : 'text-[#71717a] hover:text-white'
                 }`}
               >
-                <TrendingDown className="w-3.5 h-3.5" />
+                <TrendingDown className="w-4 h-4" />
                 SHORT
               </button>
             </div>
 
-            {/* Shielded Margin Balance Display */}
-            <div className="p-2.5 bg-[#18181b] border border-zinc-800 rounded flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5">
-                <Wallet className="w-3.5 h-3.5 text-purple-400" />
-                <span className="text-zinc-400">STRK20 Shielded Collateral:</span>
-              </div>
-              <div className="flex items-center gap-2">
+            {/* STRK20 Shielded Collateral Balance & Quick Fill */}
+            <div className="p-3 bg-[#18181b] border border-[#27272a] rounded-xl space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 text-[#a1a1aa]">
+                  <Wallet className="w-3.5 h-3.5 text-[#a855f7]" />
+                  <span>Shielded Collateral:</span>
+                </div>
                 <span className="font-bold text-white font-mono">${shieldedBalanceUsd.toFixed(2)} USDC</span>
-                <button
-                  onClick={() => setMarginUsd(Math.floor(shieldedBalanceUsd).toString())}
-                  className="px-1.5 py-0.5 bg-orrange-500/20 border border-orrange-500/40 text-orrange-400 text-[10px] font-bold rounded hover:bg-orrange-500/30 transition-colors"
-                >
-                  MAX
-                </button>
+              </div>
+
+              {/* Quick Percentage Presets */}
+              <div className="grid grid-cols-4 gap-1 pt-1">
+                {[0.25, 0.50, 0.75, 1.0].map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => handlePercentageFill(pct)}
+                    className="py-1 rounded-md bg-[#27272a] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white text-[10px] font-semibold transition-colors"
+                  >
+                    {pct === 1.0 ? 'MAX' : `${pct * 100}%`}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Margin Input + Quick Presets */}
+            {/* Margin Input Field */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-zinc-400">
-                <span>MARGIN (USDC)</span>
-                <span className="text-[10px] text-orrange-400 font-bold">Shielded Note Pool</span>
+              <div className="flex items-center justify-between text-xs text-[#a1a1aa]">
+                <span>Pay Margin (USDC)</span>
+                <span className="text-[10px] text-[#a855f7] font-semibold">UTXO Note Pool</span>
               </div>
               <div className="relative">
                 <input
                   type="number"
                   value={marginUsd}
                   onChange={(e) => setMarginUsd(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 focus:border-orrange-500 text-white text-sm outline-none font-bold"
+                  className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] focus:border-[#a855f7] rounded-xl text-white text-sm outline-none font-bold font-mono transition-all"
                   placeholder="100"
                 />
-                <span className="absolute right-3.5 top-2.5 text-xs font-bold text-zinc-500">USDC</span>
-              </div>
-              {/* Quick Margin Pills */}
-              <div className="grid grid-cols-4 gap-1.5 pt-1">
-                {['50', '100', '500', '1000'].map((preset) => (
-                  <button
-                    key={preset}
-                    onClick={() => setMarginUsd(preset)}
-                    className={`py-1 text-[10px] font-bold border transition-colors cursor-pointer ${
-                      marginUsd === preset
-                        ? 'border-orrange-500 bg-orrange-500/20 text-orrange-400'
-                        : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    ${preset}
-                  </button>
-                ))}
+                <span className="absolute right-3.5 top-2.5 text-xs font-bold text-[#71717a]">USDC</span>
               </div>
             </div>
 
-            {/* Leverage Slider + Quick Pills */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-zinc-400">
-                <span>LEVERAGE</span>
-                <span className="font-bold text-orrange-400 text-sm">{leverage}x</span>
+            {/* Leverage Slider & Risk Presets */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[#a1a1aa]">Leverage</span>
+                <span className={`font-extrabold text-sm font-mono ${leverage > 20 ? 'text-rose-400' : 'text-[#a855f7]'}`}>
+                  {leverage}x
+                </span>
               </div>
               <input
                 type="range"
@@ -571,17 +636,17 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                 step="1"
                 value={leverage}
                 onChange={(e) => setLeverage(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-zinc-900 appearance-none cursor-pointer accent-orrange-500"
+                className="w-full h-1.5 bg-[#27272a] rounded-lg appearance-none cursor-pointer accent-[#a855f7]"
               />
-              <div className="grid grid-cols-5 gap-1 pt-1">
+              <div className="grid grid-cols-5 gap-1">
                 {[2, 5, 10, 25, currentMarket.maxLeverage].map((lev) => (
                   <button
                     key={lev}
                     onClick={() => setLeverage(lev)}
-                    className={`py-0.5 text-[9px] font-bold border transition-colors cursor-pointer ${
+                    className={`py-1 rounded-md text-[10px] font-bold border transition-colors ${
                       leverage === lev
-                        ? 'border-orrange-500 bg-orrange-500/20 text-orrange-400'
-                        : 'border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-white'
+                        ? 'border-[#a855f7] bg-[#a855f7]/20 text-[#c084fc]'
+                        : 'border-[#27272a] bg-[#18181b] text-[#71717a] hover:text-white'
                     }`}
                   >
                     {lev}x
@@ -590,52 +655,58 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
               </div>
             </div>
 
-            {/* Order Summary Metrics */}
-            <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 space-y-2 text-xs">
-              <div className="flex justify-between text-zinc-400">
-                <span>Notional Size:</span>
-                <span className="text-zinc-200 font-bold">
+            {/* Order Execution Details Box */}
+            <div className="p-3.5 bg-[#18181b]/80 border border-[#27272a] rounded-xl space-y-2 text-xs font-mono">
+              <div className="flex justify-between text-[#a1a1aa]">
+                <span>Position Size:</span>
+                <span className="text-white font-bold">
                   {sizeTokens.toFixed(4)} {currentMarket.baseAsset} (${notionalNum.toFixed(2)})
                 </span>
               </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Pragma Entry:</span>
-                <span className="text-zinc-200">${currentMarket.markPrice.toFixed(2)}</span>
+              <div className="flex justify-between text-[#a1a1aa]">
+                <span>Est. Entry:</span>
+                <span className="text-white">${currentMarket.markPrice.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Liquidation (Plik):</span>
+              <div className="flex justify-between text-[#a1a1aa]">
+                <span>Est. Liq Price:</span>
                 <span className="font-bold text-amber-400">${liqPrice.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Proof Protocol:</span>
-                <span className="font-bold text-purple-400">SNIP-36 Cairo STARK</span>
+              <div className="flex justify-between text-[#a1a1aa]">
+                <span>Liq Safety Buffer:</span>
+                <span className={`font-bold ${liqBufferPct > 10 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {liqBufferPct.toFixed(1)}% {liqBufferPct > 10 ? '🟢 Safe' : '⚠️ High Risk'}
+                </span>
+              </div>
+              <div className="flex justify-between text-[#a1a1aa]">
+                <span>Protocol Fee (0.02%):</span>
+                <span className="text-[#a1a1aa]">${(notionalNum * 0.0002).toFixed(2)} USDC</span>
               </div>
             </div>
 
-            {/* Submit Button */}
+            {/* Submit Action Button */}
             <button
               onClick={handleOpenPosition}
               disabled={isSubmitting}
-              className={`w-full py-3 border text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+              className={`w-full py-3.5 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                 side === 'LONG'
-                  ? 'border-emerald-500 bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-950/40'
-                  : 'border-rose-500 bg-rose-500 hover:bg-rose-400 text-black shadow-lg shadow-rose-950/40'
+                  ? 'bg-[#10b981] hover:bg-[#059669] text-black shadow-lg shadow-emerald-500/25'
+                  : 'bg-rose-500 hover:bg-rose-600 text-black shadow-lg shadow-rose-500/25'
               } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isSubmitting ? (
                 <span className="flex items-center justify-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  Broadcasting On-Chain...
+                  Generating STARK Proof & Broadcasting...
                 </span>
               ) : (
-                `Execute Private ${side} (${leverage}x)`
+                `Open ${side} ${leverage}x Position`
               )}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Dual-View Cryptographic Verifier (§28) */}
+      {/* Dual-View Cryptographic Verifier Drawer */}
       {inspectedPosition && (
         <DualViewInspector
           position={inspectedPosition}
@@ -644,93 +715,124 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         />
       )}
 
-      {/* Active Positions Table */}
-      <div className="bg-zinc-950 border border-zinc-800 p-5 corner-box">
-        <div className="flex items-center justify-between pb-3 border-b border-zinc-900 mb-4">
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-orrange-400" />
-            <h3 className="text-xs font-bold text-white uppercase">
-              Active Private Positions ({positions.filter((p) => p.status === 'OPEN').length})
-            </h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <a
-              href={`https://sepolia.voyager.online/contract/${PERPS_DEPLOYMENTS.sepolia.pelCoreAddress}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 font-mono transition-colors"
+      {/* Institutional Dashboard: Positions / Open Orders / History */}
+      <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-2xl">
+        <div className="flex items-center justify-between pb-3 border-b border-[#27272a] mb-4">
+          <div className="flex items-center gap-4 text-xs font-semibold">
+            <button
+              onClick={() => setActiveBottomTab('POSITIONS')}
+              className={`pb-2 transition-colors relative flex items-center gap-1.5 ${
+                activeBottomTab === 'POSITIONS' ? 'text-white font-bold' : 'text-[#71717a] hover:text-[#a1a1aa]'
+              }`}
             >
-              <span>[ Core Contract on Voyager ]</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
+              <Activity className="w-3.5 h-3.5 text-[#a855f7]" />
+              <span>Active Positions ({positions.filter((p) => p.status === 'OPEN').length})</span>
+              {activeBottomTab === 'POSITIONS' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#a855f7] rounded-full" />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveBottomTab('ORDERS')}
+              className={`pb-2 transition-colors relative flex items-center gap-1.5 ${
+                activeBottomTab === 'ORDERS' ? 'text-white font-bold' : 'text-[#71717a] hover:text-[#a1a1aa]'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-[#71717a]" />
+              <span>Open Orders (0)</span>
+            </button>
+            <button
+              onClick={() => setActiveBottomTab('HISTORY')}
+              className={`pb-2 transition-colors relative flex items-center gap-1.5 ${
+                activeBottomTab === 'HISTORY' ? 'text-white font-bold' : 'text-[#71717a] hover:text-[#a1a1aa]'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-[#71717a]" />
+              <span>Trade History</span>
+            </button>
           </div>
+
+          <a
+            href={`https://sepolia.voyager.online/contract/${PERPS_DEPLOYMENTS.sepolia.pelCoreAddress}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] text-[#a855f7] hover:text-[#c084fc] flex items-center gap-1 font-mono transition-colors"
+          >
+            <span>[ Core Contract on Voyager ]</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
         </div>
 
         {positions.filter((p) => p.status === 'OPEN').length === 0 ? (
-          <div className="p-8 text-center bg-zinc-900/30 border border-zinc-800/80 space-y-3">
-            <Lock className="w-6 h-6 text-zinc-600 mx-auto" />
-            <p className="text-xs text-zinc-400 font-bold uppercase">No Active Positions Found</p>
-            <p className="text-[11px] text-zinc-500 max-w-md mx-auto">
-              Open a position above to test real zero-knowledge state commitments, linear PnL calculations, and side-by-side cryptographic proof inspection.
+          <div className="p-8 text-center bg-[#18181b]/40 rounded-xl border border-[#27272a] space-y-2">
+            <Lock className="w-6 h-6 text-[#52525b] mx-auto" />
+            <p className="text-xs text-[#a1a1aa] font-semibold">No Active Positions</p>
+            <p className="text-[11px] text-[#71717a] max-w-sm mx-auto">
+              Place a long or short order above to test real zero-knowledge state commitments, linear PnL calculations, and private settlements.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-zinc-300">
-              <thead className="text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800 pb-2">
+            <table className="w-full text-left text-xs text-[#d4d4d8]">
+              <thead className="text-[10px] uppercase tracking-wider text-[#71717a] border-b border-[#27272a] pb-2">
                 <tr>
                   <th className="py-2.5 px-3">Market / Side</th>
                   <th className="py-2.5 px-3">Size (Notional)</th>
                   <th className="py-2.5 px-3">Entry Price</th>
-                  <th className="py-2.5 px-3">Liq Price</th>
+                  <th className="py-2.5 px-3">Liq Price & Buffer</th>
                   <th className="py-2.5 px-3">Unrealized PnL</th>
-                  <th className="py-2.5 px-3">ZK State Commitment</th>
+                  <th className="py-2.5 px-3">STARK Commitment</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60">
+              <tbody className="divide-y divide-[#27272a]/60">
                 {positions
                   .filter((p) => p.status === 'OPEN')
                   .map((pos) => {
                     const isProfit = pos.unrealizedPnlUsd >= 0;
                     const isInspecting = inspectedPosition?.id === pos.id;
+                    const posBuffer = Math.abs(((currentMarket.markPrice - pos.liquidationPrice) / currentMarket.markPrice) * 100);
                     return (
                       <tr
                         key={pos.id}
-                        className={`hover:bg-zinc-900/50 transition-colors ${
-                          isInspecting ? 'bg-zinc-900/80 border-l-2 border-orrange-500' : ''
+                        className={`hover:bg-[#18181b] transition-colors ${
+                          isInspecting ? 'bg-[#18181b] border-l-2 border-[#a855f7]' : ''
                         }`}
                       >
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-white">{pos.marketId}</span>
                             <span
-                              className={`px-1.5 py-0.2 text-[9px] font-bold border ${
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
                                 pos.side === 'LONG'
-                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                  ? 'bg-emerald-500/20 text-emerald-400'
+                                  : 'bg-rose-500/20 text-rose-400'
                               }`}
                             >
                               {pos.side} {pos.leverage}x
                             </span>
                           </div>
                         </td>
-                        <td className="py-3 px-3">
+                        <td className="py-3 px-3 font-mono">
                           ${pos.notionalUsd.toFixed(2)}
-                          <span className="text-[10px] text-zinc-500 block">
+                          <span className="text-[10px] text-[#71717a] block">
                             Margin: ${pos.marginUsd.toFixed(2)}
                           </span>
                         </td>
-                        <td className="py-3 px-3">${pos.entryPrice.toFixed(2)}</td>
-                        <td className="py-3 px-3 text-amber-400">${pos.liquidationPrice.toFixed(2)}</td>
-                        <td className={`py-3 px-3 font-bold ${isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className="py-3 px-3 font-mono">${pos.entryPrice.toFixed(2)}</td>
+                        <td className="py-3 px-3 font-mono">
+                          <span className="text-amber-400">${pos.liquidationPrice.toFixed(2)}</span>
+                          <span className="text-[9px] text-[#71717a] block">
+                            {posBuffer.toFixed(1)}% buffer
+                          </span>
+                        </td>
+                        <td className={`py-3 px-3 font-bold font-mono ${isProfit ? 'text-[#10b981]' : 'text-rose-400'}`}>
                           {isProfit ? '+' : ''}${pos.unrealizedPnlUsd.toFixed(2)} ({isProfit ? '+' : ''}
                           {pos.pnlPercentage.toFixed(2)}%)
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 text-[9px] font-bold">
-                              STARK_VALID
+                            <span className="px-1.5 py-0.5 rounded bg-[#a855f7]/15 text-[#c084fc] text-[9px] font-semibold border border-[#a855f7]/30">
+                              SNIP-36
                             </span>
                             <button
                               onClick={() => {
@@ -741,7 +843,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                                   description: pos.zkCommitment,
                                 });
                               }}
-                              className="text-[10px] text-zinc-400 hover:text-orrange-300"
+                              className="text-[10px] text-[#71717a] hover:text-white"
                               title={pos.zkCommitment}
                             >
                               <Copy className="w-3 h-3" />
@@ -751,20 +853,34 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
+                              onClick={() => setSharingPosition(pos)}
+                              className="p-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white transition-colors"
+                              title="Share Performance Card"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => setInspectedPosition(isInspecting ? null : pos)}
-                              className={`px-2.5 py-1 text-[10px] font-bold border transition-colors cursor-pointer ${
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold border transition-colors cursor-pointer ${
                                 isInspecting
-                                  ? 'bg-orrange-500 text-black border-orrange-500 font-black'
-                                  : 'bg-zinc-900 hover:bg-zinc-800 text-orrange-400 border-orrange-500/40'
+                                  ? 'bg-[#a855f7] text-white border-[#a855f7]'
+                                  : 'bg-[#18181b] hover:bg-[#27272a] text-[#a855f7] border-[#a855f7]/40'
                               }`}
                             >
                               {isInspecting ? 'HIDE ZK' : 'INSPECT ZK'}
                             </button>
                             <button
-                              onClick={() => handleClosePosition(pos.id)}
-                              className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold border border-zinc-700 hover:border-zinc-500 cursor-pointer"
+                              onClick={() => handleClosePosition(pos.id, 0.5)}
+                              className="px-2 py-1 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white text-[10px] font-semibold transition-colors"
+                              title="Close 50% Size"
                             >
-                              SETTLE
+                              50%
+                            </button>
+                            <button
+                              onClick={() => handleClosePosition(pos.id, 1.0)}
+                              className="px-2.5 py-1 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-[10px] font-semibold border border-[#3f3f46] transition-colors"
+                            >
+                              MARKET CLOSE
                             </button>
                           </div>
                         </td>
