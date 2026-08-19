@@ -1,5 +1,4 @@
 // PEL Private Perpetuals Types (Whitepaper Sections 5, 7, 11)
-use starknet::ContractAddress;
 
 #[derive(Drop, Copy, Serde, starknet::Store)]
 pub struct MarketConfig {
@@ -26,8 +25,10 @@ pub struct ProofFact {
 
 #[derive(Drop, Copy, Serde, starknet::Store)]
 pub struct PositionRecord {
-    pub commitment: felt252,         // Current active state commitment C_t
-    pub market_id: felt252,
+    pub commitment: felt252,         // Active state commitment C_t
+    pub margin_nullifier: felt252,   // Consumed margin nullifier NF_margin
+    pub locked_margin: u128,         // Locked margin amount in USD cents
+    pub market_id: felt252,          // Market ID
     pub created_at: u64,
     pub updated_at: u64,
     pub is_active: bool,

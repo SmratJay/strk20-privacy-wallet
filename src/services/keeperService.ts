@@ -42,7 +42,7 @@ class KeeperService {
         const market = perpsService.getMarket(pos.marketId);
         const maintPct = market?.maintenanceMarginPct || 0.02;
 
-        const { isLiquidatable, factHash } = zkProverService.evaluateLiquidationCircuit(
+        const { isSolvent, equityUsd, maintenanceMarginUsd } = zkProverService.evaluateSolvencyCircuit(
           pos.marginUsd,
           pnlUsd,
           fundingUsd,
@@ -52,17 +52,34 @@ class KeeperService {
           maintPct
         );
 
-        const equityUsd = pos.marginUsd + pnlUsd - fundingUsd;
-        const maintenanceMarginUsd = pos.sizeTokens * currentPrice * maintPct;
+        if (!isSolvent) {
+          const { hash } = await import('starknet');
+          const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
+          const liqProofTypeFelt = '0x' + Buffer.from('LIQUIDATE').toString('hex');
+          const marketFelt = '0x' + Buffer.from(pos.marketId).toString('hex');
+          const oraclePriceFelt = '0x' + Math.floor(currentPrice * 100).toString(16);
 
-        if (isLiquidatable) {
+          const liqPublicInputsHash = hash.computePoseidonHashOnElements([
+            liqProofTypeFelt,
+            marketFelt,
+            pos.zkCommitment,
+            pos.nullifier,
+            '0x0',
+            oraclePriceFelt,
+          ]);
+
+          const factHash = hash.computePoseidonHashOnElements([
+            liqPublicInputsHash,
+            STWO_TAG,
+          ]);
+
           candidates.push({
             position: pos,
             equityUsd: Number(equityUsd.toFixed(2)),
             maintenanceMarginUsd: Number(maintenanceMarginUsd.toFixed(2)),
             isLiquidatable: true,
             factHash,
-            bountyEstimatedUsd: Number((maintenanceMarginUsd * 0.05).toFixed(2)), // 5% keeper bounty
+            bountyEstimatedUsd: Number((pos.marginUsd * 0.02).toFixed(2)), // 2% protocol keeper bounty
           });
         }
       } catch {
@@ -71,6 +88,53 @@ class KeeperService {
     }
 
     return candidates;
+  }
+
+  /**
+   * Execute on-chain liquidation transaction
+   */
+  async executeLiquidation(
+    candidate: LiquidationCandidate,
+    keeperRecipient: string,
+    signerAccount?: any
+  ): Promise<{ txHash: string; explorerUrl: string }> {
+    const call = starknetPerpsDispatcher.buildLiquidatePositionCall(
+      candidate.position.marketId,
+      candidate.position.zkCommitment,
+      candidate.position.nullifier,
+      candidate.factHash,
+      keeperRecipient
+    );
+
+    let accountToUse = signerAccount;
+    if (!accountToUse) {
+      const provider = new (await import('starknet')).RpcProvider({
+        nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
+      });
+      const { Account } = await import('starknet');
+      accountToUse = new Account({
+        provider,
+        address: '0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d',
+        signer: '0x0374e50eb9598ee09f7a7da0e3ebc7075c3db6f281e22be582d966d54cf8e51a',
+      });
+    }
+
+    const bounds = {
+      l2_gas: { max_amount: 80000000n, max_price_per_unit: 100000000000n },
+      l1_gas: { max_amount: 10000n, max_price_per_unit: 300000000000000n },
+      l1_data_gas: { max_amount: 5000n, max_price_per_unit: 15000000000000n },
+    };
+
+    const res = await accountToUse.execute([call], { resourceBounds: bounds });
+    const provider = new (await import('starknet')).RpcProvider({
+      nodeUrl: 'https://api.cartridge.gg/x/starknet/sepolia',
+    });
+    await provider.waitForTransaction(res.transaction_hash);
+
+    return {
+      txHash: res.transaction_hash,
+      explorerUrl: `https://sepolia.voyager.online/tx/${res.transaction_hash}`,
+    };
   }
 
   /**
