@@ -191,6 +191,61 @@
 * **Description:** Removed both the top header badge (`ORRANGE // HIGH_RES_SORCERER.ASCII` & particle counter) and bottom telemetry labels to provide an uninterrupted, pure visual ASCII viewport.
 * **Verification:** `npm run build` compiled 4/4 pages in 1555ms; `npm test` passed 17/17 tests.
 
+---
+
+## 📅 Wednesday, August 19, 2026 — 14:30:00 IST
+
+### 🛡️ Cairo v2 Smart Contracts Architecture & Comprehensive Security Audit
+
+#### 🔴 [BIG CHANGE] — Cairo v2 Perpetuals Contract Suite Construction
+* **Description:** Implemented the full Cairo v2 smart contract architecture for the PEL Zero-Knowledge Perpetuals Engine in `contracts/src/`:
+  * `pel_perps_core.cairo`: Core ZK State Transition Machine managing position commitments ($C_t$), nullifiers ($\text{NF}$), leverage solvency, and SNIP-36 proof registry verification.
+  * `strk20_adapter.cairo`: Shielded margin custody vault interfacing with STRK20 UTXO notes, consuming margin note nullifiers and releasing settlement payouts to fresh shielded note commitments.
+  * `oracle_adapter.cairo`: Decentralized price consumer integrating Pragma Network median price feeds with configurable staleness thresholds ($\le 180\text{s}$).
+  * `stwo_verifier.cairo`: In-protocol STWO fact registry validating STARK execution facts before allowing position state transitions.
+* **Compilation:** Successfully compiled all contracts to Sierra and CASM bytecode with Scarb 2.20.
+
+#### 🔴 [BIG CHANGE] — Comprehensive Security & Re-entrancy Audit
+* **Description:** Audited all Cairo contracts for potential vulnerabilities, double-spending, and arithmetic edge cases:
+  * **Checks-Effects-Interactions (CEI):** Verified nullifiers are marked as spent *prior* to any external token transfer or margin pool state modification.
+  * **Signed PnL Arithmetic:** Implemented exact absolute value representation and bounded signed subtraction to prevent field wrap-around exploits in $\mathbb{F}_{252}$.
+  * **Oracle Staleness Guards:** Enforced timestamp checks rejecting price reports older than 180 seconds.
+  * **Git Security:** Configured `.gitignore` to strictly isolate all `deployments/`, `*.keystore.json`, and `.env.local` private keys.
+
+---
+
+## 📅 Wednesday, August 19, 2026 — 18:11:00 IST
+
+### 🚀 On-Chain Deployment of All Cairo Contracts to Starknet Sepolia Testnet
+
+#### 🔴 [BIG CHANGE] — Account Generation & Live Testnet Deployment
+* **Description:** Programmatically generated and deployed an Argent v0.4.0 counterfactual deployer account on Starknet Sepolia (`0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d`) and successfully declared and deployed all 4 Cairo contracts on-chain with dynamic V3 FRI gas bounds:
+  * **`PELPerpsCore`:** `0x5be824b4b3771247ce6f85084dce536804ffaa8c5f8dbc5be0f9d6744c4c767` ([Voyager](https://sepolia.voyager.online/contract/0x5be824b4b3771247ce6f85084dce536804ffaa8c5f8dbc5be0f9d6744c4c767))
+  * **`STRK20Adapter`:** `0x390386e367645a27fc9219c29452e01bbd03891b6ae8e3cacbe693e516d35bb` ([Voyager](https://sepolia.voyager.online/contract/0x390386e367645a27fc9219c29452e01bbd03891b6ae8e3cacbe693e516d35bb))
+  * **`OracleAdapter`:** `0x401895d6416b08876c01a76bc618f3b7915376e6b57b1d65eb585769b5de848` ([Voyager](https://sepolia.voyager.online/contract/0x401895d6416b08876c01a76bc618f3b7915376e6b57b1d65eb585769b5de848))
+  * **`StwoVerifier`:** `0x57902806d2d74d86e35d7329cda40122f80d4b4d7cdda4997f2412d4ed1067a` ([Voyager](https://sepolia.voyager.online/contract/0x57902806d2d74d86e35d7329cda40122f80d4b4d7cdda4997f2412d4ed1067a))
+* **Dispatcher Wiring:** Updated `starknetPerpsDispatcher.ts` and `.env.local` to direct all live on-chain multi-calls to these deployed contract addresses via Cartridge RPC (`https://api.cartridge.gg/x/starknet/sepolia`).
+
+---
+
+## 📅 Wednesday, August 19, 2026 — 20:30:00 IST
+
+### ⚡ Sub-Second Oracle Streaming & Hyperliquid/Jupiter Top-Tier Terminal UI
+
+#### 🔴 [BIG CHANGE] — Sub-Second 800ms Pragma & Binance Oracle Streaming
+* **Description:** Optimized `pragmaOracleService.ts` and `PerpsTab.tsx` polling down to **800ms** with reactive green/red micro-tick price animations on mark/index prices.
+* **Top Strip Telemetry:** Added 24h High/Low, 1h Funding Rate with countdown timer, 24h Volume, and STARK Verification indicators.
+
+#### 🔴 [BIG CHANGE] — Hyperliquid & Jupiter Perps UI Overhaul
+* **Pro Order Entry Form:** Integrated order type tabs (`Market`, `Limit`, `Stop Market`), vibrant Long/Short switches, and STRK20 Shielded Collateral quick-fill presets (`25%`, `50%`, `75%`, `MAX`).
+* **Dynamic Risk & Liquidation Indicator:** Real-time distance-to-liquidation percentage display (`🟢 Safe` vs `⚠️ High Risk`).
+* **Cryptographic Order Book (`LiveOrderBook.tsx`):** Real-time bid/ask depth visualization, spread metrics, and live anonymous trades feed.
+* **On-Chain Execution Modal (`OnChainExecutionModal.tsx`):** Institutional 3-step live lifecycle tracker (`1. ZK Witness Synthesis` &rarr; `2. Sepolia Multi-call Dispatch` &rarr; `3. Voyager Block Confirmation`).
+* **Shareable PnL Performance Card (`SharePnlModal.tsx`):** 1-click graphic card export with radial ambient glow, ROI percentage, and 1-click Twitter copy action.
+* **Partial Position Settlements:** Added support for `50%` take-profit and `100% MARKET CLOSE`.
+* **Testing & Build Verification:** 28/28 Unit tests passing (`vitest run`), 0 TypeScript errors (`tsc --noEmit`), and clean Next.js 15 production build (`next build`).
+
+
 
 
 
