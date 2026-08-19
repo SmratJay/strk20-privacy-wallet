@@ -129,6 +129,65 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
+   * Builds the call to PELPerpsCore.update_position
+   */
+  buildUpdatePositionCall(
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    oldCommitment: string,
+    oldNullifier: string,
+    newCommitment: string,
+    factHash: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    const marketFelt = this.marketToFelt(marketId);
+
+    return {
+      contractAddress: config.pelCoreAddress,
+      entrypoint: 'update_position',
+      calldata: [
+        marketFelt,
+        oldCommitment,
+        oldNullifier,
+        newCommitment,
+        factHash,
+      ],
+    };
+  }
+
+  /**
+   * Builds the call to PELPerpsCore.fund_position
+   */
+  buildFundPositionCall(
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    commitment: string,
+    oldNullifier: string,
+    newCommitment: string,
+    fundingAmountCents: bigint,
+    isLongPays: boolean,
+    factHash: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    const marketFelt = this.marketToFelt(marketId);
+
+    return {
+      contractAddress: config.pelCoreAddress,
+      entrypoint: 'fund_position',
+      calldata: [
+        marketFelt,
+        commitment,
+        oldNullifier,
+        newCommitment,
+        '0x' + fundingAmountCents.toString(16),
+        isLongPays ? '0x1' : '0x0',
+        factHash,
+      ],
+    };
+  }
+
+
+  /**
    * Execute real on-chain transaction via connected Starknet browser wallet or server relayer
    */
   async executeOnChain(

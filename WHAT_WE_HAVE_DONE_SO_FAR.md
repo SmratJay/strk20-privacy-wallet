@@ -466,7 +466,33 @@
   * **On-Chain State Deactivated:** `is_active = false`.
   * **On-Chain Payout Note Registered:** Commitment `0x17cb...` verified with exact value **$125.50** (`0x3106`) in `STRK20Adapter`.
 
+## 📅 Thursday, August 20, 2026 — 00:55:00 IST
 
+### 🏆 Complete Execution of PEL BTC-PERP Master Implementation Specification
 
-
-
+#### 🔴 [BIG CHANGE] — Protocol Hardening, Cryptographic Upgrades & State Machine V2
+* **Canonical Protocol Types & Domain Tags (`src/protocol/types.ts`):**
+  * Created `PrivatePositionState`, `BTC_PERP_CONFIG`, `CALLDATA_SCHEMAS`, `DOMAIN_SEPARATOR`, `NULLIFIER_TAG`, `STWO_FACT_TAG`, and fixed-point scales (`PRICE_SCALE=100n`, `QTY_SCALE=1e8n`, `BPS_SCALE=10000n`).
+* **Canonical Fixed-Point Math Library (`src/protocol/fixedPoint.ts`):**
+  * Implemented pure BigInt integer arithmetic with floor division: `calcPnlCents`, `calcEquityCents`, `calcMaintMarginCents`, `calcNotionalCents`, `calcFundingCentsPerInterval`, `calcTakerFeeCents`, `validateLeverage`, `validatePriceDeviation`.
+  * Zero floating-point operations in protocol-critical execution path.
+* **Breaking Cryptographic Fix (B1 Fix — Side in Commitment):**
+  * `zkProverService.computePositionCommitment` now binds `side` (`'LONG'` / `'SHORT'`), `quantitySats`, `entryPriceCents`, `marginCents`, `fundingCents`, `nonce`, and `ownerSecret`.
+  * Prevents side-swapping attacks where LONG and SHORT had identical commitments.
+* **Encrypted Witness Persistence (`src/protocol/witnessStore.ts`):**
+  * Browser crash resilience: stores `PrivatePositionState` encrypted with AES-GCM (wallet-derived key) or BigInt JSON fallback.
+  * User-facing `exportWitnesses` and `importWitnesses` recovery utilities.
+* **Cairo Contracts State Machine V2 (`contracts/`):**
+  * `types.cairo`: Extended `MarketConfig` with fees, funding rates, config version (`config_version = 2`).
+  * `pel_perps_core.cairo`: Added `fund_position` entrypoint, B5 fix (`assert(old_pos.market_id == market_id)`), bad-debt handling, and insurance fund contribution on close.
+  * `strk20_adapter.cairo`: Added `collect_funding_payment` and `collect_insurance_contribution`.
+  * Cairo compilation: `scarb build` compiled cleanly with 0 errors / 0 warnings.
+* **Dispatcher & Relayer Expansion (`starknetPerpsDispatcher.ts`):**
+  * Added `buildUpdatePositionCall` and `buildFundPositionCall`.
+* **Adversarial & Invariant Test Suite (102/102 Tests Passing — 100% Green):**
+  * `tests/adversarial/attackVectors.test.ts`: 15 adversarial attack vectors passing (wrong side, quantity tamper, margin tamper, entry price tamper, replay nullifier, replay close, fake payout, stale oracle, excessive leverage, invalid execution price, healthy liquidation, cross-market swap, old config version, zero margin, localStorage tampering).
+  * `tests/invariants/assetConservation.test.ts`: 14 mathematical conservation invariants verified.
+  * `tests/e2e/fullLifecycle.test.ts`: End-to-end OPEN &rarr; UPDATE &rarr; FUND &rarr; CLOSE state transitions verified.
+  * `tests/e2e/liquidationPath.test.ts`: End-to-end liquidation, keeper detection, and 2% bounty / 98% insurance split verified.
+  * Total test surface: **9 test suites, 102/102 tests passing**.
+  * Production build: **Next.js 15.5 compiled with 0 errors**.

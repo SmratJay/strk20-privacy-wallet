@@ -8,7 +8,16 @@ import { zkProverService } from './zkProverService';
 import { pragmaOracleService } from './pragmaOracleService';
 import { perpsService, PerpPosition } from './perpsService';
 import { starknetPerpsDispatcher } from './starknetPerpsDispatcher';
-import { hash } from 'starknet';
+import {
+  calcPnlCents,
+  calcEquityCents,
+  calcMaintMarginCents,
+  calcFundingCentsPerInterval,
+  isLiquidatable,
+  usdToCents,
+  tokensToSats,
+} from '../protocol/fixedPoint';
+import { BTC_PERP_CONFIG } from '../protocol/types';
 
 export interface LiquidationCandidate {
   position: PerpPosition;
@@ -35,7 +44,7 @@ class KeeperService {
 
   /**
    * Scan active on-chain positions directly from Starknet
-   * Invariant (P1-07, Workstream H): Discovers position state from on-chain PEL contract.
+   * Invariant: Discovers position state from on-chain PEL contract.
    */
   async scanOnChainPositions(knownPositions: PerpPosition[] = []): Promise<LiquidationCandidate[]> {
     const candidates: LiquidationCandidate[] = [];
@@ -57,49 +66,45 @@ class KeeperService {
         const feed = await pragmaOracleService.getMarketPrice(pair as any);
         const currentPrice = feed.priceUsd;
 
-        const pnlUsd = zkProverService.evaluatePnLCircuit(pos.side, pos.sizeTokens, pos.entryPrice, currentPrice);
-        const fundingUsd = zkProverService.evaluateFundingCircuit(pos.sizeTokens, currentPrice, 0.0012, 1);
+        const quantitySats    = tokensToSats(pos.sizeTokens);
+        const entryPriceCents = usdToCents(pos.entryPrice);
+        const currentPriceCents = usdToCents(currentPrice);
+        const marginCents     = usdToCents(pos.marginUsd);
 
         const market = perpsService.getMarket(pos.marketId);
-        const maintPct = market?.maintenanceMarginPct || 0.02;
+        const maintBps = BigInt(Math.floor((market?.maintenanceMarginPct || 0.02) * 10000));
 
-        const { isSolvent, equityUsd, maintenanceMarginUsd } = zkProverService.evaluateSolvencyCircuit(
-          pos.marginUsd,
-          pnlUsd,
-          fundingUsd,
-          0,
-          pos.sizeTokens,
-          currentPrice,
-          maintPct
+        const pnlCents = calcPnlCents(pos.side, quantitySats, entryPriceCents, currentPriceCents);
+        const fundingCents = calcFundingCentsPerInterval(quantitySats, currentPriceCents, 12n, 1n);
+        const equityCents = calcEquityCents(marginCents, pnlCents, fundingCents, 0n);
+        const maintMarginCents = calcMaintMarginCents(quantitySats, currentPriceCents, maintBps);
+
+        const eligible = isLiquidatable(
+          marginCents,
+          pnlCents,
+          fundingCents,
+          0n,
+          quantitySats,
+          currentPriceCents,
+          maintBps
         );
 
-        if (!isSolvent) {
-          const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
-          const liqProofTypeFelt = '0x' + Buffer.from('LIQUIDATE').toString('hex');
-          const marketFelt = '0x' + Buffer.from(pos.marketId).toString('hex');
-          const oraclePriceFelt = '0x' + Math.floor(currentPrice * 100).toString(16);
-          const marginCentsFelt = '0x' + Math.floor(pos.marginUsd * 100).toString(16);
-
-          const liqPublicInputsHash = hash.computePoseidonHashOnElements([
-            liqProofTypeFelt,
-            marketFelt,
+        if (eligible) {
+          const fact = zkProverService.buildFact(
+            'LIQUIDATE',
+            pos.marketId,
             pos.zkCommitment,
             pos.nullifier,
-            marginCentsFelt,
-            oraclePriceFelt,
-          ]);
-
-          const factHash = hash.computePoseidonHashOnElements([
-            liqPublicInputsHash,
-            STWO_TAG,
-          ]);
+            marginCents,
+            currentPriceCents
+          );
 
           candidates.push({
             position: pos,
-            equityUsd: Number(equityUsd.toFixed(2)),
-            maintenanceMarginUsd: Number(maintenanceMarginUsd.toFixed(2)),
+            equityUsd: Number(equityCents) / 100,
+            maintenanceMarginUsd: Number(maintMarginCents) / 100,
             isLiquidatable: true,
-            factHash,
+            factHash: fact.factHash,
             bountyEstimatedUsd: Number((pos.marginUsd * 0.02).toFixed(2)), // 2% protocol keeper bounty
           });
         }

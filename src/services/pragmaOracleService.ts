@@ -94,6 +94,17 @@ class PragmaOracleService {
       };
     }
   }
+
+  /**
+   * Get price in integer cents (USD * 100) as BigInt for canonical protocol math
+   */
+  async getOraclePriceCents(
+    pair: 'BTC/USD' | 'ETH/USD' | 'STRK/USD' = 'BTC/USD',
+    network: 'mainnet' | 'sepolia' = 'sepolia'
+  ): Promise<bigint> {
+    const feed = await this.getMarketPrice(pair, network);
+    return BigInt(Math.floor(feed.priceUsd * 100));
+  }
 }
 
 export const pragmaOracleService = new PragmaOracleService();

@@ -12,6 +12,10 @@ pub trait ISTRK20Adapter<TContractState> {
         bounty_amount: u128,
         remaining_amount: u128,
     );
+    // Called by fund_position: funding payment deducted from position margin
+    fn collect_funding_payment(ref self: TContractState, nullifier: felt252, amount: u128, is_long_pays: bool);
+    // Called by close_position: loss on losing trade credited to insurance fund
+    fn collect_insurance_contribution(ref self: TContractState, nullifier: felt252, amount: u128);
     fn claim_keeper_bounty(ref self: TContractState, payout_note_commitment: felt252);
     fn get_keeper_bounty_balance(self: @TContractState, keeper: ContractAddress) -> u128;
     fn get_insurance_fund_balance(self: @TContractState) -> u128;
@@ -20,6 +24,7 @@ pub trait ISTRK20Adapter<TContractState> {
     fn get_total_locked_collateral(self: @TContractState) -> u128;
     fn is_margin_nullifier_used(self: @TContractState, nullifier: felt252) -> bool;
 }
+
 
 #[starknet::contract]
 pub mod STRK20Adapter {
@@ -157,6 +162,30 @@ pub mod STRK20Adapter {
             });
         }
 
+        // Called by PELPerpsCore.fund_position
+        // Decrements total_locked_collateral and routes to insurance fund as a transfer accounting entry
+        fn collect_funding_payment(ref self: ContractState, nullifier: felt252, amount: u128, is_long_pays: bool) {
+            let caller = get_caller_address();
+            assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
+            // The locked_margin was already decremented in pel_perps_core.fund_position (new_margin = old - funding)
+            // Here we record the insurance fund credit (counterparty payment)
+            let current_fund = self.insurance_fund_balance.read();
+            self.insurance_fund_balance.write(current_fund + amount);
+            // Note: In a full implementation this would route to the counterparty short/long pool.
+            // For V1 single-market isolated margin, funding flows to/from the insurance fund.
+            let _ = is_long_pays; // direction recorded in event only
+        }
+
+        // Called by PELPerpsCore.close_position when payout < locked_margin
+        // Credits the loss (losing trade margin residual) to the insurance fund
+        fn collect_insurance_contribution(ref self: ContractState, nullifier: felt252, amount: u128) {
+            let caller = get_caller_address();
+            assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
+            let current_fund = self.insurance_fund_balance.read();
+            self.insurance_fund_balance.write(current_fund + amount);
+            let _ = nullifier; // nullifier tracked for audit trail via pel_perps_core events
+        }
+
         fn claim_keeper_bounty(ref self: ContractState, payout_note_commitment: felt252) {
             let caller = get_caller_address();
             let amount = self.keeper_bounties.read(caller);
@@ -173,6 +202,7 @@ pub mod STRK20Adapter {
                 amount,
             });
         }
+
 
         fn get_keeper_bounty_balance(self: @ContractState, keeper: ContractAddress) -> u128 {
             self.keeper_bounties.read(keeper)

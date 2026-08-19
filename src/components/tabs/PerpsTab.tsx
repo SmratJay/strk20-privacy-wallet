@@ -27,10 +27,12 @@ import {
   Flame
 } from 'lucide-react';
 import { perpsService, PerpMarket, PerpPosition } from '@/services/perpsService';
+import { zkProverService } from '@/services/zkProverService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
+import { loadWitness, deleteWitness, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
 import { InteractivePerpChart } from '../terminal/InteractivePerpChart';
 import { LiveOrderBook } from '../terminal/LiveOrderBook';
@@ -337,45 +339,33 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     ]);
 
     try {
-      const payoutAmountUsd = Math.max(0, (targetPos.marginUsd + targetPos.unrealizedPnlUsd) * partialPct);
+      let payoutNoteCommitment: string;
+      let finalNullifier: string;
+      let closeFactHash: string;
+      let payoutAmountUsd: number;
 
-      // Step 1: Generate closing witness and fact hash
-      const { hash } = await import('starknet');
-      const NULLIFIER_TAG = '0x4e554c4c49464945525f5441473a5631';
-      const POSITION_TAG = '0x504f534954494f4e5f5441473a5631';
-      const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
+      // Step 1: Check if canonical witness is in witnessStore
+      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment);
+      const currentPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
 
-      const finalNullifier = hash.computePoseidonHashOnElements([
-        NULLIFIER_TAG,
-        targetPos.zkCommitment,
-        '0x1234c105e',
-      ]);
-
-      const payoutAmountFelt = '0x' + Math.floor(payoutAmountUsd * 100).toString(16);
-      const payoutNoteCommitment = hash.computePoseidonHashOnElements([
-        POSITION_TAG,
-        effectiveAddress,
-        payoutAmountFelt,
-        '0x9999ba4e',
-      ]);
-
-      const closeProofTypeFelt = '0x' + Buffer.from('CLOSE').toString('hex');
-      const marketFelt = '0x' + Buffer.from(targetPos.marketId).toString('hex');
-      const oraclePriceFelt = '0x' + Math.floor(currentMarket.markPrice * 100).toString(16);
-
-      const closePublicInputsHash = hash.computePoseidonHashOnElements([
-        closeProofTypeFelt,
-        marketFelt,
-        payoutNoteCommitment,
-        finalNullifier,
-        payoutAmountFelt,
-        oraclePriceFelt,
-      ]);
-
-      const closeFactHash = hash.computePoseidonHashOnElements([
-        closePublicInputsHash,
-        STWO_TAG,
-      ]);
+      if (witness) {
+        const closeFact = zkProverService.generateCloseFact(witness, currentPriceCents, currentPriceCents);
+        payoutNoteCommitment = closeFact.payoutNoteCommitment;
+        finalNullifier = closeFact.fact.nullifier;
+        closeFactHash = closeFact.fact.factHash;
+        payoutAmountUsd = (Number(closeFact.payoutCents) / 100) * partialPct;
+      } else {
+        const pnlUsd = zkProverService.evaluatePnLCircuit(targetPos.side, targetPos.sizeTokens, targetPos.entryPrice, currentMarket.markPrice);
+        payoutAmountUsd = Math.max(0, (targetPos.marginUsd + pnlUsd) * partialPct);
+        const payoutCents = BigInt(Math.floor(payoutAmountUsd * 100));
+        finalNullifier = zkProverService.computeNullifier(effectiveAddress, targetPos.zkCommitment);
+        payoutNoteCommitment = zkProverService.computePositionCommitment(
+          effectiveAddress, targetPos.marketId, targetPos.side,
+          0n, 0n, payoutCents, 0n, '0x09999ba4e'
+        );
+        const fact = zkProverService.buildFact('CLOSE', targetPos.marketId, payoutNoteCommitment, finalNullifier, payoutCents, currentPriceCents);
+        closeFactHash = fact.factHash;
+      }
 
       setModalSteps((prev) => [
         { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${(targetPos.unrealizedPnlUsd * partialPct).toFixed(2)}` },
@@ -420,6 +410,9 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         BigInt(Math.floor(payoutAmountUsd * 1e6)),
         executionRes.transactionHash
       );
+
+      // Clean up witness after consumption
+      deleteWitness(effectiveAddress, targetPos.zkCommitment);
 
       const closed = perpsService.closePosition(effectiveAddress, positionId);
       if (closed) {

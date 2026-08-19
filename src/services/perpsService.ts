@@ -6,6 +6,9 @@
 
 import { zkProverService, STARKProofResult, PositionWitness } from './zkProverService';
 import { pragmaOracleService } from './pragmaOracleService';
+import { tokensToSats, usdToCents } from '../protocol/fixedPoint';
+import { saveWitness, loadWitness, deleteWitness } from '../protocol/witnessStore';
+import { PrivatePositionState } from '../protocol/types';
 
 export interface PerpMarket {
   id: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP';
@@ -38,83 +41,114 @@ export interface PerpPosition {
   zkCommitment: string;          // CP = H(domain, owner, market, q, e, m, nonce)
   nullifier: string;             // NF = H(NULLIFIER_TAG, commitment, nonce)
   starkFactHash: string;         // SNIP-36 STARK Fact Hash
-  publicInputsHash: string;      // Public inputs hash
-  proofStatus: 'POSEIDON_FACT_VALID' | 'PENDING' | 'FAILED';
+  publicInputsHash: string;
+  proofStatus: string;
   status: 'OPEN' | 'CLOSED' | 'LIQUIDATED';
 }
 
-const DEFAULT_MARKETS: PerpMarket[] = [
-  {
-    id: 'BTC-PERP',
-    baseAsset: 'BTC',
-    quoteAsset: 'USD',
-    markPrice: 96420.50,
-    indexPrice: 96415.00,
-    change24hPct: 2.85,
-    volume24hUsd: 142500000,
-    openInterestUsd: 85200000,
-    fundingRate1hPct: 0.0012,
-    maxLeverage: 50,
-    maintenanceMarginPct: 0.02,
-  },
-  {
-    id: 'ETH-PERP',
-    baseAsset: 'ETH',
-    quoteAsset: 'USD',
-    markPrice: 3418.75,
-    indexPrice: 3416.50,
-    change24hPct: -1.20,
-    volume24hUsd: 89400000,
-    openInterestUsd: 41200000,
-    fundingRate1hPct: 0.0008,
-    maxLeverage: 50,
-    maintenanceMarginPct: 0.025,
-  },
-  {
-    id: 'STRK-PERP',
-    baseAsset: 'STRK',
-    quoteAsset: 'USD',
-    markPrice: 0.584,
-    indexPrice: 0.583,
-    change24hPct: 8.45,
-    volume24hUsd: 32100000,
-    openInterestUsd: 12400000,
-    fundingRate1hPct: 0.0018,
-    maxLeverage: 25,
-    maintenanceMarginPct: 0.04,
-  },
-];
-
 class PerpsService {
-  private markets: PerpMarket[] = DEFAULT_MARKETS;
+  private markets: Map<string, PerpMarket> = new Map();
 
-  getMarkets(): PerpMarket[] {
-    return this.markets;
+  constructor() {
+    this.initMarkets();
   }
 
-  getMarket(id: string): PerpMarket | undefined {
-    return this.markets.find((m) => m.id === id);
+  private initMarkets() {
+    this.markets.set('BTC-PERP', {
+      id: 'BTC-PERP',
+      baseAsset: 'BTC',
+      quoteAsset: 'USDC',
+      markPrice: 96420.50,
+      indexPrice: 96415.00,
+      change24hPct: 2.84,
+      volume24hUsd: 148200000,
+      openInterestUsd: 42100000,
+      fundingRate1hPct: 0.0012,
+      maxLeverage: 50,
+      maintenanceMarginPct: 0.02,
+    });
+
+    this.markets.set('ETH-PERP', {
+      id: 'ETH-PERP',
+      baseAsset: 'ETH',
+      quoteAsset: 'USDC',
+      markPrice: 2840.10,
+      indexPrice: 2839.80,
+      change24hPct: -0.95,
+      volume24hUsd: 89400000,
+      openInterestUsd: 28500000,
+      fundingRate1hPct: 0.0008,
+      maxLeverage: 25,
+      maintenanceMarginPct: 0.03,
+    });
+
+    this.markets.set('STRK-PERP', {
+      id: 'STRK-PERP',
+      baseAsset: 'STRK',
+      quoteAsset: 'USDC',
+      markPrice: 0.485,
+      indexPrice: 0.4848,
+      change24hPct: 5.12,
+      volume24hUsd: 18200000,
+      openInterestUsd: 6400000,
+      fundingRate1hPct: 0.0025,
+      maxLeverage: 20,
+      maintenanceMarginPct: 0.05,
+    });
+  }
+
+  getMarkets(): PerpMarket[] {
+    return Array.from(this.markets.values());
+  }
+
+  getMarket(marketId: string): PerpMarket | undefined {
+    return this.markets.get(marketId);
+  }
+
+  updateMarkPrice(marketId: string, price: number) {
+    const market = this.markets.get(marketId);
+    if (market) {
+      market.markPrice = price;
+      this.markets.set(marketId, market);
+    }
   }
 
   updateMarketPrice(
-    id: string,
+    marketId: string,
     markPrice: number,
     change24hPct?: number,
     volume24hUsd?: number
   ): void {
-    const market = this.markets.find((m) => m.id === id);
+    const market = this.markets.get(marketId);
     if (market && markPrice > 0) {
       market.markPrice = markPrice;
       market.indexPrice = markPrice * 0.9998;
       if (change24hPct !== undefined) market.change24hPct = change24hPct;
       if (volume24hUsd !== undefined) market.volume24hUsd = volume24hUsd;
+      this.markets.set(marketId, market);
     }
   }
 
   /**
-   * Calculate Liquidation Price according to Section 7.1 & A.6:
-   * Long: EntryPrice * (1 - 1/leverage + maintenanceMarginPct)
-   * Short: EntryPrice * (1 + 1/leverage - maintenanceMarginPct)
+   * Computes PnL for a position without revealing exact entry price publicly
+   */
+  calculatePnl(
+    side: 'LONG' | 'SHORT',
+    sizeTokens: number,
+    entryPrice: number,
+    currentPrice: number
+  ): { pnlUsd: number; pnlPct: number } {
+    const pnlUsd = zkProverService.evaluatePnLCircuit(side, sizeTokens, entryPrice, currentPrice);
+    const notionalAtEntry = sizeTokens * entryPrice;
+    const pnlPct = notionalAtEntry > 0 ? (pnlUsd / notionalAtEntry) * 100 : 0;
+    return { pnlUsd, pnlPct };
+  }
+
+  /**
+   * Calculate Liquidation Price based on maintenance margin requirements
+   * Formula:
+   * LONG:  LiqPrice = EntryPrice * (1 - 1/leverage + maintenanceMarginPct)
+   * SHORT: LiqPrice = EntryPrice * (1 + 1/leverage - maintenanceMarginPct)
    */
   calculateLiquidationPrice(
     entryPrice: number,
@@ -131,37 +165,27 @@ class PerpsService {
   }
 
   /**
-   * Calculate PnL (Section 7.1):
-   * Long: q * (Pt - e)
-   * Short: q * (e - Pt)
+   * Computes the private ZK Position Commitment Hash
    */
-  calculatePnl(
-    side: 'LONG' | 'SHORT',
-    sizeTokens: number,
-    entryPrice: number,
-    currentPrice: number
-  ): { pnlUsd: number; pnlPct: number } {
-    const pnlUsd = zkProverService.evaluatePnLCircuit(side, sizeTokens, entryPrice, currentPrice);
-    const initialMargin = sizeTokens * entryPrice;
-    const pnlPct = initialMargin > 0 ? (pnlUsd / initialMargin) * 100 : 0;
-    return { pnlUsd, pnlPct };
-  }
-
   generatePositionCommitment(
     ownerAddress: string,
     marketId: string,
     notional: number,
     entryPrice: number,
     margin: number,
-    nonce: string = '0x1234'
+    nonce: string = '0x1234',
+    side: 'LONG' | 'SHORT' = 'LONG',
   ): string {
+    const sizeTokens = entryPrice > 0 ? notional / entryPrice : 0;
     return zkProverService.computePositionCommitment(
       ownerAddress,
       marketId,
-      notional,
-      entryPrice,
-      margin,
-      nonce
+      side,
+      tokensToSats(sizeTokens),
+      usdToCents(entryPrice),
+      usdToCents(margin),
+      0n,
+      nonce,
     );
   }
 

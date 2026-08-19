@@ -55,7 +55,7 @@ export const DualViewInspector: React.FC<DualViewInspectorProps> = ({ position, 
             <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <span>Dual-View Cryptographic Verifier</span>
               <span className="text-[9px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                SNIP-36 STARK
+                Poseidon SNIP-36 Fact
               </span>
             </h3>
             <p className="text-[10px] text-zinc-500 uppercase">
@@ -187,10 +187,10 @@ export const DualViewInspector: React.FC<DualViewInspectorProps> = ({ position, 
             </div>
 
             <div className="flex justify-between items-center py-1 border-b border-zinc-900">
-              <span className="text-zinc-500 uppercase">STARK Proof Status:</span>
+              <span className="text-zinc-500 uppercase">Fact Verification Status:</span>
               <span className="font-bold text-purple-300 flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
-                STARK_VALID [SNIP-36]
+                POSEIDON_SNIP36_VALID
               </span>
             </div>
 
