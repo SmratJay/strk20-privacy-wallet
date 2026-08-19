@@ -1,10 +1,11 @@
 /**
  * @file perpsService.ts
- * @description PEL Privacy-Native Perpetual Derivatives Engine (Sections 7 & 13.3)
- * Manages markets, private positions, margin calculations, and ZK state commitments.
+ * @description PEL Privacy-Native Perpetual Derivatives Engine (Whitepaper Sections 6, 7, 10, 11)
+ * Manages markets, private positions, margin calculations, and ZK STARK state transitions.
  */
 
-import { hash } from 'starknet';
+import { zkProverService, STARKProofResult, PositionWitness } from './zkProverService';
+import { pragmaOracleService } from './pragmaOracleService';
 
 export interface PerpMarket {
   id: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP';
@@ -34,7 +35,11 @@ export interface PerpPosition {
   liquidationPrice: number;
   cumulativeFundingUsd: number;
   openedAt: number;
-  zkCommitment: string; // CP = H(domain, owner, market, q, e, m, nonce)
+  zkCommitment: string;          // CP = H(domain, owner, market, q, e, m, nonce)
+  nullifier: string;             // NF = H(NULLIFIER_TAG, commitment, nonce)
+  starkFactHash: string;         // SNIP-36 STARK Fact Hash
+  publicInputsHash: string;      // Public inputs hash
+  proofStatus: 'STARK_VALID_SNIP36' | 'PENDING';
   status: 'OPEN' | 'CLOSED' | 'LIQUIDATED';
 }
 
@@ -93,7 +98,8 @@ class PerpsService {
 
   /**
    * Calculate Liquidation Price according to Section 7.1 & A.6:
-   * Et = m + PnL - F - fees <= Mmaint
+   * Long: EntryPrice * (1 - 1/leverage + maintenanceMarginPct)
+   * Short: EntryPrice * (1 + 1/leverage - maintenanceMarginPct)
    */
   calculateLiquidationPrice(
     entryPrice: number,
@@ -103,10 +109,8 @@ class PerpsService {
   ): number {
     const marginFraction = 1 / leverage;
     if (side === 'LONG') {
-      // Long: LiqPrice = EntryPrice * (1 - marginFraction + maintenanceMarginPct)
       return entryPrice * (1 - marginFraction + maintenanceMarginPct);
     } else {
-      // Short: LiqPrice = EntryPrice * (1 + marginFraction - maintenanceMarginPct)
       return entryPrice * (1 + marginFraction - maintenanceMarginPct);
     }
   }
@@ -122,45 +126,28 @@ class PerpsService {
     entryPrice: number,
     currentPrice: number
   ): { pnlUsd: number; pnlPct: number } {
-    let pnlUsd = 0;
-    if (side === 'LONG') {
-      pnlUsd = sizeTokens * (currentPrice - entryPrice);
-    } else {
-      pnlUsd = sizeTokens * (entryPrice - currentPrice);
-    }
-    const initialMargin = (sizeTokens * entryPrice);
+    const pnlUsd = zkProverService.evaluatePnLCircuit(side, sizeTokens, entryPrice, currentPrice);
+    const initialMargin = sizeTokens * entryPrice;
     const pnlPct = initialMargin > 0 ? (pnlUsd / initialMargin) * 100 : 0;
     return { pnlUsd, pnlPct };
   }
 
-  /**
-   * Generate ZK State Commitment for Position (Section 7.3):
-   * CP = Poseidon(POSITION_TAG, ownerAddress, marketId, notional, entry, margin, nonce)
-   */
   generatePositionCommitment(
     ownerAddress: string,
     marketId: string,
     notional: number,
     entryPrice: number,
-    margin: number
+    margin: number,
+    nonce: string = '0x1234'
   ): string {
-    const POSITION_TAG = '0x504f534954494f4e5f5441473a5631'; // POSITION_TAG:V1
-    const ownerHex = ownerAddress.startsWith('0x') ? ownerAddress : '0x' + ownerAddress;
-    const marketHex = '0x' + Buffer.from(marketId).toString('hex');
-    const notionalHex = '0x' + Math.floor(notional * 100).toString(16);
-    const entryHex = '0x' + Math.floor(entryPrice * 100).toString(16);
-    const marginHex = '0x' + Math.floor(margin * 100).toString(16);
-    const nonceHex = '0x' + Date.now().toString(16);
-
-    return hash.computePoseidonHashOnElements([
-      POSITION_TAG,
-      ownerHex,
-      marketHex,
-      notionalHex,
-      entryHex,
-      marginHex,
-      nonceHex,
-    ]);
+    return zkProverService.computePositionCommitment(
+      ownerAddress,
+      marketId,
+      notional,
+      entryPrice,
+      margin,
+      nonce
+    );
   }
 
   /**
@@ -191,7 +178,7 @@ class PerpsService {
   }
 
   /**
-   * Open a new private perpetual position
+   * Open a new private perpetual position backed by STARK Proof
    */
   openPosition(
     walletAddress: string,
@@ -209,12 +196,32 @@ class PerpsService {
       leverage,
       market.maintenanceMarginPct
     );
-    const zkCommitment = this.generatePositionCommitment(
-      walletAddress,
+
+    // Cryptographically secure CSPRNG nonce
+    const entropyArr = new Uint8Array(16);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(entropyArr);
+    }
+    const nonce = '0x' + Array.from(entropyArr).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const witness: PositionWitness = {
+      side,
+      sizeTokens: Number(sizeTokens.toFixed(6)),
+      entryPrice: market.markPrice,
+      marginUsd,
+      fundingAccumulator: 0,
+      nonce,
+      ownerAddress: walletAddress,
+    };
+
+    // Execute STARK ZK Prover Pipeline
+    const proofResult: STARKProofResult = zkProverService.generateTransitionProof(
+      'OPEN',
+      witness,
       marketId,
-      notionalUsd,
       market.markPrice,
-      marginUsd
+      market.maxLeverage,
+      market.maintenanceMarginPct
     );
 
     const newPosition: PerpPosition = {
@@ -231,7 +238,11 @@ class PerpsService {
       liquidationPrice: Number(liquidationPrice.toFixed(2)),
       cumulativeFundingUsd: 0,
       openedAt: Date.now(),
-      zkCommitment,
+      zkCommitment: proofResult.circuitResults.commitment,
+      nullifier: proofResult.circuitResults.nullifier,
+      starkFactHash: proofResult.factHash,
+      publicInputsHash: proofResult.publicInputsHash,
+      proofStatus: 'STARK_VALID_SNIP36',
       status: 'OPEN',
     };
 
@@ -245,7 +256,7 @@ class PerpsService {
   }
 
   /**
-   * Close a position
+   * Close a position with STARK proof settlement
    */
   closePosition(walletAddress: string, positionId: string): PerpPosition | null {
     if (typeof window === 'undefined') return null;

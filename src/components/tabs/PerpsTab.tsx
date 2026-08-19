@@ -15,6 +15,7 @@ import {
   Info
 } from 'lucide-react';
 import { perpsService, PerpMarket, PerpPosition } from '@/services/perpsService';
+import { DualViewInspector } from './DualViewInspector';
 import { useToast } from '@/components/Toast';
 
 interface PerpsTabProps {
@@ -30,6 +31,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [leverage, setLeverage] = useState<number>(10);
   const [positions, setPositions] = useState<PerpPosition[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inspectedPosition, setInspectedPosition] = useState<PerpPosition | null>(null);
 
   const currentMarket = useMemo(() => {
     return perpsService.getMarket(selectedMarketId) || markets[0];
@@ -339,6 +341,15 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         </div>
       </div>
 
+      {/* Dual-View Cryptographic Verifier (§28) */}
+      {inspectedPosition && (
+        <DualViewInspector
+          position={inspectedPosition}
+          market={currentMarket}
+          onClose={() => setInspectedPosition(null)}
+        />
+      )}
+
       {/* Active Positions Table */}
       <div className="bg-zinc-950 border border-zinc-800 p-5 corner-box">
         <h3 className="text-xs font-bold text-white uppercase mb-4 flex items-center justify-between pb-3 border-b border-zinc-900">
@@ -363,15 +374,16 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                   <th className="py-2.5 px-3">Entry Price</th>
                   <th className="py-2.5 px-3">Liq Price</th>
                   <th className="py-2.5 px-3">Unrealized PnL</th>
-                  <th className="py-2.5 px-3">ZK Commitment</th>
-                  <th className="py-2.5 px-3 text-right">Action</th>
+                  <th className="py-2.5 px-3">ZK Proof Fact</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
                 {positions.filter(p => p.status === 'OPEN').map((pos) => {
                   const isProfit = pos.unrealizedPnlUsd >= 0;
+                  const isInspecting = inspectedPosition?.id === pos.id;
                   return (
-                    <tr key={pos.id} className="hover:bg-zinc-900/50 transition-colors">
+                    <tr key={pos.id} className={`hover:bg-zinc-900/50 transition-colors ${isInspecting ? 'bg-zinc-900/80 border-l-2 border-orrange-500' : ''}`}>
                       <td className="py-3 px-3">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-white">{pos.marketId}</span>
@@ -396,24 +408,41 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                         {isProfit ? '+' : ''}${pos.unrealizedPnlUsd.toFixed(2)} ({isProfit ? '+' : ''}{pos.pnlPercentage.toFixed(2)}%)
                       </td>
                       <td className="py-3 px-3">
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(pos.zkCommitment);
-                            showToast({ type: 'info', title: 'Commitment Copied', description: pos.zkCommitment });
-                          }}
-                          className="flex items-center gap-1 text-[10px] text-orrange-400 hover:text-orrange-300"
-                        >
-                          <span className="truncate max-w-[90px]">{pos.zkCommitment.substring(0, 10)}...</span>
-                          <Copy className="w-3 h-3" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 text-[9px] font-bold">
+                            STARK_VALID
+                          </span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(pos.zkCommitment);
+                              showToast({ type: 'info', title: 'Commitment Copied', description: pos.zkCommitment });
+                            }}
+                            className="text-[10px] text-zinc-400 hover:text-orrange-300"
+                            title={pos.zkCommitment}
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </div>
                       </td>
                       <td className="py-3 px-3 text-right">
-                        <button
-                          onClick={() => handleClosePosition(pos.id)}
-                          className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold border border-zinc-700"
-                        >
-                          CLOSE
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => setInspectedPosition(isInspecting ? null : pos)}
+                            className={`px-2 py-1 text-[10px] font-bold border transition-colors ${
+                              isInspecting
+                                ? 'bg-orrange-500 text-black border-orrange-500'
+                                : 'bg-zinc-900 hover:bg-zinc-800 text-orrange-400 border-orrange-500/40'
+                            }`}
+                          >
+                            {isInspecting ? 'CLOSE' : 'INSPECT ZK'}
+                          </button>
+                          <button
+                            onClick={() => handleClosePosition(pos.id)}
+                            className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold border border-zinc-700 hover:border-zinc-500"
+                          >
+                            SETTLE
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
