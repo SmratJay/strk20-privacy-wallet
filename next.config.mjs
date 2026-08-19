@@ -9,13 +9,25 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react'],
   },
-  webpack: (config) => {
+  async redirects() {
+    return [
+      {
+        source: '/app',
+        destination: '/terminal',
+        permanent: true,
+      },
+    ];
+  },
+  webpack: (config, { dev }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
       net: false,
       tls: false,
     };
+    if (dev) {
+      config.cache = false;
+    }
     return config;
   },
 };
