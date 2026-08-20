@@ -530,3 +530,46 @@
   * `PERPS_SECURITY_MODEL.md`: Threat analysis, attack vector defenses, and bad debt waterfall mechanics.
   * `PERPS_TESTNET_RUNBOOK.md`: Step-by-step testnet operator runbook with Sepolia contract addresses.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 12:05:00 IST
+
+### 💎 V4 Master Protocol Hardening — Real ERC20 Collateral Custody, Fact Registry Architecture, and Complete 33-Point Audit Remediation
+
+#### 🔴 [BIG CHANGE] — Real ERC20 Token Flow, Zero Client-Side Fact Forgery, FactRegistry Enforcement, and Honest UI Boundaries
+* **Real ERC20 Custody Layer (`contracts/src/strk20_adapter.cairo` V4 & `contracts/src/test_usdc.cairo`):**
+  * `lock_shielded_margin`: Executes real `IERC20.transfer_from(caller, adapter, amount)` to pull actual collateral tokens into the adapter contract upon position open.
+  * `claim_payout`: Executes real `IERC20.transfer(recipient, amount)` to push collateral tokens back to user on settlement claim.
+  * `claim_keeper_bounty`: Executes real `IERC20.transfer(keeper, bounty)` to pay keepers actual token bounties.
+  * `deposit_insurance_liquidity`: Executes real `IERC20.transfer_from(caller, adapter, amount)` to fund protocol backstop reserve with real tokens.
+  * Added `test_usdc.cairo` minimal 6-decimal ERC20 contract with public `mint()` for testnet verification.
+* **Fact Registry & Elimination of Client-Side Forgery (`contracts/src/stwo_verifier.cairo` V4):**
+  * Completely removed the Poseidon recomputation fallback (`fact_hash == compute_public_inputs_hash(...)`).
+  * Converted to strict **Register-Then-Verify** model: Only pre-registered facts authorized by the prover network (`verified_facts[fact_hash] == true`) can execute state transitions.
+  * Fact registration restricted to authorized prover address (`prover_address`) or protocol admin.
+* **Bounded Payouts & Protocol Invariants (`contracts/src/pel_perps_core.cairo` V4):**
+  * Enforced payout ceiling in `close_position`: `assert(payout_amount <= pos.locked_margin, 'PAYOUT_EXCEEDS_LOCKED_MARGIN')` to eliminate payout inflation attacks.
+  * Confirmed all 5 state transitions (`open_position`, `update_position`, `fund_position`, `liquidate_position`, `close_position`) enforce authentic fact registration.
+* **Oracle Adapter Cleanup (`contracts/src/oracle_adapter.cairo` V4):**
+  * Removed `set_test_price_TEST_ONLY` backdoor from production interface.
+  * Restricted initial market initialization to authentic `BTC-PERP` market.
+  * Enforced strict 180s staleness threshold.
+* **Dispatcher & Relayer Synchronization (`src/services/starknetPerpsDispatcher.ts` & `src/services/relayerSecurity.ts`):**
+  * Added `buildApproveCall`, `buildClaimPayoutCall`, `buildClaimKeeperBountyCall`, and `buildRegisterFactCall`.
+  * Fixed `fund_position` calldata schema to full 7-parameter signature including `is_long_pays`.
+  * Added all entrypoints (`update_position`, `fund_position`, `claim_payout`, `register_verified_fact`, `approve`) to relayer security allowlist.
+  * Created `src/services/factRegistryDispatcher.ts`.
+* **Zero-Lie Privacy & Vault Demotion (`src/services/privacyService.ts` & `src/services/vaultService.ts`):**
+  * Eliminated deceptive fallback paths in `executePrivateTransfer` and `executeUnshield` that previously executed plain public ERC20 transfers while labeling them "private". Now strictly requires STRK20 native privacy wallet.
+  * Demoted browser `localStorage` from financial authority to client-side encrypted witness/note cache.
+* **Single Market Focus (`src/services/perpsService.ts` & `src/components/tabs/PerpsTab.tsx`):**
+  * Removed fake unbacked markets (ETH-PERP, STRK-PERP) to focus exclusively on verified `BTC-PERP` market.
+* **122/122 Tests Passing across 13 Test Suites (100% Green):**
+  * Added `tests/collateralCustody.test.ts` (5 tests verifying real ERC20 pull/push, conservation invariant with partial loss, and liquidation waterfall).
+  * Added `tests/factRegistry.test.ts` (4 tests verifying register-then-verify model, forgery rejection, unauthorized registration rejection, and admin fallback).
+* **Build Verification:**
+  * `scarb build`: Compiled cleanly in 0s with 0 errors / 0 warnings.
+  * `npx vitest run`: 122/122 tests passing across 13 test files.
+  * `npm run build`: Next.js 15.5 production build successful with 0 errors.
+
+

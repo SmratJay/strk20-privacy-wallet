@@ -94,20 +94,10 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   // Load and sync live market prices from live market stream with 800ms fast polling!
   const syncOraclePrices = useCallback(async () => {
     try {
-      const [btcTicker, ethTicker, strkTicker] = await Promise.all([
-        liveMarketDataService.fetchLiveTicker('BTC-PERP'),
-        liveMarketDataService.fetchLiveTicker('ETH-PERP'),
-        liveMarketDataService.fetchLiveTicker('STRK-PERP'),
-      ]);
+      const btcTicker = await liveMarketDataService.fetchLiveTicker('BTC-PERP');
 
       if (btcTicker && btcTicker.price > 0) {
         perpsService.updateMarketPrice('BTC-PERP', btcTicker.price, btcTicker.change24h, btcTicker.volume24h);
-      }
-      if (ethTicker && ethTicker.price > 0) {
-        perpsService.updateMarketPrice('ETH-PERP', ethTicker.price, ethTicker.change24h, ethTicker.volume24h);
-      }
-      if (strkTicker && strkTicker.price > 0) {
-        perpsService.updateMarketPrice('STRK-PERP', strkTicker.price, strkTicker.change24h, strkTicker.volume24h);
       }
 
       const updatedMarkets = perpsService.getMarkets();

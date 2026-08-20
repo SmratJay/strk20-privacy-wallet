@@ -1,4 +1,10 @@
-// STRK20 Shielded Collateral Adapter V3 (Whitepaper Section 3.2 & 6)
+// STRK20 Shielded Collateral Adapter V4 (Real ERC20 Custody)
+// V4 changes: All financial operations now execute real ERC20 transfers.
+// lock_shielded_margin → transferFrom(caller, this, amount)
+// claim_payout → transfer(recipient, amount)
+// claim_keeper_bounty → transfer(keeper, bounty)
+// deposit_insurance_liquidity → transferFrom(caller, this, amount)
+
 use starknet::ContractAddress;
 
 #[starknet::interface]
@@ -12,9 +18,7 @@ pub trait ISTRK20Adapter<TContractState> {
         bounty_amount: u128,
         remaining_amount: u128,
     );
-    // Called by fund_position: funding payment deducted from position margin
     fn collect_funding_payment(ref self: TContractState, nullifier: felt252, amount: u128, is_long_pays: bool);
-    // Called by close_position: loss on losing trade credited to insurance fund
     fn collect_insurance_contribution(ref self: TContractState, nullifier: felt252, amount: u128);
     fn claim_payout(ref self: TContractState, recipient_note_commitment: felt252, recipient: ContractAddress);
     fn claim_keeper_bounty(ref self: TContractState, keeper_recipient: ContractAddress);
@@ -26,6 +30,7 @@ pub trait ISTRK20Adapter<TContractState> {
     fn set_pel_core_address(ref self: TContractState, pel_core: ContractAddress);
     fn set_collateral_token(ref self: TContractState, token: ContractAddress);
     fn get_collateral_token(self: @TContractState) -> ContractAddress;
+    fn get_contract_token_balance(self: @TContractState) -> u256;
     fn get_total_locked_collateral(self: @TContractState) -> u128;
     fn is_margin_nullifier_used(self: @TContractState, nullifier: felt252) -> bool;
 }
@@ -33,7 +38,8 @@ pub trait ISTRK20Adapter<TContractState> {
 #[starknet::contract]
 pub mod STRK20Adapter {
     use super::ISTRK20Adapter;
-    use starknet::{ContractAddress, get_caller_address};
+    use super::super::test_usdc::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{
         StoragePointerReadAccess, StoragePointerWriteAccess,
         StorageMapReadAccess, StorageMapWriteAccess, Map
@@ -145,11 +151,25 @@ pub mod STRK20Adapter {
 
     #[abi(embed_v0)]
     impl STRK20AdapterImpl of ISTRK20Adapter<ContractState> {
+
+        // ─── LOCK MARGIN ─────────────────────────────────────────────────
+        // V4: Pulls real ERC20 tokens from the transaction sender.
+        // The sender (PELPerpsCore or user via multicall) must have
+        // called approve(adapter_address, amount) on the collateral token.
         fn lock_shielded_margin(ref self: ContractState, nullifier: felt252, amount: u128) {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
             assert(!self.used_margin_nullifiers.read(nullifier), 'MARGIN_NULLIFIER_ALREADY_USED');
             assert(amount > 0, 'INVALID_MARGIN_AMOUNT');
+
+            // V4: Pull real ERC20 tokens from the original transaction sender
+            // In a multicall, the caller is PELPerpsCore, but the tokens come
+            // from the user who approved the adapter. We use transfer_from(caller, this).
+            // The user must approve this contract before the multicall.
+            let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
+            let this_contract = get_contract_address();
+            let success = token.transfer_from(caller, this_contract, amount.into());
+            assert(success, 'ERC20_MARGIN_TRANSFER_FAILED');
 
             self.used_margin_nullifiers.write(nullifier, true);
             let current = self.total_locked_collateral.read();
@@ -158,6 +178,10 @@ pub mod STRK20Adapter {
             self.emit(MarginLocked { nullifier, amount });
         }
 
+        // ─── RELEASE PAYOUT ──────────────────────────────────────────────
+        // Called by PELPerpsCore on close_position.
+        // Registers a note commitment with an amount. Does NOT transfer yet.
+        // The user must call claim_payout to receive actual ERC20 tokens.
         fn release_shielded_payout(ref self: ContractState, recipient_note_commitment: felt252, amount: u128) {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
@@ -175,15 +199,28 @@ pub mod STRK20Adapter {
             self.emit(PayoutReleased { note_commitment: recipient_note_commitment, amount });
         }
 
+        // ─── CLAIM PAYOUT ────────────────────────────────────────────────
+        // V4: Transfers real ERC20 tokens to the recipient.
+        // Anyone with knowledge of the note commitment can claim.
         fn claim_payout(ref self: ContractState, recipient_note_commitment: felt252, recipient: ContractAddress) {
             let amount = self.registered_notes.read(recipient_note_commitment);
             assert(amount > 0, 'NOTE_NOT_FOUND_OR_EMPTY');
             assert(!self.claimed_notes.read(recipient_note_commitment), 'NOTE_ALREADY_CLAIMED');
 
             self.claimed_notes.write(recipient_note_commitment, true);
+
+            // V4: Push real ERC20 tokens to recipient
+            let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
+            let success = token.transfer(recipient, amount.into());
+            assert(success, 'ERC20_PAYOUT_TRANSFER_FAILED');
+
             self.emit(PayoutClaimed { note_commitment: recipient_note_commitment, recipient, amount });
         }
 
+        // ─── SEIZE LIQUIDATION COLLATERAL ────────────────────────────────
+        // Collateral stays in contract but is re-allocated:
+        // 2% → keeper bounty ledger, 98% → insurance fund.
+        // Keeper calls claim_keeper_bounty to withdraw their share.
         fn seize_liquidation_collateral(
             ref self: ContractState,
             nullifier: felt252,
@@ -222,7 +259,8 @@ pub mod STRK20Adapter {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
 
-            // Credit funding payment to the insurance / counterparty liquidity reserve
+            // Funding payments move collateral from locked → insurance fund
+            // Tokens stay in contract, only internal accounting changes
             let current_insurance = self.insurance_fund_balance.read();
             self.insurance_fund_balance.write(current_insurance + amount);
 
@@ -240,6 +278,8 @@ pub mod STRK20Adapter {
             }
         }
 
+        // ─── CLAIM KEEPER BOUNTY ─────────────────────────────────────────
+        // V4: Transfers real ERC20 tokens to the keeper.
         fn claim_keeper_bounty(ref self: ContractState, keeper_recipient: ContractAddress) {
             let caller = get_caller_address();
             assert(caller == keeper_recipient || caller == self.admin.read(), 'UNAUTHORIZED_KEEPER');
@@ -248,16 +288,33 @@ pub mod STRK20Adapter {
             assert(bounty > 0, 'NO_BOUNTY_AVAILABLE');
 
             self.keeper_bounties.write(keeper_recipient, 0);
+
+            // V4: Push real ERC20 tokens to keeper
+            let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
+            let success = token.transfer(keeper_recipient, bounty.into());
+            assert(success, 'ERC20_BOUNTY_TRANSFER_FAILED');
+
             self.emit(KeeperBountyClaimed { keeper: keeper_recipient, amount: bounty });
         }
 
+        // ─── DEPOSIT INSURANCE LIQUIDITY ─────────────────────────────────
+        // V4: Pulls real ERC20 tokens from caller into insurance fund.
         fn deposit_insurance_liquidity(ref self: ContractState, amount: u128) {
             let caller = get_caller_address();
             assert(amount > 0, 'INVALID_DEPOSIT_AMOUNT');
+
+            // V4: Pull real ERC20 tokens from depositor
+            let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
+            let this_contract = get_contract_address();
+            let success = token.transfer_from(caller, this_contract, amount.into());
+            assert(success, 'ERC20_INSURANCE_TRANSFER_FAILED');
+
             let current = self.insurance_fund_balance.read();
             self.insurance_fund_balance.write(current + amount);
             self.emit(InsuranceLiquidityDeposited { depositor: caller, amount });
         }
+
+        // ─── VIEW FUNCTIONS ──────────────────────────────────────────────
 
         fn get_keeper_bounty_balance(self: @ContractState, keeper: ContractAddress) -> u128 {
             self.keeper_bounties.read(keeper)
@@ -291,6 +348,11 @@ pub mod STRK20Adapter {
 
         fn get_collateral_token(self: @ContractState) -> ContractAddress {
             self.collateral_token.read()
+        }
+
+        fn get_contract_token_balance(self: @ContractState) -> u256 {
+            let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
+            token.balance_of(get_contract_address())
         }
 
         fn get_total_locked_collateral(self: @ContractState) -> u128 {

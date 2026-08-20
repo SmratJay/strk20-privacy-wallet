@@ -67,34 +67,6 @@ class PerpsService {
       maxLeverage: 50,
       maintenanceMarginPct: 0.02,
     });
-
-    this.markets.set('ETH-PERP', {
-      id: 'ETH-PERP',
-      baseAsset: 'ETH',
-      quoteAsset: 'USDC',
-      markPrice: 2840.10,
-      indexPrice: 2839.80,
-      change24hPct: -0.95,
-      volume24hUsd: 89400000,
-      openInterestUsd: 28500000,
-      fundingRate1hPct: 0.0008,
-      maxLeverage: 25,
-      maintenanceMarginPct: 0.03,
-    });
-
-    this.markets.set('STRK-PERP', {
-      id: 'STRK-PERP',
-      baseAsset: 'STRK',
-      quoteAsset: 'USDC',
-      markPrice: 0.485,
-      indexPrice: 0.4848,
-      change24hPct: 5.12,
-      volume24hUsd: 18200000,
-      openInterestUsd: 6400000,
-      fundingRate1hPct: 0.0025,
-      maxLeverage: 20,
-      maintenanceMarginPct: 0.05,
-    });
   }
 
   getMarkets(): PerpMarket[] {

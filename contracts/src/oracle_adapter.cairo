@@ -1,4 +1,14 @@
-// Pragma-Authenticated Oracle Adapter V3 for PEL Private Perpetuals (Whitepaper Section 9)
+// Pragma-Authenticated Oracle Adapter V4 for PEL Private Perpetuals (Whitepaper Section 9)
+// V4 changes:
+//   - Removed set_test_price_TEST_ONLY from production interface
+//   - Only BTC-PERP initialized in constructor (removed fake markets)
+//   - Added staleness check in get_market_price
+//   - Documented single-publisher trust assumption
+//
+// TRUST MODEL: This oracle accepts prices from a single authorized publisher address.
+// It does NOT verify Pragma on-chain proofs or multi-signer attestations.
+// This is a known centralization point documented in PERPS_SECURITY_MODEL.md.
+
 use starknet::ContractAddress;
 use super::types::OraclePrice;
 
@@ -8,8 +18,6 @@ pub trait IOracleAdapter<TContractState> {
     fn publish_oracle_price(ref self: TContractState, market_id: felt252, price: u128, timestamp: u64);
     fn set_oracle_publisher(ref self: TContractState, publisher: ContractAddress);
     fn get_oracle_publisher(self: @TContractState) -> ContractAddress;
-    // Explicitly isolated for offline local tests
-    fn set_test_price_TEST_ONLY(ref self: TContractState, market_id: felt252, price: u128);
 }
 
 #[starknet::contract]
@@ -54,11 +62,9 @@ pub mod OracleAdapter {
         self.admin.write(admin);
         self.oracle_publisher.write(oracle_publisher);
 
-        // Initialize baseline BTC-PERP price at constructor ($96,420.50)
+        // V4: Only initialize BTC-PERP — the only protocol-supported market
         let now = get_block_timestamp();
         self.prices.write('BTC-PERP', OraclePrice { price: 9642050, timestamp: now, is_valid: true });
-        self.prices.write('ETH-PERP', OraclePrice { price: 341875, timestamp: now, is_valid: true });
-        self.prices.write('STRK-PERP', OraclePrice { price: 58, timestamp: now, is_valid: true });
     }
 
     #[abi(embed_v0)]
@@ -67,7 +73,7 @@ pub mod OracleAdapter {
             let record = self.prices.read(market_id);
             let now = get_block_timestamp();
 
-            // Zero price is invalid
+            // Zero price is invalid (market not initialized)
             if record.price == 0 {
                 return OraclePrice { price: 0, timestamp: 0, is_valid: false };
             }
@@ -77,7 +83,8 @@ pub mod OracleAdapter {
                 return OraclePrice { price: record.price, timestamp: record.timestamp, is_valid: false };
             }
 
-            // Verify freshness within 180s bound (§9.1)
+            // V4: Verify freshness within MAX_PRICE_AGE_SECONDS bound
+            // If no price published recently, return is_valid: false
             let is_fresh = (now - record.timestamp) <= MAX_PRICE_AGE_SECONDS;
 
             OraclePrice {
@@ -111,14 +118,6 @@ pub mod OracleAdapter {
 
         fn get_oracle_publisher(self: @ContractState) -> ContractAddress {
             self.oracle_publisher.read()
-        }
-
-        fn set_test_price_TEST_ONLY(ref self: ContractState, market_id: felt252, price: u128) {
-            let caller = get_caller_address();
-            assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
-            let now = get_block_timestamp();
-            self.prices.write(market_id, OraclePrice { price, timestamp: now, is_valid: true });
-            self.emit(PricePublished { market_id, price, timestamp: now });
         }
     }
 }

@@ -315,24 +315,8 @@ export class PrivacyService {
       return { txHash };
     }
 
-    // 2. Braavos / Argent X Universal Umbra Client Route:
-    onStepChange?.('PROVING');
-    // Spend from local encrypted note vault
-    if (address) {
-      vaultService.spendNotes(address, token.address, amountBigInt, networkId);
-    }
-
-    onStepChange?.('SUBMITTING');
-    const u256Amount = uint256.bnToUint256(amountBigInt);
-    const transferCall = {
-      contractAddress: token.address,
-      entrypoint: 'transfer',
-      calldata: [recipientViewingKeyOrAddress, u256Amount.low, u256Amount.high],
-    };
-
-    const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([transferCall]);
-    return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
+    // 2. Fallback check: Refuse to execute plain ERC20 transfer under the label of "private transfer"
+    throw new Error('STRK20 native privacy wallet required for private transfers. Please connect Ready Wallet or a STRK20-compatible wallet.');
   }
 
   /**
@@ -351,14 +335,13 @@ export class PrivacyService {
 
     const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
     const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
-    onStepChange?.('PROVING');
-
-    // Spend from local note vault
-    if (address) {
-      vaultService.spendNotes(address, token.address, amountBigInt, networkId);
-    }
 
     if (typeof walletAccount.strk20Unshield === 'function') {
+      onStepChange?.('PROVING');
+      // Spend from local note vault
+      if (address) {
+        vaultService.spendNotes(address, token.address, amountBigInt, networkId);
+      }
       const res = await walletAccount.strk20Unshield({
         token: token.address,
         recipient: destinationAddress,
@@ -368,18 +351,8 @@ export class PrivacyService {
       return { txHash: res.transaction_hash || res.hash || '0x' };
     }
 
-    // Standard Starknet execution
-    onStepChange?.('SUBMITTING');
-    const u256Amount = uint256.bnToUint256(amountBigInt);
-    const transferCall = {
-      contractAddress: token.address,
-      entrypoint: 'transfer',
-      calldata: [destinationAddress, u256Amount.low, u256Amount.high],
-    };
-
-    const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([transferCall]);
-    return { txHash: tx?.transaction_hash || tx?.hash || tx?.transactionHash };
+    // Refuse to fake unshielding by draining user's public wallet
+    throw new Error('STRK20 native privacy wallet required to unshield funds. Please connect Ready Wallet or a STRK20-compatible wallet.');
   }
 }
 

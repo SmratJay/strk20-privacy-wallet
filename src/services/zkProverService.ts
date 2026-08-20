@@ -405,7 +405,21 @@ class ZKProverService {
       witness.nonce,
     );
   }
+
+  // ─── Fact Registration Helper ───────────────────────────────────────────
+
+  async registerFactOnChain(
+    factHash: string,
+    account?: any,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<boolean> {
+    const { starknetPerpsDispatcher } = await import('./starknetPerpsDispatcher');
+    const call = starknetPerpsDispatcher.buildRegisterFactCall(factHash, network);
+    await starknetPerpsDispatcher.executeOnChain(account, call, network);
+    return true;
+  }
 }
 
 export const zkProverService = new ZKProverService();
-export { ZKProverService };
+export const factComputationService = zkProverService;
+export { ZKProverService, ZKProverService as FactComputationService };

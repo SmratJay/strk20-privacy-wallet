@@ -4,7 +4,7 @@
  * Encodes and dispatches real Cairo contract transactions via Starknet.js & connected wallets.
  */
 
-import { Call, RpcProvider } from 'starknet';
+import { Call, RpcProvider, uint256 } from 'starknet';
 
 export interface DeploymentConfig {
   network: 'sepolia';
@@ -12,6 +12,7 @@ export interface DeploymentConfig {
   strk20AdapterAddress: string;
   oracleAdapterAddress: string;
   stwoVerifierAddress: string;
+  collateralTokenAddress: string;
 }
 
 export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
@@ -21,6 +22,7 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
     strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897',
     oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f',
     stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
+    collateralTokenAddress: process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8',
   },
 };
 
@@ -43,11 +45,38 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
+   * Builds ERC20 approve call for collateral token (e.g. TestUSDC)
+   * Collateral amounts in cents (1e2) convert to USDC decimals (1e6)
+   */
+  buildApproveCall(
+    spenderAddress: string,
+    amountCents: bigint,
+    tokenAddress?: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    const targetToken = tokenAddress || config.collateralTokenAddress;
+    // 1 USD cent = 10_000 micro-USDC (6 decimals)
+    const tokenUnits = amountCents * 10_000n;
+    const u256Val = uint256.bnToUint256(tokenUnits);
+
+    return {
+      contractAddress: targetToken,
+      entrypoint: 'approve',
+      calldata: [
+        spenderAddress,
+        '0x' + BigInt(u256Val.low).toString(16),
+        '0x' + BigInt(u256Val.high).toString(16),
+      ],
+    };
+  }
+
+  /**
    * Builds the single call to PELPerpsCore.open_position
-   * Note: PELPerpsCore atomically calls STRK20Adapter.lock_shielded_margin on-chain!
+   * Note: PELPerpsCore calls STRK20Adapter.lock_shielded_margin which pulls real ERC20 tokens!
    */
   buildOpenPositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     commitment: string,
     marginNullifier: string,
     marginAmountUsd: number,
@@ -75,7 +104,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.close_position
    */
   buildClosePositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     positionCommitment: string,
     finalNullifier: string,
     payoutNoteCommitment: string,
@@ -105,7 +134,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.liquidate_position
    */
   buildLiquidatePositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     positionCommitment: string,
     positionNullifier: string,
     liquidationFactHash: string,
@@ -132,7 +161,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.update_position
    */
   buildUpdatePositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     oldCommitment: string,
     oldNullifier: string,
     newCommitment: string,
@@ -156,10 +185,10 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds the call to PELPerpsCore.fund_position
+   * Builds the call to PELPerpsCore.fund_position (7 arguments)
    */
   buildFundPositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP',
+    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     commitment: string,
     oldNullifier: string,
     newCommitment: string,
@@ -186,6 +215,51 @@ export class StarknetPerpsDispatcher {
     };
   }
 
+  /**
+   * Builds call to STRK20Adapter.claim_payout
+   */
+  buildClaimPayoutCall(
+    recipientNoteCommitment: string,
+    recipientAddress: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    return {
+      contractAddress: config.strk20AdapterAddress,
+      entrypoint: 'claim_payout',
+      calldata: [recipientNoteCommitment, recipientAddress],
+    };
+  }
+
+  /**
+   * Builds call to STRK20Adapter.claim_keeper_bounty
+   */
+  buildClaimKeeperBountyCall(
+    keeperRecipient: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    return {
+      contractAddress: config.strk20AdapterAddress,
+      entrypoint: 'claim_keeper_bounty',
+      calldata: [keeperRecipient],
+    };
+  }
+
+  /**
+   * Builds call to StwoVerifier/FactRegistry.register_verified_fact
+   */
+  buildRegisterFactCall(
+    factHash: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    return {
+      contractAddress: config.stwoVerifierAddress,
+      entrypoint: 'register_verified_fact',
+      calldata: [factHash],
+    };
+  }
 
   /**
    * Execute real on-chain transaction via connected Starknet browser wallet or server relayer

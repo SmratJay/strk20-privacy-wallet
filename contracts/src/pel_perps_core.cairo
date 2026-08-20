@@ -502,6 +502,9 @@ pub mod PELPerpsCore {
             );
             assert(is_valid, 'INVALID_CLOSE_FACT');
 
+            // V4: Payout cannot exceed locked margin (prevents payout inflation)
+            assert(payout_amount <= pos.locked_margin, 'PAYOUT_EXCEEDS_LOCKED_MARGIN');
+
             // 3. Checks-Effects: Deactivate & Consume Nullifier
             pos.is_active = false;
             let now = get_block_timestamp();

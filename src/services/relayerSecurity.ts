@@ -5,18 +5,32 @@
 
 import { Call } from 'starknet';
 import { PERPS_DEPLOYMENTS } from './starknetPerpsDispatcher';
+import { CALLDATA_SCHEMAS } from '../protocol/types';
 
 export const ALLOWED_ENTRYPOINTS = [
   'open_position',
+  'update_position',
+  'fund_position',
   'close_position',
   'liquidate_position',
   'claim_keeper_bounty',
+  'claim_payout',
+  'register_verified_fact',
+  'approve',
 ] as const;
 
 export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: number; fieldNames: string[] }> = {
   open_position: {
     expectedLength: 5,
     fieldNames: ['market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'],
+  },
+  update_position: {
+    expectedLength: 5,
+    fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'fact_hash'],
+  },
+  fund_position: {
+    expectedLength: 7,
+    fieldNames: ['market_id', 'commitment', 'old_nullifier', 'new_commitment', 'funding_amount', 'is_long_pays', 'fact_hash'],
   },
   close_position: {
     expectedLength: 6,
@@ -28,7 +42,19 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
   },
   claim_keeper_bounty: {
     expectedLength: 1,
-    fieldNames: ['note_commitment'],
+    fieldNames: ['keeper_recipient'],
+  },
+  claim_payout: {
+    expectedLength: 2,
+    fieldNames: ['recipient_note_commitment', 'recipient'],
+  },
+  register_verified_fact: {
+    expectedLength: 1,
+    fieldNames: ['fact_hash'],
+  },
+  approve: {
+    expectedLength: 3, // spender, amount_low, amount_high
+    fieldNames: ['spender', 'amount_low', 'amount_high'],
   },
 };
 
@@ -37,21 +63,27 @@ const rateLimitMap = new Map<string, number[]>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 20;
 
-// Anti-replay fingerprint store
-const executedSignatures = new Set<string>();
-
 export function getAllowlistedContracts(): Set<string> {
   const allowed = new Set<string>();
 
   const sepoliaConfig = PERPS_DEPLOYMENTS.sepolia;
   if (sepoliaConfig.pelCoreAddress) allowed.add(sepoliaConfig.pelCoreAddress.toLowerCase());
   if (sepoliaConfig.strk20AdapterAddress) allowed.add(sepoliaConfig.strk20AdapterAddress.toLowerCase());
+  if (sepoliaConfig.stwoVerifierAddress) allowed.add(sepoliaConfig.stwoVerifierAddress.toLowerCase());
+  if (sepoliaConfig.oracleAdapterAddress) allowed.add(sepoliaConfig.oracleAdapterAddress.toLowerCase());
+  if (sepoliaConfig.collateralTokenAddress) allowed.add(sepoliaConfig.collateralTokenAddress.toLowerCase());
 
   if (process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA) {
     allowed.add(process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA.toLowerCase());
   }
   if (process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA) {
     allowed.add(process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA.toLowerCase());
+  }
+  if (process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA) {
+    allowed.add(process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA.toLowerCase());
+  }
+  if (process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA) {
+    allowed.add(process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA.toLowerCase());
   }
 
   return allowed;

@@ -9,7 +9,7 @@
 
 export const DOMAIN_SEPARATOR = '0x50454c5f504f534954494f4e5f56323a424243' as const; // "PEL_POSITION_V2:BTC"
 export const NULLIFIER_TAG    = '0x4e554c4c49464945525f5441473a5631' as const;        // "NULLIFIER_TAG:V1"
-export const STWO_FACT_TAG    = '0x5354574f5f534e49503336_50524f4f465f5632' as const; // "STWO_SNIP36_PROOF_V2"
+export const STWO_FACT_TAG    = '0x5354574f5f534e495033365f50524f4f465f5632' as const; // "STWO_SNIP36_PROOF_V2"
 export const FUNDING_TAG      = '0x46554e44494e475f5441473a5631' as const;            // "FUNDING_TAG:V1"
 
 // ─── Protocol Version ─────────────────────────────────────────────────────────
@@ -116,10 +116,12 @@ export interface OnChainPositionRecord {
 // Exact parameter counts that relayerSecurity.ts enforces.
 
 export const CALLDATA_SCHEMAS = {
-  open_position:       { expectedLength: 5, fields: ['market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'] },
-  update_position:     { expectedLength: 5, fields: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'fact_hash'] },
-  fund_position:       { expectedLength: 6, fields: ['market_id', 'commitment', 'old_nullifier', 'new_commitment', 'funding_amount', 'fact_hash'] },
-  close_position:      { expectedLength: 6, fields: ['market_id', 'commitment', 'final_nullifier', 'payout_note_commitment', 'payout_amount', 'fact_hash'] },
-  liquidate_position:  { expectedLength: 5, fields: ['market_id', 'commitment', 'nullifier', 'fact_hash', 'keeper_recipient'] },
-  claim_keeper_bounty: { expectedLength: 1, fields: ['note_commitment'] },
+  open_position:          { expectedLength: 5, fields: ['market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'] },
+  update_position:        { expectedLength: 5, fields: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'fact_hash'] },
+  fund_position:          { expectedLength: 7, fields: ['market_id', 'commitment', 'old_nullifier', 'new_commitment', 'funding_amount', 'is_long_pays', 'fact_hash'] },
+  close_position:         { expectedLength: 6, fields: ['market_id', 'commitment', 'final_nullifier', 'payout_note_commitment', 'payout_amount', 'fact_hash'] },
+  liquidate_position:     { expectedLength: 5, fields: ['market_id', 'commitment', 'nullifier', 'fact_hash', 'keeper_recipient'] },
+  claim_keeper_bounty:    { expectedLength: 1, fields: ['keeper_recipient'] },
+  claim_payout:           { expectedLength: 2, fields: ['recipient_note_commitment', 'recipient'] },
+  register_verified_fact: { expectedLength: 1, fields: ['fact_hash'] },
 } as const;
