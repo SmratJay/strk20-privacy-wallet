@@ -1,11 +1,6 @@
-// PEL Private Perpetuals Core State Machine — V2
+// PEL Private Perpetuals Core State Machine — V4 (Strict Verification & Real Custody)
 // Implements Whitepaper Sections 6, 12, 13, 14, 15
 // Protocol Version: 2
-// Changes from V1:
-//   - MarketConfig extended with fees, funding_rate, config_version
-//   - update_position verifies market_id matches stored record (B5 fix)
-//   - fund_position entrypoint added (Phase 8)
-//   - constructor uses full V2 MarketConfig for BTC-PERP
 
 use starknet::ContractAddress;
 use super::types::{MarketConfig, PositionRecord};
@@ -14,6 +9,7 @@ use super::types::{MarketConfig, PositionRecord};
 pub trait IPELPerpsCore<TContractState> {
     fn open_position(
         ref self: TContractState,
+        collateral_owner: ContractAddress,
         market_id: felt252,
         commitment: felt252,
         margin_nullifier: felt252,
@@ -98,8 +94,11 @@ pub mod PELPerpsCore {
         // Nullifier to Commitment mapping
         commitment_by_nullifier: Map<felt252, felt252>,
 
-        // Markets Configuration (V2)
+        // Market Configurations
         markets: Map<felt252, MarketConfig>,
+
+        // Market Pause Flag
+        market_paused: Map<felt252, bool>,
     }
 
     #[event]
@@ -110,14 +109,16 @@ pub mod PELPerpsCore {
         PositionFunded: PositionFunded,
         PositionLiquidated: PositionLiquidated,
         PositionClosed: PositionClosed,
-        AdapterUpdated: AdapterUpdated,
         MarketPaused: MarketPaused,
         MarketResumed: MarketResumed,
-        BadDebtCreated: BadDebtCreated,
+        AdapterUpdated: AdapterUpdated,
+        OracleUpdated: OracleUpdated,
+        VerifierUpdated: VerifierUpdated,
     }
 
     #[derive(Drop, starknet::Event)]
     pub struct PositionOpened {
+        pub collateral_owner: ContractAddress,
         pub commitment: felt252,
         pub market_id: felt252,
         pub margin_amount: u128,
@@ -134,7 +135,8 @@ pub mod PELPerpsCore {
 
     #[derive(Drop, starknet::Event)]
     pub struct PositionFunded {
-        pub old_commitment: felt252,
+        pub commitment: felt252,
+        pub old_nullifier: felt252,
         pub new_commitment: felt252,
         pub funding_amount: u128,
         pub is_long_pays: bool,
@@ -146,7 +148,6 @@ pub mod PELPerpsCore {
         pub commitment: felt252,
         pub nullifier: felt252,
         pub keeper: ContractAddress,
-        pub bounty_amount: u128,
         pub timestamp: u64,
     }
 
@@ -159,28 +160,28 @@ pub mod PELPerpsCore {
     }
 
     #[derive(Drop, starknet::Event)]
-    pub struct AdapterUpdated {
-        pub adapter_name: felt252,
-        pub new_address: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
     pub struct MarketPaused {
         pub market_id: felt252,
-        pub timestamp: u64,
     }
 
     #[derive(Drop, starknet::Event)]
     pub struct MarketResumed {
         pub market_id: felt252,
-        pub timestamp: u64,
     }
 
     #[derive(Drop, starknet::Event)]
-    pub struct BadDebtCreated {
-        pub commitment: felt252,
-        pub shortfall_amount: u128,
-        pub timestamp: u64,
+    pub struct AdapterUpdated {
+        pub new_adapter: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct OracleUpdated {
+        pub new_oracle: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct VerifierUpdated {
+        pub new_verifier: ContractAddress,
     }
 
     #[constructor]
@@ -189,14 +190,14 @@ pub mod PELPerpsCore {
         admin: ContractAddress,
         oracle_adapter: ContractAddress,
         strk20_adapter: ContractAddress,
-        stwo_verifier: ContractAddress,
+        stwo_verifier: ContractAddress
     ) {
         self.admin.write(admin);
         self.oracle_adapter.write(oracle_adapter);
         self.strk20_adapter.write(strk20_adapter);
         self.stwo_verifier.write(stwo_verifier);
 
-        // Initialize BTC-PERP V2 config (matches src/protocol/types.ts BTC_PERP_CONFIG)
+        // Canonical BTC-PERP V2 Configuration
         self.markets.write('BTC-PERP', MarketConfig {
             market_id:              'BTC-PERP',
             base_asset_id:          'BTC',
@@ -217,16 +218,20 @@ pub mod PELPerpsCore {
     #[abi(embed_v0)]
     impl PELPerpsCoreImpl of IPELPerpsCore<ContractState> {
 
-        // ─── OPEN ─────────────────────────────────────────────────────────────
+        // ─── OPEN (P0: Real User Collateral Authorization) ────────────────────
 
         fn open_position(
             ref self: ContractState,
+            collateral_owner: ContractAddress,
             market_id: felt252,
             commitment: felt252,
             margin_nullifier: felt252,
             margin_amount: u128,
             fact_hash: felt252,
         ) {
+            let caller = get_caller_address();
+            assert(caller == collateral_owner || caller == self.admin.read(), 'UNAUTHORIZED_COLLATERAL_OWNER');
+
             let market = self.markets.read(market_id);
             assert(market.is_active, 'MARKET_NOT_ACTIVE');
             assert(margin_amount > 0, 'INVALID_MARGIN_AMOUNT');
@@ -238,7 +243,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_STALE_OR_INVALID');
 
-            // 2. Verify SNIP-36 Poseidon Transition Fact
+            // 2. Verify SNIP-36 Transition Fact
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid_proof = verifier.verify_transition_proof(
                 'OPEN',
@@ -254,9 +259,9 @@ pub mod PELPerpsCore {
             // 3. Checks-Effects: Mark Nullifier Consumed
             self.used_nullifiers.write(margin_nullifier, true);
 
-            // 4. Lock Shielded Margin in STRK20 Vault (Interactions)
+            // 4. Lock Shielded Margin in STRK20 Vault from the verified collateral owner
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.lock_shielded_margin(margin_nullifier, margin_amount);
+            strk20.lock_shielded_margin(collateral_owner, margin_nullifier, margin_amount);
 
             // 5. Store Active Position Record
             let now = get_block_timestamp();
@@ -271,7 +276,7 @@ pub mod PELPerpsCore {
             });
             self.commitment_by_nullifier.write(margin_nullifier, commitment);
 
-            self.emit(PositionOpened { commitment, market_id, margin_amount, timestamp: now });
+            self.emit(PositionOpened { collateral_owner, commitment, market_id, margin_amount, timestamp: now });
         }
 
         // ─── UPDATE ───────────────────────────────────────────────────────────
@@ -286,17 +291,14 @@ pub mod PELPerpsCore {
         ) {
             let mut old_pos = self.positions.read(old_commitment);
             assert(old_pos.is_active, 'POSITION_NOT_ACTIVE');
-            // B5 fix: enforce market_id matches the stored record
             assert(old_pos.market_id == market_id, 'MARKET_ID_MISMATCH');
             assert(!self.used_nullifiers.read(old_nullifier), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
 
-            // 1. Verify Oracle Price
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
-            // 2. Verify SNIP-36 Transition Fact
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'UPDATE',
@@ -309,14 +311,12 @@ pub mod PELPerpsCore {
             );
             assert(is_valid, 'INVALID_UPDATE_FACT');
 
-            // 3. Checks-Effects: Deactivate Old Position & Mark Nullifier Spent
             let now = get_block_timestamp();
             old_pos.is_active = false;
             old_pos.updated_at = now;
             self.positions.write(old_commitment, old_pos);
             self.used_nullifiers.write(old_nullifier, true);
 
-            // 4. Store New Position Record
             self.positions.write(new_commitment, PositionRecord {
                 commitment:       new_commitment,
                 margin_nullifier: old_pos.margin_nullifier,
@@ -331,9 +331,6 @@ pub mod PELPerpsCore {
         }
 
         // ─── FUND ────────────────────────────────────────────────────────────
-        // Accrues funding for one interval. Old commitment consumed, new one created.
-        // funding_amount: absolute funding payment in USD cents
-        // is_long_pays: true if LONG → SHORT transfer; false if SHORT → LONG
 
         fn fund_position(
             ref self: ContractState,
@@ -348,15 +345,14 @@ pub mod PELPerpsCore {
             let mut pos = self.positions.read(commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
-            assert(!self.used_nullifiers.read(old_nullifier), 'NULLIFIER_ALREADY_SPENT');
+            assert(!self.used_nullifiers.read(old_nullifier), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
+            assert(funding_amount <= pos.locked_margin, 'FUNDING_EXCEEDS_MARGIN');
 
-            // 1. Verify Oracle Price Freshness
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
-            // 2. Verify SNIP-36 Funding Fact
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'FUND',
@@ -369,36 +365,29 @@ pub mod PELPerpsCore {
             );
             assert(is_valid, 'INVALID_FUND_FACT');
 
-            // 3. Ensure funding payment does not exceed locked margin (prevents bad debt here)
-            assert(funding_amount <= pos.locked_margin, 'FUNDING_EXCEEDS_MARGIN');
-
-            // 4. Checks-Effects: Deactivate Old & Mark Nullifier
             let now = get_block_timestamp();
             pos.is_active = false;
             pos.updated_at = now;
             self.positions.write(commitment, pos);
             self.used_nullifiers.write(old_nullifier, true);
 
-            // 5. Reduce locked_margin by funding_amount
-            let new_margin = pos.locked_margin - funding_amount;
-
-            // 6. Store New Commitment
+            let new_locked_margin = pos.locked_margin - funding_amount;
             self.positions.write(new_commitment, PositionRecord {
                 commitment:       new_commitment,
                 margin_nullifier: pos.margin_nullifier,
-                locked_margin:    new_margin,
+                locked_margin:    new_locked_margin,
                 market_id,
                 created_at:       pos.created_at,
                 updated_at:       now,
                 is_active:        true,
             });
 
-            // 7. Transfer funding payment (handled by STRK20Adapter insurance fund)
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
             strk20.collect_funding_payment(old_nullifier, funding_amount, is_long_pays);
 
             self.emit(PositionFunded {
-                old_commitment: commitment,
+                commitment,
+                old_nullifier,
                 new_commitment,
                 funding_amount,
                 is_long_pays,
@@ -419,14 +408,12 @@ pub mod PELPerpsCore {
             let mut pos = self.positions.read(position_commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
-            assert(!self.used_nullifiers.read(position_nullifier), 'POSITION_ALREADY_NULLIFIED');
+            assert(!self.used_nullifiers.read(position_nullifier), 'NULLIFIER_ALREADY_SPENT');
 
-            // 1. Verify Oracle Price
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
-            // 2. Verify Liquidation Fact (proves E_t <= M_maint)
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'LIQUIDATE',
@@ -437,38 +424,36 @@ pub mod PELPerpsCore {
                 price.price,
                 liquidation_fact_hash,
             );
-            assert(is_valid, 'INVALID_LIQUIDATION_FACT');
+            assert(is_valid, 'INVALID_LIQUIDATE_FACT');
 
-            // 3. Checks-Effects: Deactivate & Nullify
-            pos.is_active = false;
             let now = get_block_timestamp();
+            pos.is_active = false;
             pos.updated_at = now;
             self.positions.write(position_commitment, pos);
             self.used_nullifiers.write(position_nullifier, true);
 
-            // 4. Calculate 2% Keeper Bounty; remainder to insurance fund
-            let locked = pos.locked_margin;
-            let bounty_amount    = (locked * 200_u128) / 10000_u128;
-            let remaining_amount = locked - bounty_amount;
+            // 2% keeper bounty + 98% protocol insurance fund
+            let total_collateral = pos.locked_margin;
+            let keeper_bounty = (total_collateral * 200_u128) / 10000_u128;
+            let remaining_collateral = total_collateral - keeper_bounty;
 
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
             strk20.seize_liquidation_collateral(
                 position_nullifier,
                 keeper_recipient,
-                bounty_amount,
-                remaining_amount,
+                keeper_bounty,
+                remaining_collateral,
             );
 
             self.emit(PositionLiquidated {
                 commitment: position_commitment,
                 nullifier:  position_nullifier,
                 keeper:     keeper_recipient,
-                bounty_amount,
                 timestamp:  now,
             });
         }
 
-        // ─── CLOSE ────────────────────────────────────────────────────────────
+        // ─── CLOSE (P0: Recipient Binding & LP Counterparty PnL) ──────────────
 
         fn close_position(
             ref self: ContractState,
@@ -502,9 +487,6 @@ pub mod PELPerpsCore {
             );
             assert(is_valid, 'INVALID_CLOSE_FACT');
 
-            // V4: Payout cannot exceed locked margin (prevents payout inflation)
-            assert(payout_amount <= pos.locked_margin, 'PAYOUT_EXCEEDS_LOCKED_MARGIN');
-
             // 3. Checks-Effects: Deactivate & Consume Nullifier
             pos.is_active = false;
             let now = get_block_timestamp();
@@ -512,11 +494,18 @@ pub mod PELPerpsCore {
             self.positions.write(position_commitment, pos);
             self.used_nullifiers.write(final_nullifier, true);
 
-            // 4. Release Payout Note in STRK20 Vault (Interactions)
-            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.release_shielded_payout(payout_note_commitment, payout_amount);
+            // 4. Release Payout Note in STRK20 Vault bound to caller
+            let profit = if payout_amount > pos.locked_margin {
+                payout_amount - pos.locked_margin
+            } else {
+                0
+            };
 
-            // 5. If payout < locked_margin → difference goes to insurance fund
+            let recipient = get_caller_address();
+            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
+            strk20.release_shielded_payout(payout_note_commitment, recipient, payout_amount, profit);
+
+            // 5. If payout < locked_margin → loss goes to insurance fund / LP pool
             if payout_amount < pos.locked_margin {
                 let loss = pos.locked_margin - payout_amount;
                 strk20.collect_insurance_contribution(final_nullifier, loss);
@@ -550,39 +539,35 @@ pub mod PELPerpsCore {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.strk20_adapter.write(new_adapter);
-            self.emit(AdapterUpdated { adapter_name: 'STRK20_ADAPTER', new_address: new_adapter });
+            self.emit(AdapterUpdated { new_adapter });
         }
 
         fn set_oracle_adapter(ref self: ContractState, new_oracle: ContractAddress) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.oracle_adapter.write(new_oracle);
-            self.emit(AdapterUpdated { adapter_name: 'ORACLE_ADAPTER', new_address: new_oracle });
+            self.emit(OracleUpdated { new_oracle });
         }
 
         fn set_stwo_verifier(ref self: ContractState, new_verifier: ContractAddress) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.stwo_verifier.write(new_verifier);
-            self.emit(AdapterUpdated { adapter_name: 'STWO_VERIFIER', new_address: new_verifier });
+            self.emit(VerifierUpdated { new_verifier });
         }
 
         fn pause_market(ref self: ContractState, market_id: felt252) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
-            let mut market = self.markets.read(market_id);
-            market.is_active = false;
-            self.markets.write(market_id, market);
-            self.emit(MarketPaused { market_id, timestamp: get_block_timestamp() });
+            self.market_paused.write(market_id, true);
+            self.emit(MarketPaused { market_id });
         }
 
         fn resume_market(ref self: ContractState, market_id: felt252) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
-            let mut market = self.markets.read(market_id);
-            market.is_active = true;
-            self.markets.write(market_id, market);
-            self.emit(MarketResumed { market_id, timestamp: get_block_timestamp() });
+            self.market_paused.write(market_id, false);
+            self.emit(MarketResumed { market_id });
         }
     }
 }

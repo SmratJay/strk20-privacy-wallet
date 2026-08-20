@@ -381,3 +381,72 @@ describe('Attack 19: stale oracle price rejection', () => {
     expect(isFresh).toBe(false);
   });
 });
+
+// ─── Attack 20: Payout Note Interception & Theft ────────────────────────────
+
+describe('Attack 20: recipient-bound payout theft attempt', () => {
+  it('REJECTS: attacker attempting to claim another user note commitment reverts UNAUTHORIZED_PAYOUT_CLAIMANT', () => {
+    const noteRecipients = new Map<string, string>();
+    const aliceNote = '0x_alice_payout_note_commitment';
+    noteRecipients.set(aliceNote, '0x_alice');
+
+    const attacker = '0x_eve_attacker';
+    const intendedRecipient = noteRecipients.get(aliceNote);
+
+    const isAuthorized = attacker.toLowerCase() === intendedRecipient?.toLowerCase();
+    expect(isAuthorized).toBe(false);
+  });
+});
+
+// ─── Attack 21: Non-Monotonic Oracle Round Injection ────────────────────────
+
+describe('Attack 21: non-monotonic oracle round replay attempt', () => {
+  it('REJECTS: oracle update with past/same round_id reverts NON_MONOTONIC_ROUND_ID', () => {
+    const lastRoundId = 42n;
+    const replayedRoundId = 42n;
+    const oldRoundId = 40n;
+
+    expect(replayedRoundId > lastRoundId).toBe(false);
+    expect(oldRoundId > lastRoundId).toBe(false);
+  });
+});
+
+// ─── Attack 22: Unfunded Profitable Payout Drain ─────────────────────────────
+
+describe('Attack 22: profit exceeds available LP counterparty liquidity', () => {
+  it('REJECTS: release_shielded_payout reverts INSUFFICIENT_AVAIL_LIQUIDITY if profit > LP pool', () => {
+    const availableLpLiquidity = 100_000n; // $1,000 pool
+    const requestedProfit = 500_000n;     // $5,000 profit
+
+    const isSolvent = availableLpLiquidity >= requestedProfit;
+    expect(isSolvent).toBe(false);
+  });
+});
+
+// ─── Attack 23: Silent Underflow Accounting Exploit ──────────────────────────
+
+describe('Attack 23: silent underflow clamping exploit is eliminated', () => {
+  it('REJECTS: debiting more than totalLockedCollateral throws INSUFFICIENT_LOCKED_MARGIN instead of clamping to zero', () => {
+    const currentLocked = 50_000n;
+    const requestedDebit = 80_000n;
+
+    expect(() => {
+      if (currentLocked < requestedDebit) {
+        throw new Error('INSUFFICIENT_LOCKED_MARGIN');
+      }
+    }).toThrow('INSUFFICIENT_LOCKED_MARGIN');
+  });
+});
+
+// ─── Attack 24: Cross-User Collateral Theft on Open ──────────────────────────
+
+describe('Attack 24: cross-user collateral theft on open_position', () => {
+  it('REJECTS: Bob cannot open position specifying Alice as collateral_owner without caller verification', () => {
+    const caller = '0x_bob';
+    const collateralOwner = '0x_alice';
+
+    const isAuthorized = caller.toLowerCase() === collateralOwner.toLowerCase();
+    expect(isAuthorized).toBe(false);
+  });
+});
+

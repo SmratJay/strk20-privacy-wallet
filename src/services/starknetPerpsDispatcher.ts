@@ -73,9 +73,10 @@ export class StarknetPerpsDispatcher {
 
   /**
    * Builds the single call to PELPerpsCore.open_position
-   * Note: PELPerpsCore calls STRK20Adapter.lock_shielded_margin which pulls real ERC20 tokens!
+   * Note: PELPerpsCore calls STRK20Adapter.lock_shielded_margin which pulls real ERC20 tokens directly from collateralOwner!
    */
   buildOpenPositionCall(
+    collateralOwner: string,
     marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     commitment: string,
     marginNullifier: string,
@@ -91,6 +92,7 @@ export class StarknetPerpsDispatcher {
       contractAddress: config.pelCoreAddress,
       entrypoint: 'open_position',
       calldata: [
+        collateralOwner,
         marketFelt,
         commitment,
         marginNullifier,
@@ -216,18 +218,48 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds call to STRK20Adapter.claim_payout
+   * Builds call to STRK20Adapter.claim_payout (P0: Recipient Binding)
    */
   buildClaimPayoutCall(
+    payoutNullifier: string,
     recipientNoteCommitment: string,
-    recipientAddress: string,
     network: 'sepolia' = 'sepolia'
   ): Call {
     const config = PERPS_DEPLOYMENTS[network];
     return {
       contractAddress: config.strk20AdapterAddress,
       entrypoint: 'claim_payout',
-      calldata: [recipientNoteCommitment, recipientAddress],
+      calldata: [payoutNullifier, recipientNoteCommitment],
+    };
+  }
+
+  /**
+   * Builds call to STRK20Adapter.deposit_liquidity (P1: LP Counterparty Pool)
+   */
+  buildDepositLiquidityCall(
+    amountCents: bigint,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    return {
+      contractAddress: config.strk20AdapterAddress,
+      entrypoint: 'deposit_liquidity',
+      calldata: ['0x' + amountCents.toString(16)],
+    };
+  }
+
+  /**
+   * Builds call to STRK20Adapter.withdraw_liquidity (P1: LP Counterparty Pool)
+   */
+  buildWithdrawLiquidityCall(
+    amountCents: bigint,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    return {
+      contractAddress: config.strk20AdapterAddress,
+      entrypoint: 'withdraw_liquidity',
+      calldata: ['0x' + amountCents.toString(16)],
     };
   }
 
@@ -243,21 +275,6 @@ export class StarknetPerpsDispatcher {
       contractAddress: config.strk20AdapterAddress,
       entrypoint: 'claim_keeper_bounty',
       calldata: [keeperRecipient],
-    };
-  }
-
-  /**
-   * Builds call to StwoVerifier/FactRegistry.register_verified_fact
-   */
-  buildRegisterFactCall(
-    factHash: string,
-    network: 'sepolia' = 'sepolia'
-  ): Call {
-    const config = PERPS_DEPLOYMENTS[network];
-    return {
-      contractAddress: config.stwoVerifierAddress,
-      entrypoint: 'register_verified_fact',
-      calldata: [factHash],
     };
   }
 
@@ -283,7 +300,6 @@ export class StarknetPerpsDispatcher {
       };
     }
 
-    // Fallback to secure server-side relayer route (private key stays on server)
     return this.executeViaRelayer(callArray);
   }
 
@@ -329,7 +345,6 @@ export class StarknetPerpsDispatcher {
         calldata: [commitment],
       });
 
-      // PositionRecord struct: [commitment, margin_nullifier, locked_margin, market_id, created_at, updated_at, is_active]
       const lockedMargin = parseInt(res[2], 16) / 100;
       const isOpen = res[6] === '0x1' || res[6] === '1';
       return { exists: true, isOpen, lockedMargin, marketId: res[3] };

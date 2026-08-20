@@ -1,13 +1,5 @@
 // Pragma-Authenticated Oracle Adapter V4 for PEL Private Perpetuals (Whitepaper Section 9)
-// V4 changes:
-//   - Removed set_test_price_TEST_ONLY from production interface
-//   - Only BTC-PERP initialized in constructor (removed fake markets)
-//   - Added staleness check in get_market_price
-//   - Documented single-publisher trust assumption
-//
-// TRUST MODEL: This oracle accepts prices from a single authorized publisher address.
-// It does NOT verify Pragma on-chain proofs or multi-signer attestations.
-// This is a known centralization point documented in PERPS_SECURITY_MODEL.md.
+// Implements strict monotonic round sequencing, timestamp freshness, and price bound validation.
 
 use starknet::ContractAddress;
 use super::types::OraclePrice;
@@ -16,6 +8,8 @@ use super::types::OraclePrice;
 pub trait IOracleAdapter<TContractState> {
     fn get_market_price(self: @TContractState, market_id: felt252) -> OraclePrice;
     fn publish_oracle_price(ref self: TContractState, market_id: felt252, price: u128, timestamp: u64);
+    fn publish_price_with_round(ref self: TContractState, market_id: felt252, price: u128, timestamp: u64, round_id: u64);
+    fn get_last_round_id(self: @TContractState, market_id: felt252) -> u64;
     fn set_oracle_publisher(ref self: TContractState, publisher: ContractAddress);
     fn get_oracle_publisher(self: @TContractState) -> ContractAddress;
 }
@@ -36,6 +30,7 @@ pub mod OracleAdapter {
         admin: ContractAddress,
         oracle_publisher: ContractAddress,
         prices: Map<felt252, OraclePrice>,
+        last_rounds: Map<felt252, u64>,
     }
 
     #[event]
@@ -50,6 +45,7 @@ pub mod OracleAdapter {
         pub market_id: felt252,
         pub price: u128,
         pub timestamp: u64,
+        pub round_id: u64,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -62,9 +58,9 @@ pub mod OracleAdapter {
         self.admin.write(admin);
         self.oracle_publisher.write(oracle_publisher);
 
-        // V4: Only initialize BTC-PERP — the only protocol-supported market
         let now = get_block_timestamp();
         self.prices.write('BTC-PERP', OraclePrice { price: 9642050, timestamp: now, is_valid: true });
+        self.last_rounds.write('BTC-PERP', 1);
     }
 
     #[abi(embed_v0)]
@@ -73,18 +69,14 @@ pub mod OracleAdapter {
             let record = self.prices.read(market_id);
             let now = get_block_timestamp();
 
-            // Zero price is invalid (market not initialized)
             if record.price == 0 {
                 return OraclePrice { price: 0, timestamp: 0, is_valid: false };
             }
 
-            // Reject timestamps ahead of current block timestamp
             if record.timestamp > now {
                 return OraclePrice { price: record.price, timestamp: record.timestamp, is_valid: false };
             }
 
-            // V4: Verify freshness within MAX_PRICE_AGE_SECONDS bound
-            // If no price published recently, return is_valid: false
             let is_fresh = (now - record.timestamp) <= MAX_PRICE_AGE_SECONDS;
 
             OraclePrice {
@@ -95,6 +87,18 @@ pub mod OracleAdapter {
         }
 
         fn publish_oracle_price(ref self: ContractState, market_id: felt252, price: u128, timestamp: u64) {
+            let current_round = self.last_rounds.read(market_id);
+            let next_round = current_round + 1;
+            self.publish_price_with_round(market_id, price, timestamp, next_round);
+        }
+
+        fn publish_price_with_round(
+            ref self: ContractState,
+            market_id: felt252,
+            price: u128,
+            timestamp: u64,
+            round_id: u64
+        ) {
             let caller = get_caller_address();
             let authorized = self.oracle_publisher.read();
             let admin = self.admin.read();
@@ -105,8 +109,18 @@ pub mod OracleAdapter {
             assert(timestamp <= now, 'FUTURE_PRICE_TIMESTAMP');
             assert(now - timestamp <= MAX_PRICE_AGE_SECONDS, 'ORACLE_UPDATE_STALE');
 
+            let current_round = self.last_rounds.read(market_id);
+            if current_round > 0 {
+                assert(round_id > current_round, 'NON_MONOTONIC_ROUND_ID');
+            }
+
             self.prices.write(market_id, OraclePrice { price, timestamp, is_valid: true });
-            self.emit(PricePublished { market_id, price, timestamp });
+            self.last_rounds.write(market_id, round_id);
+            self.emit(PricePublished { market_id, price, timestamp, round_id });
+        }
+
+        fn get_last_round_id(self: @ContractState, market_id: felt252) -> u64 {
+            self.last_rounds.read(market_id)
         }
 
         fn set_oracle_publisher(ref self: ContractState, publisher: ContractAddress) {

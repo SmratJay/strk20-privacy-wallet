@@ -7,10 +7,37 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { positionIndexerService, RawPerpsEvent } from '../src/services/positionIndexerService';
 import { keeperService } from '../src/services/keeperService';
 import { zkProverService } from '../src/services/zkProverService';
+import { hash } from 'starknet';
 
 describe('PEL Event Indexer & Autonomous Keeper Subsystem', () => {
   beforeEach(() => {
     positionIndexerService.clear();
+  });
+
+  it('decodes raw Starknet RPC events against Cairo selectors', () => {
+    const selectorOpened = hash.getSelectorFromName('PositionOpened');
+    const rawEvent = {
+      keys: [selectorOpened],
+      data: [
+        '0x_alice', // collateral_owner
+        '0x0111111111111111111111111111111111111111111111111111111111111111', // commitment
+        '0x4254432d50455250', // market_id 'BTC-PERP'
+        '100000', // margin_amount
+        '1700000000', // timestamp
+      ],
+      block_number: 12345,
+      transaction_hash: '0xtx1',
+    };
+
+    const decoded = positionIndexerService.decodeStarknetEvent(rawEvent);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.type).toBe('PositionOpened');
+    expect(decoded?.commitment).toBe(rawEvent.data[1]);
+    expect(decoded?.amountCents).toBe(100_000n);
+
+    // Ingest decoded event
+    positionIndexerService.ingestEvent(decoded!);
+    expect(positionIndexerService.getActivePositions().length).toBe(1);
   });
 
   it('indexes PositionOpened event and records active commitment', () => {

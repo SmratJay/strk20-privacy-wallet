@@ -9,7 +9,7 @@
  *   C0 (OPEN) -> C1 (UPDATE) -> C2 (FUND) -> [CLOSED | LIQUIDATED]
  */
 
-import { RpcProvider, hash, num, events } from 'starknet';
+import { RpcProvider, hash } from 'starknet';
 import { PERPS_DEPLOYMENTS } from './starknetPerpsDispatcher';
 
 export interface IndexedPosition {
@@ -55,6 +55,102 @@ export class PositionIndexerService {
   private lastIndexedBlock: number = 0;
   private isPolling: boolean = false;
   private pollIntervalId: NodeJS.Timeout | null = null;
+
+  // Cached event selectors
+  private selectors = {
+    PositionOpened: hash.getSelectorFromName('PositionOpened'),
+    PositionUpdated: hash.getSelectorFromName('PositionUpdated'),
+    PositionFunded: hash.getSelectorFromName('PositionFunded'),
+    PositionClosed: hash.getSelectorFromName('PositionClosed'),
+    PositionLiquidated: hash.getSelectorFromName('PositionLiquidated'),
+  };
+
+  /**
+   * Decode raw Starknet event keys and data into a typed RawPerpsEvent
+   */
+  decodeStarknetEvent(eventObj: { keys: string[]; data: string[]; block_number?: number; transaction_hash?: string }): RawPerpsEvent | null {
+    if (!eventObj.keys || eventObj.keys.length === 0) return null;
+    const selector = eventObj.keys[0];
+    const data = eventObj.data || [];
+
+    if (selector === this.selectors.PositionOpened) {
+      // Data: [collateral_owner, commitment, market_id, margin_amount, timestamp]
+      return {
+        type: 'PositionOpened',
+        marketId: this.feltToString(data[2] || '0x0'),
+        commitment: data[1] || '0x0',
+        amountCents: data[3] ? BigInt(data[3]) : 0n,
+        blockNumber: eventObj.block_number,
+        transactionHash: eventObj.transaction_hash,
+      };
+    }
+
+    if (selector === this.selectors.PositionUpdated) {
+      // Data: [old_commitment, old_nullifier, new_commitment, timestamp]
+      return {
+        type: 'PositionUpdated',
+        marketId: 'BTC-PERP',
+        commitment: data[2] || '0x0',
+        oldCommitment: data[0] || '0x0',
+        oldNullifier: data[1] || '0x0',
+        newCommitment: data[2] || '0x0',
+        blockNumber: eventObj.block_number,
+        transactionHash: eventObj.transaction_hash,
+      };
+    }
+
+    if (selector === this.selectors.PositionFunded) {
+      // Data: [commitment, old_nullifier, new_commitment, funding_amount, is_long_pays, timestamp]
+      return {
+        type: 'PositionFunded',
+        marketId: 'BTC-PERP',
+        commitment: data[0] || '0x0',
+        oldNullifier: data[1] || '0x0',
+        newCommitment: data[2] || '0x0',
+        fundingAmountCents: data[3] ? BigInt(data[3]) : 0n,
+        isLongPays: data[4] === '0x1' || data[4] === '1',
+        blockNumber: eventObj.block_number,
+        transactionHash: eventObj.transaction_hash,
+      };
+    }
+
+    if (selector === this.selectors.PositionClosed) {
+      // Data: [commitment, nullifier, payout_amount, timestamp]
+      return {
+        type: 'PositionClosed',
+        marketId: 'BTC-PERP',
+        commitment: data[0] || '0x0',
+        finalNullifier: data[1] || '0x0',
+        amountCents: data[2] ? BigInt(data[2]) : 0n,
+        blockNumber: eventObj.block_number,
+        transactionHash: eventObj.transaction_hash,
+      };
+    }
+
+    if (selector === this.selectors.PositionLiquidated) {
+      // Data: [commitment, nullifier, keeper, timestamp]
+      return {
+        type: 'PositionLiquidated',
+        marketId: 'BTC-PERP',
+        commitment: data[0] || '0x0',
+        nullifier: data[1] || '0x0',
+        keeper: data[2],
+        blockNumber: eventObj.block_number,
+        transactionHash: eventObj.transaction_hash,
+      };
+    }
+
+    return null;
+  }
+
+  private feltToString(feltHex: string): string {
+    try {
+      const hex = feltHex.startsWith('0x') ? feltHex.slice(2) : feltHex;
+      return Buffer.from(hex, 'hex').toString('utf8').replace(/\0/g, '') || 'BTC-PERP';
+    } catch {
+      return 'BTC-PERP';
+    }
+  }
 
   /**
    * Ingest a single parsed on-chain Starknet event into the index
@@ -193,7 +289,7 @@ export class PositionIndexerService {
   }
 
   /**
-   * Poll Starknet RPC for PELPerpsCore contract events
+   * Poll Starknet RPC for PELPerpsCore contract events and decode them
    */
   async pollEventsFromRpc(
     rpcUrl: string = process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia',
@@ -221,9 +317,9 @@ export class PositionIndexerService {
 
       let ingestedCount = 0;
       for (const rawEvent of eventResponse.events) {
-        // Event parsing based on selector
-        if (rawEvent.data && rawEvent.data.length > 0) {
-          // Minimal fallback ingest
+        const parsed = this.decodeStarknetEvent(rawEvent as any);
+        if (parsed) {
+          this.ingestEvent(parsed);
           ingestedCount++;
         }
       }
@@ -291,6 +387,14 @@ export class PositionIndexerService {
     if (!head) return [commitment];
     const pos = this.activeCommitments.get(head);
     return pos ? pos.commitmentHistory : [commitment];
+  }
+
+  getLastIndexedBlock(): number {
+    return this.lastIndexedBlock;
+  }
+
+  setLastIndexedBlock(block: number): void {
+    this.lastIndexedBlock = block;
   }
 
   /**

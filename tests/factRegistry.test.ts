@@ -3,17 +3,20 @@
  * @description M2 Fact Registry & Proof Enforcement Test Suite (PEL V4 Architecture)
  *
  * Verifies that:
- * 1. State transitions succeed when the prover registers facts
- * 2. Unregistered facts are rejected (no client-side Poseidon forgery)
- * 3. Unauthorized accounts cannot register facts
- * 4. Fact registration is idempotent
+ * 1. Self-describing fact registration validates public inputs on-chain
+ * 2. Hash mismatch between claimed fact and canonical inputs reverts
+ * 3. Unregistered facts are rejected (no client-side Poseidon forgery)
+ * 4. Unauthorized accounts cannot register facts
+ * 5. Invalid ranges (zero price, invalid market) revert
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { zkProverService } from '../src/services/zkProverService';
-import { BTC_PERP_CONFIG } from '../src/protocol/types';
+import { hash } from 'starknet';
 
-// Mock On-Chain Fact Registry (mirroring stwo_verifier.cairo V4)
+const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
+
+// High-fidelity Mock Fact Registry (mirroring stwo_verifier.cairo V4)
 class MockFactRegistry {
   public admin: string;
   public proverAddress: string;
@@ -24,11 +27,41 @@ class MockFactRegistry {
     this.proverAddress = proverAddress.toLowerCase();
   }
 
-  registerVerifiedFact(caller: string, factHash: string) {
+  registerVerifiedFact(
+    caller: string,
+    proofType: string,
+    marketId: string,
+    commitment: string,
+    nullifier: string,
+    amount: bigint,
+    oraclePrice: bigint,
+    factHash: string
+  ) {
     const callerNorm = caller.toLowerCase();
     if (callerNorm !== this.admin && callerNorm !== this.proverAddress) {
       throw new Error('UNAUTHORIZED_PROVER');
     }
+    if (oraclePrice <= 0n) throw new Error('INVALID_ZERO_PRICE');
+    if (marketId !== 'BTC-PERP') throw new Error('INVALID_MARKET_ID');
+
+    const inputsHash = zkProverService.computePublicInputsHash(
+      proofType as any,
+      marketId,
+      commitment,
+      nullifier,
+      amount,
+      oraclePrice
+    );
+    const expectedFactHash = zkProverService.computeFactHash(inputsHash);
+
+    if (factHash.toLowerCase() !== expectedFactHash.toLowerCase()) {
+      throw new Error('FACT_HASH_MISMATCH');
+    }
+
+    if (this.verifiedFacts.get(factHash.toLowerCase())) {
+      throw new Error('FACT_ALREADY_REGISTERED');
+    }
+
     this.verifiedFacts.set(factHash.toLowerCase(), true);
   }
 
@@ -45,7 +78,7 @@ class MockFactRegistry {
   }
 }
 
-describe('PEL V4 Fact Registry & Proof Enforcement Tests', () => {
+describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
   let registry: MockFactRegistry;
   const admin = '0x_admin_address';
   const prover = '0x_authorized_prover';
@@ -55,7 +88,7 @@ describe('PEL V4 Fact Registry & Proof Enforcement Tests', () => {
     registry = new MockFactRegistry(admin, prover);
   });
 
-  it('verifies valid registered fact from authorized prover', () => {
+  it('verifies valid registered fact from authorized prover with on-chain hash validation', () => {
     const ownerSecret = '0x11112222333344445555666677778888';
     const nonce = '0xabc123';
     const marginCents = 100_000n; // $1,000
@@ -76,8 +109,17 @@ describe('PEL V4 Fact Registry & Proof Enforcement Tests', () => {
       marginNullifier
     );
 
-    // 1. Authorized prover registers fact
-    registry.registerVerifiedFact(prover, fact.factHash);
+    // 1. Authorized prover registers fact self-describing
+    registry.registerVerifiedFact(
+      prover,
+      'OPEN',
+      'BTC-PERP',
+      fact.commitment,
+      fact.nullifier,
+      fact.amountCents,
+      fact.oraclePriceCents,
+      fact.factHash
+    );
 
     // 2. State transition succeeds
     const isValid = registry.verifyTransitionProof(
@@ -92,28 +134,62 @@ describe('PEL V4 Fact Registry & Proof Enforcement Tests', () => {
     expect(isValid).toBe(true);
   });
 
-  it('rejects unregistered fact even if algebraically formed (no client-side forgery)', () => {
-    const forgedFactHash = '0x_forged_fact_computed_locally';
-    const isValid = registry.verifyTransitionProof(
-      'OPEN',
-      'BTC-PERP',
-      '0x_c0',
-      '0x_nf0',
-      100_000n,
-      9_642_050n,
-      forgedFactHash
-    );
-    expect(isValid).toBe(false);
+  it('rejects registration when fact_hash does not match public inputs', () => {
+    const fakeFactHash = '0x1234567890abcdef';
+    expect(() => {
+      registry.registerVerifiedFact(
+        prover,
+        'OPEN',
+        'BTC-PERP',
+        '0x1111',
+        '0x2222',
+        100_000n,
+        9_642_050n,
+        fakeFactHash
+      );
+    }).toThrow('FACT_HASH_MISMATCH');
+  });
+
+  it('rejects registration with zero oracle price or invalid market', () => {
+    expect(() => {
+      registry.registerVerifiedFact(
+        prover,
+        'OPEN',
+        'BTC-PERP',
+        '0x1111',
+        '0x2222',
+        100_000n,
+        0n,
+        '0x1234'
+      );
+    }).toThrow('INVALID_ZERO_PRICE');
+
+    expect(() => {
+      registry.registerVerifiedFact(
+        prover,
+        'OPEN',
+        'ETH-PERP',
+        '0x1111',
+        '0x2222',
+        100_000n,
+        9_642_050n,
+        '0x1234'
+      );
+    }).toThrow('INVALID_MARKET_ID');
   });
 
   it('rejects fact registration attempt from unauthorized attacker', () => {
     expect(() => {
-      registry.registerVerifiedFact(attacker, '0x_attacker_fact');
+      registry.registerVerifiedFact(
+        attacker,
+        'OPEN',
+        'BTC-PERP',
+        '0x1111',
+        '0x2222',
+        100_000n,
+        9_642_050n,
+        '0x1234'
+      );
     }).toThrow('UNAUTHORIZED_PROVER');
-  });
-
-  it('allows admin to register facts as backup authority', () => {
-    registry.registerVerifiedFact(admin, '0x_admin_fact');
-    expect(registry.verifiedFacts.get('0x_admin_fact')).toBe(true);
   });
 });

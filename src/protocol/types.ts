@@ -116,12 +116,14 @@ export interface OnChainPositionRecord {
 // Exact parameter counts that relayerSecurity.ts enforces.
 
 export const CALLDATA_SCHEMAS = {
-  open_position:          { expectedLength: 5, fields: ['market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'] },
+  open_position:          { expectedLength: 6, fields: ['collateral_owner', 'market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'] },
   update_position:        { expectedLength: 5, fields: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'fact_hash'] },
   fund_position:          { expectedLength: 7, fields: ['market_id', 'commitment', 'old_nullifier', 'new_commitment', 'funding_amount', 'is_long_pays', 'fact_hash'] },
   close_position:         { expectedLength: 6, fields: ['market_id', 'commitment', 'final_nullifier', 'payout_note_commitment', 'payout_amount', 'fact_hash'] },
   liquidate_position:     { expectedLength: 5, fields: ['market_id', 'commitment', 'nullifier', 'fact_hash', 'keeper_recipient'] },
   claim_keeper_bounty:    { expectedLength: 1, fields: ['keeper_recipient'] },
-  claim_payout:           { expectedLength: 2, fields: ['recipient_note_commitment', 'recipient'] },
-  register_verified_fact: { expectedLength: 1, fields: ['fact_hash'] },
+  claim_payout:           { expectedLength: 2, fields: ['payout_nullifier', 'recipient_note_commitment'] },
+  register_verified_fact: { expectedLength: 7, fields: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'fact_hash'] },
+  deposit_liquidity:      { expectedLength: 1, fields: ['amount'] },
+  withdraw_liquidity:     { expectedLength: 1, fields: ['amount'] },
 } as const;

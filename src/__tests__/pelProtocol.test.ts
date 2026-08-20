@@ -121,6 +121,7 @@ describe('PEL Private Perpetuals Protocol Test Suite', () => {
 
   it('6. Builds valid single-call calldata for PELPerpsCore on Starknet Sepolia', () => {
     const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
+      '0x_user_alice',
       'BTC-PERP',
       '0x1111111111111111111111111111111111111111111111111111111111111111',
       '0x2222222222222222222222222222222222222222222222222222222222222222',
@@ -131,7 +132,8 @@ describe('PEL Private Perpetuals Protocol Test Suite', () => {
     expect(openCall.contractAddress).toBe(PERPS_DEPLOYMENTS.sepolia.pelCoreAddress);
     expect(openCall.entrypoint).toBe('open_position');
     const calldata = openCall.calldata as string[];
-    expect(calldata.length).toBe(5);
-    expect(calldata[0]).toBe('0x4254432d50455250'); // 'BTC-PERP' felt
+    expect(calldata.length).toBe(6);
+    expect(calldata[0]).toBe('0x_user_alice');
+    expect(calldata[1]).toBe('0x4254432d50455250'); // 'BTC-PERP' felt
   });
 });

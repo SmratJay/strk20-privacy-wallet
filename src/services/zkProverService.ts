@@ -409,12 +409,28 @@ class ZKProverService {
   // ─── Fact Registration Helper ───────────────────────────────────────────
 
   async registerFactOnChain(
+    proofType: 'OPEN' | 'UPDATE' | 'FUND' | 'LIQUIDATE' | 'CLOSE' | string,
+    marketId: string,
+    commitment: string,
+    nullifier: string,
+    amountCents: bigint,
+    oraclePriceCents: bigint,
     factHash: string,
     account?: any,
     network: 'sepolia' = 'sepolia'
   ): Promise<boolean> {
+    const { factRegistryDispatcher } = await import('./factRegistryDispatcher');
     const { starknetPerpsDispatcher } = await import('./starknetPerpsDispatcher');
-    const call = starknetPerpsDispatcher.buildRegisterFactCall(factHash, network);
+    const call = factRegistryDispatcher.buildRegisterFactCall(
+      proofType,
+      marketId,
+      commitment,
+      nullifier,
+      amountCents,
+      oraclePriceCents,
+      factHash,
+      network
+    );
     await starknetPerpsDispatcher.executeOnChain(account, call, network);
     return true;
   }

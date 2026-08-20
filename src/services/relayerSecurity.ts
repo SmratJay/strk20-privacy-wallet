@@ -16,13 +16,15 @@ export const ALLOWED_ENTRYPOINTS = [
   'claim_keeper_bounty',
   'claim_payout',
   'register_verified_fact',
+  'deposit_liquidity',
+  'withdraw_liquidity',
   'approve',
 ] as const;
 
 export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: number; fieldNames: string[] }> = {
   open_position: {
-    expectedLength: 5,
-    fieldNames: ['market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'],
+    expectedLength: 6,
+    fieldNames: ['collateral_owner', 'market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'],
   },
   update_position: {
     expectedLength: 5,
@@ -46,11 +48,19 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
   },
   claim_payout: {
     expectedLength: 2,
-    fieldNames: ['recipient_note_commitment', 'recipient'],
+    fieldNames: ['payout_nullifier', 'recipient_note_commitment'],
   },
   register_verified_fact: {
+    expectedLength: 7,
+    fieldNames: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'fact_hash'],
+  },
+  deposit_liquidity: {
     expectedLength: 1,
-    fieldNames: ['fact_hash'],
+    fieldNames: ['amount'],
+  },
+  withdraw_liquidity: {
+    expectedLength: 1,
+    fieldNames: ['amount'],
   },
   approve: {
     expectedLength: 3, // spender, amount_low, amount_high
@@ -112,7 +122,6 @@ export function validateRelayerCalls(
     return { isValid: false, error: 'INVALID_CALLS: Array must be non-empty' };
   }
 
-  // Check rate limit
   const rate = checkRateLimit(clientId);
   if (!rate.allowed) {
     return { isValid: false, error: 'RATE_LIMIT_EXCEEDED: Maximum 20 requests per minute exceeded' };
@@ -141,7 +150,6 @@ export function validateRelayerCalls(
       return { isValid: false, error: `MALFORMED_CALLDATA: calldata must be an array for ${entrypoint}` };
     }
 
-    // Validate exact calldata schema (Workstream J)
     const schema = ENTRYPOINT_CALLDATA_SCHEMAS[entrypoint];
     if (schema) {
       if (call.calldata.length !== schema.expectedLength) {
@@ -153,7 +161,6 @@ export function validateRelayerCalls(
         };
       }
 
-      // Ensure every parameter is a valid non-empty string / felt
       for (let i = 0; i < call.calldata.length; i++) {
         const item = call.calldata[i];
         if (item === undefined || item === null || item === '') {

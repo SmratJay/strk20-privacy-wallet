@@ -1,6 +1,6 @@
 /**
  * @file factRegistryDispatcher.ts
- * @description Dispatcher for registering and querying verified facts on the on-chain FactRegistry
+ * @description Dispatcher for registering and querying self-describing verified facts on the on-chain FactRegistry
  */
 
 import { Call, RpcProvider } from 'starknet';
@@ -13,12 +13,32 @@ export class FactRegistryDispatcher {
     this.provider = new RpcProvider({ nodeUrl: rpcUrl });
   }
 
-  buildRegisterFactCall(factHash: string, network: 'sepolia' = 'sepolia'): Call {
+  buildRegisterFactCall(
+    proofType: 'OPEN' | 'UPDATE' | 'FUND' | 'LIQUIDATE' | 'CLOSE' | string,
+    marketId: string,
+    commitment: string,
+    nullifier: string,
+    amountCents: bigint,
+    oraclePriceCents: bigint,
+    factHash: string,
+    network: 'sepolia' = 'sepolia'
+  ): Call {
     const config = PERPS_DEPLOYMENTS[network];
+    const proofTypeFelt = '0x' + Buffer.from(proofType).toString('hex');
+    const marketIdFelt = '0x' + Buffer.from(marketId).toString('hex');
+
     return {
       contractAddress: config.stwoVerifierAddress,
       entrypoint: 'register_verified_fact',
-      calldata: [factHash],
+      calldata: [
+        proofTypeFelt,
+        marketIdFelt,
+        commitment,
+        nullifier,
+        '0x' + amountCents.toString(16),
+        '0x' + oraclePriceCents.toString(16),
+        factHash,
+      ],
     };
   }
 
