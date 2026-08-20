@@ -83,7 +83,7 @@ describe('PEL Private Perpetuals Protocol Test Suite', () => {
     const priceFelt     = '0x' + (95_000n * 100n).toString(16); // $95,000 in cents
 
     const manualInputsHash = hash.computePoseidonHashOnElements([
-      proofTypeFelt, marketFelt, proof.commitment, proof.nullifier, amountFelt, priceFelt,
+      proofTypeFelt, marketFelt, proof.commitment, proof.nullifier, amountFelt, priceFelt, witness.ownerAddress,
     ]);
     expect(proof.publicInputsHash).toBe(manualInputsHash);
 

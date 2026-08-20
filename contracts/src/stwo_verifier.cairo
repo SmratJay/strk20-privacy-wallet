@@ -1,13 +1,9 @@
-// PEL Fact Registry V4 (Strict Verification & Public Input Binding)
+// PEL Fact Registry V4.1 (Strict Recipient-Bound Fact Registration & Verifier)
 // Implements Whitepaper Section 3.1 & 11
 //
 // Self-describing Fact Registration:
-// The authorized prover submits public transition inputs and the claimed fact_hash.
-// On-chain, the contract recomputes Poseidon(Poseidon(public_inputs), STWO_TAG)
-// and asserts exact equality, validating all range checks before registering the fact.
-//
-// Trust model: An authorized prover (or protocol admin) registers verified transition
-// facts on-chain. State transitions in PELPerpsCore strictly verify registered facts.
+// Binds all transition parameters including recipient/owner address to eliminate relayer substitution attacks.
+// Fact Hash: Poseidon(Poseidon(proof_type, market_id, commitment, nullifier, amount, oracle_price, recipient), TAG)
 
 use starknet::ContractAddress;
 
@@ -21,6 +17,7 @@ pub trait IStwoVerifier<TContractState> {
         nullifier: felt252,
         margin_or_payout: u128,
         oracle_price: u128,
+        recipient_or_caller: ContractAddress,
         fact_hash: felt252,
     ) -> bool;
 
@@ -32,6 +29,7 @@ pub trait IStwoVerifier<TContractState> {
         nullifier: felt252,
         margin_or_payout: u128,
         oracle_price: u128,
+        recipient_or_caller: ContractAddress,
     ) -> felt252;
 
     fn register_verified_fact(
@@ -42,10 +40,11 @@ pub trait IStwoVerifier<TContractState> {
         nullifier: felt252,
         margin_or_payout: u128,
         oracle_price: u128,
+        recipient_or_caller: ContractAddress,
         fact_hash: felt252,
     );
 
-    fn register_raw_fact(ref self: TContractState, fact_hash: felt252);
+    fn register_emergency_fact(ref self: TContractState, fact_hash: felt252);
     fn is_fact_registered(self: @TContractState, fact_hash: felt252) -> bool;
     fn set_prover_address(ref self: TContractState, prover: ContractAddress);
     fn get_prover_address(self: @TContractState) -> ContractAddress;
@@ -87,6 +86,7 @@ pub mod StwoVerifier {
         pub nullifier: felt252,
         pub margin_or_payout: u128,
         pub oracle_price: u128,
+        pub recipient_or_caller: ContractAddress,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -110,6 +110,7 @@ pub mod StwoVerifier {
             nullifier: felt252,
             margin_or_payout: u128,
             oracle_price: u128,
+            recipient_or_caller: ContractAddress,
         ) -> felt252 {
             let mut state = PoseidonTrait::new();
             state = state.update(proof_type);
@@ -118,6 +119,8 @@ pub mod StwoVerifier {
             state = state.update(nullifier);
             state = state.update(margin_or_payout.into());
             state = state.update(oracle_price.into());
+            let recipient_felt: felt252 = recipient_or_caller.into();
+            state = state.update(recipient_felt);
             state.finalize()
         }
 
@@ -129,12 +132,13 @@ pub mod StwoVerifier {
             nullifier: felt252,
             margin_or_payout: u128,
             oracle_price: u128,
+            recipient_or_caller: ContractAddress,
             fact_hash: felt252,
         ) -> bool {
             self.verified_facts.read(fact_hash)
         }
 
-        // Self-describing registration with on-chain hashing & input validation
+        // Self-describing registration with on-chain hashing & recipient binding
         fn register_verified_fact(
             ref self: ContractState,
             proof_type: felt252,
@@ -143,6 +147,7 @@ pub mod StwoVerifier {
             nullifier: felt252,
             margin_or_payout: u128,
             oracle_price: u128,
+            recipient_or_caller: ContractAddress,
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
@@ -154,7 +159,7 @@ pub mod StwoVerifier {
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 
             let inputs_hash = self.compute_public_inputs_hash(
-                proof_type, market_id, commitment, nullifier, margin_or_payout, oracle_price
+                proof_type, market_id, commitment, nullifier, margin_or_payout, oracle_price, recipient_or_caller
             );
 
             let mut state = PoseidonTrait::new();
@@ -174,24 +179,15 @@ pub mod StwoVerifier {
                 nullifier,
                 margin_or_payout,
                 oracle_price,
+                recipient_or_caller,
             });
         }
 
-        fn register_raw_fact(ref self: ContractState, fact_hash: felt252) {
+        // Emergency admin bypass for critical upgrades
+        fn register_emergency_fact(ref self: ContractState, fact_hash: felt252) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.verified_facts.write(fact_hash, true);
-            self.emit(FactRegistered {
-                fact_hash,
-                proof_type: 0,
-                market_id: 0,
-                commitment: 0,
-                nullifier: 0,
-                margin_or_payout: 0,
-                oracle_price: 0,
-            });
         }
 
         fn is_fact_registered(self: @ContractState, fact_hash: felt252) -> bool {

@@ -366,8 +366,12 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         prev[2],
       ]);
 
+      const browserAccount = (window as any).starknet?.account;
+      const userAddress = browserAccount?.address || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
+
       // Step 2: Build Real Call to PELPerpsCore.close_position
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
+        userAddress,
         targetPos.marketId,
         targetPos.zkCommitment,
         finalNullifier,
@@ -376,7 +380,6 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         closeFactHash
       );
 
-      const browserAccount = (window as any).starknet?.account;
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);
 
       setCurrentTxHash(executionRes.transactionHash);

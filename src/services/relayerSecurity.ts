@@ -17,7 +17,7 @@ export const ALLOWED_ENTRYPOINTS = [
   'claim_payout',
   'register_verified_fact',
   'deposit_liquidity',
-  'withdraw_liquidity',
+  'withdraw_liquidity_shares',
   'approve',
 ] as const;
 
@@ -35,8 +35,8 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
     fieldNames: ['market_id', 'commitment', 'old_nullifier', 'new_commitment', 'funding_amount', 'is_long_pays', 'fact_hash'],
   },
   close_position: {
-    expectedLength: 6,
-    fieldNames: ['market_id', 'commitment', 'final_nullifier', 'payout_commitment', 'payout_amount', 'fact_hash'],
+    expectedLength: 7,
+    fieldNames: ['market_id', 'commitment', 'final_nullifier', 'payout_commitment', 'payout_amount', 'recipient', 'fact_hash'],
   },
   liquidate_position: {
     expectedLength: 5,
@@ -51,16 +51,16 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
     fieldNames: ['payout_nullifier', 'recipient_note_commitment'],
   },
   register_verified_fact: {
-    expectedLength: 7,
-    fieldNames: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'fact_hash'],
+    expectedLength: 8,
+    fieldNames: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'recipient', 'fact_hash'],
   },
   deposit_liquidity: {
     expectedLength: 1,
     fieldNames: ['amount'],
   },
-  withdraw_liquidity: {
+  withdraw_liquidity_shares: {
     expectedLength: 1,
-    fieldNames: ['amount'],
+    fieldNames: ['shares'],
   },
   approve: {
     expectedLength: 3, // spender, amount_low, amount_high

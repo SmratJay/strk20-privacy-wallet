@@ -264,3 +264,141 @@ describe('Invariant 14: payout + loss == locked_margin (conservation through CLO
     });
   });
 });
+
+// ─── Invariant 15: Randomized Multi-Action State-Transition Fuzzing Suite ───
+
+describe('Invariant 15: Randomized Global Financial Conservation under 100+ Transaction Sequences', () => {
+  it('strictly preserves adapter_balance == total_locked + lp_nav + insurance + unclaimed_payouts + unclaimed_bounties', () => {
+    class FuzzVault {
+      public tokenBalance: bigint = 0n;
+      public lockedMargin: bigint = 0n;
+      public lpPoolNav: bigint = 0n;
+      public totalLpShares: bigint = 0n;
+      public insuranceFund: bigint = 0n;
+      public unclaimedPayouts: bigint = 0n;
+      public unclaimedBounties: bigint = 0n;
+
+      assertInvariant() {
+        const totalLiabilities = this.lockedMargin + this.lpPoolNav + this.insuranceFund + this.unclaimedPayouts + this.unclaimedBounties;
+        expect(this.tokenBalance).toBe(totalLiabilities);
+      }
+
+      depositLp(amount: bigint) {
+        this.tokenBalance += amount;
+        this.lpPoolNav += amount;
+        const shares = this.totalLpShares === 0n ? amount * 1_000_000n : (amount * this.totalLpShares) / (this.lpPoolNav - amount);
+        this.totalLpShares += shares;
+        this.assertInvariant();
+      }
+
+      withdrawLp(amount: bigint) {
+        if (this.lpPoolNav >= amount && this.lpPoolNav > 0n && this.totalLpShares > 0n) {
+          const sharesToBurn = (amount * this.totalLpShares) / this.lpPoolNav;
+          this.totalLpShares -= sharesToBurn;
+          this.lpPoolNav -= amount;
+          this.tokenBalance -= amount;
+          this.assertInvariant();
+        }
+      }
+
+      openPosition(margin: bigint) {
+        this.tokenBalance += margin;
+        this.lockedMargin += margin;
+        this.assertInvariant();
+      }
+
+      closePosition(margin: bigint, payout: bigint) {
+        if (this.lockedMargin >= margin) {
+          this.lockedMargin -= margin;
+          if (payout > margin) {
+            const profit = payout - margin;
+            if (this.lpPoolNav >= profit) {
+              this.lpPoolNav -= profit;
+              this.unclaimedPayouts += payout;
+            } else {
+              // Not enough pool liquidity, skip
+              this.lockedMargin += margin;
+              return;
+            }
+          } else {
+            const loss = margin - payout;
+            this.lpPoolNav += loss;
+            this.unclaimedPayouts += payout;
+          }
+          this.assertInvariant();
+        }
+      }
+
+      liquidatePosition(margin: bigint) {
+        if (this.lockedMargin >= margin) {
+          this.lockedMargin -= margin;
+          const bounty = (margin * 200n) / 10000n;
+          const remainder = margin - bounty;
+          this.unclaimedBounties += bounty;
+          this.insuranceFund += remainder;
+          this.assertInvariant();
+        }
+      }
+
+      claimPayout(amount: bigint) {
+        if (this.unclaimedPayouts >= amount && amount > 0n) {
+          this.unclaimedPayouts -= amount;
+          this.tokenBalance -= amount;
+          this.assertInvariant();
+        }
+      }
+
+      claimBounty(amount: bigint) {
+        if (this.unclaimedBounties >= amount && amount > 0n) {
+          this.unclaimedBounties -= amount;
+          this.tokenBalance -= amount;
+          this.assertInvariant();
+        }
+      }
+    }
+
+    const vault = new FuzzVault();
+    vault.depositLp(1_000_000n); // seed $10,000 pool
+
+    // Execute 150 random state transitions
+    let seed = 42;
+    function pseudoRandom(min: number, max: number): number {
+      seed = (seed * 9301 + 49297) % 233280;
+      const rnd = seed / 233280;
+      return Math.floor(min + rnd * (max - min));
+    }
+
+    for (let i = 0; i < 150; i++) {
+      const action = pseudoRandom(0, 7);
+      const amount = BigInt(pseudoRandom(100, 50_000));
+
+      switch (action) {
+        case 0:
+          vault.depositLp(amount);
+          break;
+        case 1:
+          vault.withdrawLp(amount);
+          break;
+        case 2:
+          vault.openPosition(amount);
+          break;
+        case 3: {
+          const payout = BigInt(pseudoRandom(0, Number(amount) * 2));
+          vault.closePosition(amount, payout);
+          break;
+        }
+        case 4:
+          vault.liquidatePosition(amount);
+          break;
+        case 5:
+          vault.claimPayout(amount);
+          break;
+        case 6:
+          vault.claimBounty(amount);
+          break;
+      }
+      vault.assertInvariant();
+    }
+  });
+});
+

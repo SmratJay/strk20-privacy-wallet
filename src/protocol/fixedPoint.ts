@@ -95,22 +95,20 @@ export function calcMaintMarginCents(
   const notional = calcNotionalCents(quantitySats, markPriceCents);
   return mulFixed(notional, maintenanceMarginBps, BPS_SCALE);
 }
-
-/**
- * Is position liquidatable?
- * LIQUIDATABLE iff equity_cents <= maint_margin_cents
- */
 export function isLiquidatable(
-  marginCents: bigint,
-  pnlCents: bigint,
-  fundingCents: bigint,
-  feesCents: bigint,
-  quantitySats: bigint,
-  markPriceCents: bigint,
-  maintenanceMarginBps: bigint,
+  marginOrEquityCents: bigint,
+  pnlOrMaintMarginCents: bigint,
+  fundingCents?: bigint,
+  feesCents?: bigint,
+  quantitySats?: bigint,
+  markPriceCents?: bigint,
+  maintenanceMarginBps?: bigint,
 ): boolean {
-  const equity = calcEquityCents(marginCents, pnlCents, fundingCents, feesCents);
-  const maint  = calcMaintMarginCents(quantitySats, markPriceCents, maintenanceMarginBps);
+  if (fundingCents === undefined && feesCents === undefined) {
+    return marginOrEquityCents <= pnlOrMaintMarginCents;
+  }
+  const equity = calcEquityCents(marginOrEquityCents, pnlOrMaintMarginCents, fundingCents || 0n, feesCents || 0n);
+  const maint  = calcMaintMarginCents(quantitySats || 0n, markPriceCents || 0n, maintenanceMarginBps || 200n);
   return equity <= maint;
 }
 

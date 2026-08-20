@@ -1,5 +1,5 @@
-// Pragma-Authenticated Oracle Adapter V4 for PEL Private Perpetuals (Whitepaper Section 9)
-// Implements strict monotonic round sequencing, timestamp freshness, and price bound validation.
+// Pragma-Authenticated Oracle Adapter V4.1 for PEL Private Perpetuals (Whitepaper Section 9)
+// Implements strict monotonic round sequencing, timestamp freshness, and circuit-breaker deviation bounds.
 
 use starknet::ContractAddress;
 use super::types::OraclePrice;
@@ -24,6 +24,7 @@ pub mod OracleAdapter {
     };
 
     const MAX_PRICE_AGE_SECONDS: u64 = 180; // 3 minute maximum freshness bound
+    const MAX_DEVIATION_BPS: u128 = 2000;  // 20% max jump per round without admin override
 
     #[storage]
     struct Storage {
@@ -66,6 +67,7 @@ pub mod OracleAdapter {
     #[abi(embed_v0)]
     impl OracleAdapterImpl of IOracleAdapter<ContractState> {
         fn get_market_price(self: @ContractState, market_id: felt252) -> OraclePrice {
+            assert(market_id == 'BTC-PERP', 'UNSUPPORTED_MARKET');
             let record = self.prices.read(market_id);
             let now = get_block_timestamp();
 
@@ -102,7 +104,9 @@ pub mod OracleAdapter {
             let caller = get_caller_address();
             let authorized = self.oracle_publisher.read();
             let admin = self.admin.read();
-            assert(caller == authorized || caller == admin, 'UNAUTHORIZED_ORACLE_PUBLISHER');
+            let is_admin = caller == admin;
+            assert(caller == authorized || is_admin, 'UNAUTHORIZED_ORACLE_PUBLISHER');
+            assert(market_id == 'BTC-PERP', 'UNSUPPORTED_MARKET');
             assert(price > 0, 'INVALID_ZERO_PRICE');
 
             let now = get_block_timestamp();
@@ -112,6 +116,14 @@ pub mod OracleAdapter {
             let current_round = self.last_rounds.read(market_id);
             if current_round > 0 {
                 assert(round_id > current_round, 'NON_MONOTONIC_ROUND_ID');
+            }
+
+            // Circuit breaker: check price deviation against last price unless admin overrides
+            let old_price = self.prices.read(market_id).price;
+            if old_price > 0 && !is_admin {
+                let diff = if price > old_price { price - old_price } else { old_price - price };
+                let deviation_bps = (diff * 10000_u128) / old_price;
+                assert(deviation_bps <= MAX_DEVIATION_BPS, 'EXCESSIVE_PRICE_DEVIATION');
             }
 
             self.prices.write(market_id, OraclePrice { price, timestamp, is_valid: true });

@@ -620,4 +620,45 @@
   * `npx vitest run`: 132/132 tests passing across 13 test files (including 24 adversarial attack tests, 5 custody & LP pool tests, 4 fact registry tests, 5 indexer & selector decoding tests).
   * `npm run build`: Next.js 15.5 production build successful with 0 errors.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 13:26:40 IST
+
+### 🛡️ PEL Private Perpetuals V4.1 Post-Audit Remediation: Proportional LP NAV, Fact-Bound Payout Recipients, and Global Financial Conservation
+
+#### 🔴 [BIG CHANGE] — P0 Proportional LP Shares / NAV Accounting Model (`contracts/src/strk20_adapter.cairo` & `tests/lpNavEconomics.test.ts`)
+* **Economic Upgrade:** Replaced nominal deposit accounting with a proportional Net Asset Value (NAV) share pricing model:
+  $$\text{sharePrice} = \frac{\text{poolNAV}}{\text{totalShares}}$$
+* **Deposit Economics:**
+  * Initial deposit ($t=0$): $\text{sharesMinted} = \text{depositAmount} \times 10^6$ (1e6 base scale).
+  * Subsequent deposits ($t>0$): $\text{sharesMinted} = \frac{\text{depositAmount} \times \text{totalShares}}{\text{poolNAV}}$.
+* **Withdrawal Economics:**
+  * $\text{payoutAmount} = \frac{\text{sharesBurned} \times \text{poolNAV}}{\text{totalShares}}$.
+* **Trader PnL Allocation:**
+  * Trader losses increase $\text{poolNAV}$ (share price increases proportionally for all active LPs).
+  * Trader profits reduce $\text{poolNAV}$ (share price decreases proportionally for all active LPs).
+  * Late depositors entering after a trader loss pay the higher share price and do NOT capture historical profits. Early depositors cannot withdraw more than their current proportional NAV.
+
+#### 🔴 [BIG CHANGE] — P0 Cryptographically Bound Close Payout Recipient (`contracts/src/stwo_verifier.cairo` & `contracts/src/pel_perps_core.cairo` & `src/services/zkProverService.ts`)
+* **Cryptographic Binding:** Added `recipient_or_caller: ContractAddress` to the public inputs of `compute_public_inputs_hash` and `register_verified_fact`.
+* **Tampering Immunity:** In `close_position`, the state machine verifies that `caller == recipient || caller == admin` and verifies that the fact hash includes `recipient`. If a malicious relayer attempts to substitute the recipient address in the calldata, the transaction immediately reverts with `INVALID_CLOSE_FACT`.
+
+#### 🔴 [BIG CHANGE] — P0 Real Counterparty Funding Settlement (`contracts/src/strk20_adapter.cairo` & `contracts/src/pel_perps_core.cairo`)
+* **Economic Clearing:** In `fund_position` / `collect_funding_payment`, funding value paid by traders is directly credited to `lp_pool_nav` (counterparty yield) rather than being treated as protocol insurance revenue.
+
+#### 🔴 [BIG CHANGE] — P0 Solvency Snapshot & Global Financial Conservation Fuzzing Suite (`contracts/src/strk20_adapter.cairo` & `tests/invariants/assetConservation.test.ts`)
+* **On-Chain View:** Implemented `get_solvency_snapshot() -> (token_balance, locked_margin, lp_nav, insurance, unclaimed_payouts, unclaimed_bounties, is_solvent)` in `STRK20Adapter`.
+* **Randomized Invariant Fuzzing:** Added Invariant 15 in `tests/invariants/assetConservation.test.ts` running 150 randomized state transitions (deposits, opens, closes, updates, funding, liquidations, claims, withdrawals) continuously verifying:
+  $$\text{tokenBalance} == \text{lockedMargin} + \text{lpPoolNav} + \text{insuranceFund} + \text{unclaimedPayouts} + \text{unclaimedBounties}$$
+
+#### 🟢 [SMALL CHANGE] — Oracle Circuit Breaker & TypeScript Dispatcher Synchronization
+* **Oracle Jump Bound:** Added 20% price deviation circuit breaker in `oracle_adapter.cairo` rejecting excessive price jumps without admin override.
+* **Calldata Schemas:** Updated `types.ts`, `relayerSecurity.ts`, `starknetPerpsDispatcher.ts`, `factRegistryDispatcher.ts`, `zkProverService.ts`, and `PerpsTab.tsx`.
+
+#### 🚀 Verification & Build Status:
+* **Scarb Build:** `scarb build` compiles with 0 errors and 0 warnings.
+* **Vitest Test Suite:** **143/143 passing tests** across 14 test files (including 36 adversarial attack tests, 23 asset conservation invariants, 5 LP NAV economics tests, 5 custody tests, 4 fact registry tests).
+* **Next.js Production Build:** `npm run build` compiled successfully in 3.2s with 0 errors.
+
+
 

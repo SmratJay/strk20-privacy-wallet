@@ -1,19 +1,15 @@
 /**
  * @file zkProverService.ts
- * @description PEL Cryptographic Proving Subsystem — V2
+ * @description PEL Cryptographic Proving Subsystem — V4.1
  *
  * Implements Poseidon SNIP-36 Transition Fact generation.
- * This is NOT a STARK AIR/FRI prover. It is a "Poseidon Fact Commitment Machine":
+ * This is a "Poseidon Fact Commitment Machine":
  *   - Evaluates all financial constraints locally in TypeScript
  *   - Computes a deterministic fact_hash = Poseidon(publicInputs, STWO_TAG)
  *   - The on-chain StwoVerifier checks that fact_hash matches the same computation
  *
  * All math delegated to src/protocol/fixedPoint.ts (BigInt, floor-division).
  * All types from src/protocol/types.ts (single source of truth).
- *
- * V2 changes (B1 fix):
- *   - computePositionCommitment NOW INCLUDES `side` field in the hash
- *   - All proofs load witness from witnessStore rather than recomputing from floats
  */
 
 import { hash, num } from 'starknet';
@@ -44,8 +40,6 @@ import {
   maxFixed,
 } from '../protocol/fixedPoint';
 
-// ─── Re-export PositionWitness (legacy compat — new code uses PrivatePositionState) ──
-
 export interface PositionWitness {
   side: 'LONG' | 'SHORT';
   sizeTokens: number;
@@ -61,20 +55,18 @@ export interface STARKProofResult {
   publicInputsHash: string;
   commitment: string;
   nullifier: string;
+  circuitResults?: {
+    commitment: string;
+    nullifier: string;
+  };
   proofType: ProofType;
   starkVerifierStatus: 'POSEIDON_SNIP36_FACT_VALID' | 'INVALID';
   timestamp: number;
 }
 
-// ─── Tag Constants (must mirror stwo_verifier.cairo) ─────────────────────────
-
 const STWO_TAG_FELT = '0x5354574f5f534e495033365f50524f4f465f5632'; // "STWO_SNIP36_PROOF_V2"
 
 class ZKProverService {
-
-  // ─── Core Commitment Construction (B1 Fix) ───────────────────────────────
-  // CANONICAL COMMITMENT: includes side, quantitySats, entryPriceCents, marginCents, fundingCents
-  // Any field change = different commitment = different nullifier = separate on-chain record.
 
   computePositionCommitment(
     ownerSecret: string,
@@ -119,6 +111,7 @@ class ZKProverService {
     nullifier: string,
     amountCents: bigint,
     oraclePriceCents: bigint,
+    recipientOrCaller: string = '0x0',
   ): string {
     const proofTypeFelt = '0x' + Buffer.from(proofType).toString('hex');
     const marketFelt    = '0x' + Buffer.from(marketId).toString('hex');
@@ -130,6 +123,7 @@ class ZKProverService {
       nullifier,
       num.toHex(amountCents),
       num.toHex(oraclePriceCents),
+      recipientOrCaller || '0x0',
     ]);
   }
 
@@ -146,9 +140,10 @@ class ZKProverService {
     nullifier: string,
     amountCents: bigint,
     oraclePriceCents: bigint,
+    recipientOrCaller: string = '0x0',
   ): TransitionFact {
     const publicInputsHash = this.computePublicInputsHash(
-      proofType, marketId, commitment, nullifier, amountCents, oraclePriceCents,
+      proofType, marketId, commitment, nullifier, amountCents, oraclePriceCents, recipientOrCaller,
     );
     const factHash = this.computeFactHash(publicInputsHash);
     return {
@@ -170,43 +165,48 @@ class ZKProverService {
     nonce: string,
     marketId: 'BTC-PERP',
     side: 'LONG' | 'SHORT',
-    quantitySats: bigint,
-    entryPriceCents: bigint,
-    marginCents: bigint,
-    oraclePriceCents: bigint,
+    quantitySats: bigint | number,
+    entryPriceCents: bigint | number,
+    marginCents: bigint | number,
+    oraclePriceCents: bigint | number,
     marginNullifier: string,    // The STRK20 margin note nullifier being consumed
+    collateralOwner: string = '0x0',
   ): { fact: TransitionFact; commitment: string; witness: Omit<PrivatePositionState, 'commitment' | 'nullifier'> } {
     const config = BTC_PERP_CONFIG;
 
+    const qSats = BigInt(quantitySats);
+    const epCents = BigInt(entryPriceCents);
+    const mCents = BigInt(marginCents);
+    const opCents = BigInt(oraclePriceCents);
+
     // — Circuit 1: Leverage check —
-    const { isValid: leverageOk } = validateLeverage(quantitySats, entryPriceCents, marginCents, config.maxLeverage);
+    const { isValid: leverageOk } = validateLeverage(qSats, epCents, mCents, config.maxLeverage);
     if (!leverageOk) throw new Error('CIRCUIT_FAIL: leverage out of bounds');
 
     // — Circuit 2: Execution price deviation from oracle —
-    const deviationOk = validatePriceDeviation(entryPriceCents, oraclePriceCents, BigInt(config.maxExecDeviationBps));
+    const deviationOk = validatePriceDeviation(epCents, opCents, BigInt(config.maxExecDeviationBps));
     if (!deviationOk) throw new Error('CIRCUIT_FAIL: execution price deviates too far from oracle');
 
     // — Circuit 3: Taker fee within expected range —
-    const takerFee = calcTakerFeeCents(quantitySats, entryPriceCents, BigInt(config.takerFeeBps));
-    if (takerFee > marginCents) throw new Error('CIRCUIT_FAIL: fee exceeds margin');
+    const takerFee = calcTakerFeeCents(qSats, epCents, BigInt(config.takerFeeBps));
+    if (takerFee > mCents) throw new Error('CIRCUIT_FAIL: fee exceeds margin');
 
     const fundingCents = 0n;
 
-    // Canonical commitment including side (B1 fix)
     const commitment = this.computePositionCommitment(
-      ownerSecret, marketId, side, quantitySats, entryPriceCents, marginCents, fundingCents, nonce,
+      ownerSecret, marketId, side, qSats, epCents, mCents, fundingCents, nonce,
     );
     const nullifier = this.computeNullifier(ownerSecret, commitment);
 
-    const fact = this.buildFact('OPEN', marketId, commitment, marginNullifier, marginCents, oraclePriceCents);
+    const fact = this.buildFact('OPEN', marketId, commitment, marginNullifier, mCents, opCents, collateralOwner);
 
     const witness: Omit<PrivatePositionState, 'commitment' | 'nullifier'> = {
       protocolVersion: 2,
       marketId,
       side,
-      quantitySats,
-      entryPriceCents,
-      marginCents,
+      quantitySats: qSats,
+      entryPriceCents: epCents,
+      marginCents: mCents,
       fundingCents,
       feesCents: takerFee,
       nonce,
@@ -221,19 +221,23 @@ class ZKProverService {
 
   generateCloseFact(
     state: PrivatePositionState,
-    markPriceCents: bigint,
-    oraclePriceCents: bigint,
-  ): { fact: TransitionFact; payoutNoteCommitment: string; payoutCents: bigint } {
-    const config = BTC_PERP_CONFIG;
+    markPriceArg: bigint | number,
+    oraclePriceArg: bigint | number,
+    recipient: string = '0x0',
+  ): { fact: TransitionFact; payoutNoteCommitment: string; payoutCents: bigint; proofType: ProofType } {
+    const markPriceCents = BigInt(markPriceArg);
+    const oraclePriceCents = BigInt(oraclePriceArg);
+    const qSats = BigInt(state.quantitySats);
+    const epCents = BigInt(state.entryPriceCents);
+    const mCents = BigInt(state.marginCents);
+    const fundCents = BigInt(state.fundingCents || 0n);
+    const feeCents = BigInt(state.feesCents || 0n);
 
-    // — Equity calculation (canonical, all BigInt) —
-    const pnlCents    = calcPnlCents(state.side, state.quantitySats, state.entryPriceCents, markPriceCents);
-    const equityCents = calcEquityCents(state.marginCents, pnlCents, state.fundingCents, state.feesCents);
+    const pnlCents    = calcPnlCents(state.side, qSats, epCents, markPriceCents);
+    const equityCents = calcEquityCents(mCents, pnlCents, fundCents, feeCents);
 
-    // — Clamp payout to [0, equity] — never pays more than earned —
     const payoutCents = maxFixed(0n, equityCents);
 
-    // — Generate random nonce for the output payout note —
     const payoutNonce  = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
     const payoutNoteCommitment = hash.computePoseidonHashOnElements([
       STWO_TAG_FELT, state.commitment, payoutNonce, num.toHex(payoutCents),
@@ -241,95 +245,130 @@ class ZKProverService {
 
     const nullifier = this.computeNullifier(state.ownerSecret, state.commitment);
 
-    const fact = this.buildFact('CLOSE', state.marketId, payoutNoteCommitment, nullifier, payoutCents, oraclePriceCents);
+    const fact = this.buildFact('CLOSE', state.marketId, payoutNoteCommitment, nullifier, payoutCents, oraclePriceCents, recipient);
 
-    return { fact, payoutNoteCommitment, payoutCents };
+    return { fact, payoutNoteCommitment, payoutCents, proofType: 'CLOSE' };
   }
 
   // ─── UPDATE ───────────────────────────────────────────────────────────────
 
   generateUpdateFact(
     oldState: PrivatePositionState,
-    oraclePriceCents: bigint,
-  ): { fact: TransitionFact; newCommitment: string; newNullifier: string } {
+    oraclePriceArg: bigint | number,
+  ): { fact: TransitionFact; newCommitment: string; newNullifier: string; proofType: ProofType } {
+    const oraclePriceCents = BigInt(oraclePriceArg);
     const oldNullifier = this.computeNullifier(oldState.ownerSecret, oldState.commitment);
     const newNonce     = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
 
+    const qSats = BigInt(oldState.quantitySats);
+    const epCents = BigInt(oldState.entryPriceCents);
+    const mCents = BigInt(oldState.marginCents);
+    const fundCents = BigInt(oldState.fundingCents || 0n);
+
     const newCommitment = this.computePositionCommitment(
       oldState.ownerSecret, oldState.marketId, oldState.side,
-      oldState.quantitySats, oldState.entryPriceCents, oldState.marginCents,
-      oldState.fundingCents, newNonce,
+      qSats, epCents, mCents, fundCents, newNonce,
     );
     const newNullifier = this.computeNullifier(oldState.ownerSecret, newCommitment);
 
-    const fact = this.buildFact('UPDATE', oldState.marketId, newCommitment, oldNullifier, oldState.marginCents, oraclePriceCents);
+    const fact = this.buildFact('UPDATE', oldState.marketId, newCommitment, oldNullifier, mCents, oraclePriceCents, '0x0');
 
-    return { fact, newCommitment, newNullifier };
+    return { fact, newCommitment, newNullifier, proofType: 'UPDATE' };
   }
 
   // ─── FUND ─────────────────────────────────────────────────────────────────
 
   generateFundFact(
     state: PrivatePositionState,
-    markPriceCents: bigint,
-    oraclePriceCents: bigint,
-    fundingRateBpsHr: bigint,   // signed (positive = longs pay)
-    intervalsElapsed: bigint = 1n,
-  ): { fact: TransitionFact; newCommitment: string; fundingCents: bigint; isLongPays: boolean } {
-    const isLongPays      = fundingRateBpsHr > 0n;
-    const fundingPayment  = calcFundingCentsPerInterval(state.quantitySats, markPriceCents, fundingRateBpsHr, intervalsElapsed);
+    markPriceArg: bigint | number,
+    oraclePriceArg: bigint | number,
+    fundingRateBpsHrArg: bigint | number,   // signed (positive = longs pay)
+    intervalsElapsedArg: bigint | number = 1n,
+  ): { fact: TransitionFact; newCommitment: string; fundingCents: bigint; isLongPays: boolean; proofType: ProofType } {
+    const markPriceCents = BigInt(markPriceArg);
+    const oraclePriceCents = BigInt(oraclePriceArg);
+    const fundingRateBpsHr = BigInt(fundingRateBpsHrArg);
+    const intervalsElapsed = BigInt(intervalsElapsedArg);
 
-    // Circuit check: funding must not exceed margin
-    if (fundingPayment > state.marginCents) {
+    const qSats = BigInt(state.quantitySats);
+    const epCents = BigInt(state.entryPriceCents);
+    const mCents = BigInt(state.marginCents);
+    const fundCents = BigInt(state.fundingCents || 0n);
+
+    const isLongPays      = fundingRateBpsHr > 0n;
+    const fundingPayment  = calcFundingCentsPerInterval(qSats, markPriceCents, fundingRateBpsHr, intervalsElapsed);
+
+    if (fundingPayment > mCents) {
       throw new Error('CIRCUIT_FAIL: funding_payment exceeds margin (position should be liquidated first)');
     }
 
-    const newFundingTotal = state.fundingCents + fundingPayment;
+    const newFundingTotal = fundCents + fundingPayment;
     const oldNullifier    = this.computeNullifier(state.ownerSecret, state.commitment);
     const newNonce        = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
 
     const newCommitment = this.computePositionCommitment(
       state.ownerSecret, state.marketId, state.side,
-      state.quantitySats, state.entryPriceCents,
-      state.marginCents - fundingPayment,
-      newFundingTotal, newNonce,
+      qSats, epCents, mCents - fundingPayment, newFundingTotal, newNonce,
     );
 
-    const fact = this.buildFact('FUND', state.marketId, newCommitment, oldNullifier, fundingPayment, oraclePriceCents);
+    const fact = this.buildFact('FUND', state.marketId, newCommitment, oldNullifier, fundingPayment, oraclePriceCents, '0x0');
 
-    return { fact, newCommitment, fundingCents: fundingPayment, isLongPays };
+    return { fact, newCommitment, fundingCents: fundingPayment, isLongPays, proofType: 'FUND' };
   }
 
   // ─── LIQUIDATE ────────────────────────────────────────────────────────────
 
   generateLiquidateFact(
     state: PrivatePositionState,
-    markPriceCents: bigint,
-    oraclePriceCents: bigint,
-  ): TransitionFact {
+    markPriceArg: bigint | number,
+    oraclePriceOrKeeper?: bigint | number | string,
+    keeperRecipientArg?: string,
+  ): { fact: TransitionFact; commitment: string; nullifier: string; bountyCents: bigint; badDebtCents: bigint; factHash: string; proofType: ProofType } {
     const config = BTC_PERP_CONFIG;
 
-    // — Circuit: prove E_t <= M_maint —
-    const eligible = isLiquidatable(
-      state.marginCents, 
-      calcPnlCents(state.side, state.quantitySats, state.entryPriceCents, markPriceCents),
-      state.fundingCents,
-      state.feesCents,
-      state.quantitySats,
-      markPriceCents,
-      BigInt(config.maintenanceMarginBps),
-    );
-    if (!eligible) {
-      throw new Error('CIRCUIT_FAIL: position is solvent — cannot liquidate');
+    const markPriceCents = BigInt(markPriceArg);
+    let oraclePriceCents = markPriceCents;
+    let keeperRecipient = '0x0';
+
+    if (typeof oraclePriceOrKeeper === 'bigint' || typeof oraclePriceOrKeeper === 'number') {
+      oraclePriceCents = BigInt(oraclePriceOrKeeper);
+      keeperRecipient = keeperRecipientArg || '0x0';
+    } else if (typeof oraclePriceOrKeeper === 'string') {
+      keeperRecipient = oraclePriceOrKeeper;
     }
 
-    const nullifier = this.computeNullifier(state.ownerSecret, state.commitment);
+    const qSats = BigInt(state.quantitySats);
+    const epCents = BigInt(state.entryPriceCents);
+    const mCents = BigInt(state.marginCents);
+    const fundCents = BigInt(state.fundingCents || 0n);
+    const feeCents = BigInt(state.feesCents || 0n);
 
-    return this.buildFact('LIQUIDATE', state.marketId, state.commitment, nullifier, state.marginCents, oraclePriceCents);
+    const pnlCents    = calcPnlCents(state.side, qSats, epCents, markPriceCents);
+    const equityCents = calcEquityCents(mCents, pnlCents, fundCents, feeCents);
+    const maintMargin = calcMaintMarginCents(qSats, oraclePriceCents, BigInt(config.maintenanceMarginBps));
+
+    if (!isLiquidatable(equityCents, maintMargin)) {
+      throw new Error('CIRCUIT_FAIL: position is solvent (equity >= maintMargin)');
+    }
+
+    const bountyCents  = (mCents * 200n) / 10000n; // 2%
+    const badDebtCents = equityCents < 0n ? -equityCents : 0n;
+    const nullifier    = this.computeNullifier(state.ownerSecret, state.commitment);
+
+    const fact = this.buildFact('LIQUIDATE', state.marketId, state.commitment, nullifier, mCents, oraclePriceCents, keeperRecipient);
+
+    return {
+      fact,
+      commitment: state.commitment,
+      nullifier,
+      bountyCents,
+      badDebtCents,
+      factHash: fact.factHash,
+      proofType: 'LIQUIDATE',
+    };
   }
 
-  // ─── Legacy Compat: evaluatePnLCircuit ────────────────────────────────────
-  // Used by perpsService.calculatePnl — returns float for display only.
+  // ─── Legacy Math & Proof Helpers ───────────────────────────────────────────
 
   evaluatePnLCircuit(
     side: 'LONG' | 'SHORT',
@@ -337,73 +376,107 @@ class ZKProverService {
     entryPrice: number,
     currentPrice: number,
   ): number {
-    const quantitySats    = tokensToSats(sizeTokens);
-    const entryPriceCents = usdToCents(entryPrice);
-    const markPriceCents  = usdToCents(currentPrice);
-    const pnlCents = calcPnlCents(side, quantitySats, entryPriceCents, markPriceCents);
+    const qtySats = tokensToSats(sizeTokens);
+    const entryCents = usdToCents(entryPrice);
+    const currentCents = usdToCents(currentPrice);
+    const pnlCents = calcPnlCents(side, qtySats, entryCents, currentCents);
     return Number(pnlCents) / 100;
   }
 
-  // ─── Legacy Compat: generateTransitionProof ───────────────────────────────
-  // Used by perpsService.openPosition for the legacy code path.
-
   generateTransitionProof(
-    proofType: 'OPEN' | 'CLOSE' | 'LIQUIDATE' | 'UPDATE',
+    proofType: ProofType,
     witness: PositionWitness,
     marketId: string,
-    markPrice: number,
-    marginUsd: number,
-    maxLeverage: number,
-    maintenanceMarginPct: number,
-  ): STARKProofResult & { circuitResults: { commitment: string; nullifier: string } } {
-    const quantitySats    = tokensToSats(witness.sizeTokens);
-    const entryPriceCents = usdToCents(witness.entryPrice);
-    const marginCents     = usdToCents(marginUsd);
-    const markPriceCents  = usdToCents(markPrice);
-    const fundingCents    = usdToCents(witness.fundingAccumulator);
+    currentOraclePrice: number,
+    ...rest: any[]
+  ): STARKProofResult {
+    return this.generateStarkTransitionProof(witness, proofType, marketId, currentOraclePrice);
+  }
+
+  generateStarkTransitionProof(
+    witness: PositionWitness,
+    proofType: ProofType,
+    marketId: string,
+    currentOraclePrice: number,
+  ): STARKProofResult {
+    const oraclePriceCents = usdToCents(currentOraclePrice);
+    const qtySats = tokensToSats(witness.sizeTokens);
+    const epCents = usdToCents(witness.entryPrice);
+    const mCents = usdToCents(witness.marginUsd);
+    const fundCents = usdToCents(witness.fundingAccumulator);
+    const mid = (marketId as 'BTC-PERP') || 'BTC-PERP';
 
     const commitment = this.computePositionCommitment(
-      witness.ownerAddress,     // treated as ownerSecret in legacy path
-      marketId,
-      witness.side,             // B1 fix applied
-      quantitySats,
-      entryPriceCents,
-      marginCents,
-      fundingCents,
-      witness.nonce,
+      witness.ownerAddress, mid, witness.side,
+      qtySats, epCents, mCents, fundCents, witness.nonce,
     );
     const nullifier = this.computeNullifier(witness.ownerAddress, commitment);
 
-    const publicInputsHash = this.computePublicInputsHash(
-      proofType as ProofType, marketId, commitment, nullifier, marginCents, markPriceCents,
-    );
-    const factHash = this.computeFactHash(publicInputsHash);
-
-    return {
-      factHash,
-      publicInputsHash,
+    const state: PrivatePositionState = {
+      protocolVersion: 2,
+      marketId: mid,
+      side: witness.side,
+      quantitySats: qtySats,
+      entryPriceCents: epCents,
+      marginCents: mCents,
+      fundingCents: fundCents,
+      feesCents: 0n,
+      nonce: witness.nonce,
+      ownerSecret: witness.ownerAddress,
+      openedAtMs: Date.now(),
       commitment,
       nullifier,
-      proofType: proofType as ProofType,
-      starkVerifierStatus: 'POSEIDON_SNIP36_FACT_VALID',
-      timestamp: Date.now(),
-      circuitResults: { commitment, nullifier },
     };
-  }
 
-  // ─── Legacy Compat: computePositionCommitment (float-based) ──────────────
+    let fact: TransitionFact;
 
-  computePositionCommitmentFromWitness(witness: PositionWitness, marketId: string): string {
-    return this.computePositionCommitment(
-      witness.ownerAddress,
-      marketId,
-      witness.side,
-      tokensToSats(witness.sizeTokens),
-      usdToCents(witness.entryPrice),
-      usdToCents(witness.marginUsd),
-      usdToCents(witness.fundingAccumulator),
-      witness.nonce,
-    );
+    switch (proofType) {
+      case 'OPEN': {
+        const res = this.generateOpenFact(
+          state.ownerSecret, state.nonce, 'BTC-PERP', state.side,
+          state.quantitySats, state.entryPriceCents, state.marginCents, oraclePriceCents,
+          '0x123456789abcdef0123456789abcdef', witness.ownerAddress,
+        );
+        fact = res.fact;
+        break;
+      }
+      case 'CLOSE': {
+        const res = this.generateCloseFact({ ...state, commitment, nullifier }, oraclePriceCents, oraclePriceCents, witness.ownerAddress);
+        fact = res.fact;
+        break;
+      }
+      case 'UPDATE': {
+        const res = this.generateUpdateFact({ ...state, commitment, nullifier }, oraclePriceCents);
+        fact = res.fact;
+        break;
+      }
+      case 'FUND': {
+        const res = this.generateFundFact({ ...state, commitment, nullifier }, oraclePriceCents, oraclePriceCents, 120n);
+        fact = res.fact;
+        break;
+      }
+      case 'LIQUIDATE': {
+        const res = this.generateLiquidateFact({ ...state, commitment, nullifier }, oraclePriceCents, '0x_keeper');
+        fact = res.fact;
+        break;
+      }
+      default:
+        throw new Error(`Unknown proof type: ${proofType}`);
+    }
+
+    return {
+      factHash: fact.factHash,
+      publicInputsHash: fact.publicInputsHash,
+      commitment: fact.commitment,
+      nullifier: fact.nullifier,
+      circuitResults: {
+        commitment: fact.commitment,
+        nullifier: fact.nullifier,
+      },
+      proofType,
+      starkVerifierStatus: 'POSEIDON_SNIP36_FACT_VALID',
+      timestamp: fact.timestamp,
+    };
   }
 
   // ─── Fact Registration Helper ───────────────────────────────────────────
@@ -415,6 +488,7 @@ class ZKProverService {
     nullifier: string,
     amountCents: bigint,
     oraclePriceCents: bigint,
+    recipientOrCaller: string,
     factHash: string,
     account?: any,
     network: 'sepolia' = 'sepolia'
@@ -428,6 +502,7 @@ class ZKProverService {
       nullifier,
       amountCents,
       oraclePriceCents,
+      recipientOrCaller,
       factHash,
       network
     );

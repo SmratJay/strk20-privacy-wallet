@@ -1,13 +1,14 @@
 /**
  * @file tests/factRegistry.test.ts
- * @description M2 Fact Registry & Proof Enforcement Test Suite (PEL V4 Architecture)
+ * @description M2 Fact Registry & Proof Enforcement Test Suite (PEL V4.1 Architecture)
  *
  * Verifies that:
- * 1. Self-describing fact registration validates public inputs on-chain
+ * 1. Self-describing fact registration validates public inputs including recipient on-chain
  * 2. Hash mismatch between claimed fact and canonical inputs reverts
  * 3. Unregistered facts are rejected (no client-side Poseidon forgery)
  * 4. Unauthorized accounts cannot register facts
  * 5. Invalid ranges (zero price, invalid market) revert
+ * 6. Tampering with recipient invalidates the fact hash
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -16,7 +17,7 @@ import { hash } from 'starknet';
 
 const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
 
-// High-fidelity Mock Fact Registry (mirroring stwo_verifier.cairo V4)
+// High-fidelity Mock Fact Registry (mirroring stwo_verifier.cairo V4.1)
 class MockFactRegistry {
   public admin: string;
   public proverAddress: string;
@@ -35,6 +36,7 @@ class MockFactRegistry {
     nullifier: string,
     amount: bigint,
     oraclePrice: bigint,
+    recipientOrCaller: string,
     factHash: string
   ) {
     const callerNorm = caller.toLowerCase();
@@ -50,7 +52,8 @@ class MockFactRegistry {
       commitment,
       nullifier,
       amount,
-      oraclePrice
+      oraclePrice,
+      recipientOrCaller
     );
     const expectedFactHash = zkProverService.computeFactHash(inputsHash);
 
@@ -72,23 +75,25 @@ class MockFactRegistry {
     nullifier: string,
     amount: bigint,
     oraclePrice: bigint,
+    recipientOrCaller: string,
     factHash: string
   ): boolean {
     return this.verifiedFacts.get(factHash.toLowerCase()) === true;
   }
 }
 
-describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
+describe('PEL V4.1 Fact Registry & Self-Describing Verification Tests', () => {
   let registry: MockFactRegistry;
   const admin = '0x_admin_address';
   const prover = '0x_authorized_prover';
   const attacker = '0x_malicious_actor';
+  const userRecipient = '0x0111111111111111111111111111111111111111';
 
   beforeEach(() => {
     registry = new MockFactRegistry(admin, prover);
   });
 
-  it('verifies valid registered fact from authorized prover with on-chain hash validation', () => {
+  it('verifies valid registered fact from authorized prover with on-chain hash validation and recipient binding', () => {
     const ownerSecret = '0x11112222333344445555666677778888';
     const nonce = '0xabc123';
     const marginCents = 100_000n; // $1,000
@@ -106,7 +111,8 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
       entryPriceCents,
       marginCents,
       oraclePriceCents,
-      marginNullifier
+      marginNullifier,
+      userRecipient
     );
 
     // 1. Authorized prover registers fact self-describing
@@ -118,6 +124,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
       fact.nullifier,
       fact.amountCents,
       fact.oraclePriceCents,
+      userRecipient,
       fact.factHash
     );
 
@@ -129,6 +136,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
       fact.nullifier,
       fact.amountCents,
       fact.oraclePriceCents,
+      userRecipient,
       fact.factHash
     );
     expect(isValid).toBe(true);
@@ -145,6 +153,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
         '0x2222',
         100_000n,
         9_642_050n,
+        userRecipient,
         fakeFactHash
       );
     }).toThrow('FACT_HASH_MISMATCH');
@@ -160,6 +169,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
         '0x2222',
         100_000n,
         0n,
+        userRecipient,
         '0x1234'
       );
     }).toThrow('INVALID_ZERO_PRICE');
@@ -173,6 +183,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
         '0x2222',
         100_000n,
         9_642_050n,
+        userRecipient,
         '0x1234'
       );
     }).toThrow('INVALID_MARKET_ID');
@@ -188,6 +199,7 @@ describe('PEL V4 Fact Registry & Self-Describing Verification Tests', () => {
         '0x2222',
         100_000n,
         9_642_050n,
+        userRecipient,
         '0x1234'
       );
     }).toThrow('UNAUTHORIZED_PROVER');

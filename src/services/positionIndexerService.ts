@@ -44,6 +44,7 @@ export interface RawPerpsEvent {
   fundingAmountCents?: bigint;
   isLongPays?: boolean;
   keeper?: string;
+  recipient?: string;
   blockNumber?: number;
   transactionHash?: string;
 }
@@ -115,13 +116,14 @@ export class PositionIndexerService {
     }
 
     if (selector === this.selectors.PositionClosed) {
-      // Data: [commitment, nullifier, payout_amount, timestamp]
+      // Data: [commitment, nullifier, payout_amount, recipient, timestamp]
       return {
         type: 'PositionClosed',
         marketId: 'BTC-PERP',
         commitment: data[0] || '0x0',
         finalNullifier: data[1] || '0x0',
         amountCents: data[2] ? BigInt(data[2]) : 0n,
+        recipient: data[3],
         blockNumber: eventObj.block_number,
         transactionHash: eventObj.transaction_hash,
       };

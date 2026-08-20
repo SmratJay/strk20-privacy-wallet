@@ -93,7 +93,7 @@ describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
     // Reconstruct exact Poseidon public inputs
     const recomputed = zkProverService.computePublicInputsHash(
       'OPEN', MARKET_ID, proof.commitment, proof.nullifier,
-      usdToCents(500), usdToCents(95000),
+      usdToCents(500), usdToCents(95000), OWNER_SECRET,
     );
     expect(proof.publicInputsHash).toBe(recomputed);
   });

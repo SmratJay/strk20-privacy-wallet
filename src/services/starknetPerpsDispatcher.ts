@@ -73,7 +73,6 @@ export class StarknetPerpsDispatcher {
 
   /**
    * Builds the single call to PELPerpsCore.open_position
-   * Note: PELPerpsCore calls STRK20Adapter.lock_shielded_margin which pulls real ERC20 tokens directly from collateralOwner!
    */
   buildOpenPositionCall(
     collateralOwner: string,
@@ -103,9 +102,10 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds the call to PELPerpsCore.close_position
+   * Builds the call to PELPerpsCore.close_position (with recipient binding)
    */
   buildClosePositionCall(
+    recipient: string,
     marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
     positionCommitment: string,
     finalNullifier: string,
@@ -127,6 +127,7 @@ export class StarknetPerpsDispatcher {
         finalNullifier,
         payoutNoteCommitment,
         payoutAmountFelt,
+        recipient,
         factHash,
       ],
     };
@@ -218,7 +219,7 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds call to STRK20Adapter.claim_payout (P0: Recipient Binding)
+   * Builds call to STRK20Adapter.claim_payout
    */
   buildClaimPayoutCall(
     payoutNullifier: string,
@@ -234,7 +235,7 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds call to STRK20Adapter.deposit_liquidity (P1: LP Counterparty Pool)
+   * Builds call to STRK20Adapter.deposit_liquidity (LP Counterparty Pool)
    */
   buildDepositLiquidityCall(
     amountCents: bigint,
@@ -249,17 +250,17 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Builds call to STRK20Adapter.withdraw_liquidity (P1: LP Counterparty Pool)
+   * Builds call to STRK20Adapter.withdraw_liquidity_shares (Proportional LP Shares)
    */
-  buildWithdrawLiquidityCall(
-    amountCents: bigint,
+  buildWithdrawLiquiditySharesCall(
+    shares: bigint,
     network: 'sepolia' = 'sepolia'
   ): Call {
     const config = PERPS_DEPLOYMENTS[network];
     return {
       contractAddress: config.strk20AdapterAddress,
-      entrypoint: 'withdraw_liquidity',
-      calldata: ['0x' + amountCents.toString(16)],
+      entrypoint: 'withdraw_liquidity_shares',
+      calldata: ['0x' + shares.toString(16)],
     };
   }
 

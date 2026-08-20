@@ -20,6 +20,7 @@ export class FactRegistryDispatcher {
     nullifier: string,
     amountCents: bigint,
     oraclePriceCents: bigint,
+    recipientOrCaller: string,
     factHash: string,
     network: 'sepolia' = 'sepolia'
   ): Call {
@@ -37,6 +38,7 @@ export class FactRegistryDispatcher {
         nullifier,
         '0x' + amountCents.toString(16),
         '0x' + oraclePriceCents.toString(16),
+        recipientOrCaller || '0x0',
         factHash,
       ],
     };

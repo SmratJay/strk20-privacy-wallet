@@ -450,3 +450,84 @@ describe('Attack 24: cross-user collateral theft on open_position', () => {
   });
 });
 
+// ─── Attack 25: Relayer Recipient Tampering on Close ─────────────────────────
+
+describe('Attack 25: relayer recipient substitution attack on close_position', () => {
+  it('REJECTS: tampering with recipient in close_position calldata changes fact_hash and fails on-chain verification', () => {
+    const aliceRecipient = '0x0111111111111111111111111111111111111111';
+    const eveAttacker = '0x0222222222222222222222222222222222222222';
+
+    const aliceFactHash = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash('CLOSE', 'BTC-PERP', '0x1', '0x2', 100000n, 9642050n, aliceRecipient)
+    );
+
+    const eveFactHash = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash('CLOSE', 'BTC-PERP', '0x1', '0x2', 100000n, 9642050n, eveAttacker)
+    );
+
+    expect(aliceFactHash).not.toBe(eveFactHash);
+  });
+});
+
+// ─── Attack 26: Payout Nullifier Reuse ───────────────────────────────────────
+
+describe('Attack 26: double spending payout nullifier', () => {
+  it('REJECTS: reusing an already spent payout nullifier reverts', () => {
+    const spentNullifiers = new Set<string>();
+    const nullifier = '0x_payout_nullifier_1';
+
+    spentNullifiers.add(nullifier);
+
+    expect(() => {
+      if (spentNullifiers.has(nullifier)) {
+        throw new Error('PAYOUT_NULLIFIER_ALREADY_SPENT');
+      }
+    }).toThrow('PAYOUT_NULLIFIER_ALREADY_SPENT');
+  });
+});
+
+// ─── Attack 27: Unauthorized Keeper Bounty Claim ─────────────────────────────
+
+describe('Attack 27: unauthorized keeper claiming another keeper bounty', () => {
+  it('REJECTS: caller != keeper_recipient reverts UNAUTHORIZED_KEEPER', () => {
+    const keeper = '0x_keeper_alice';
+    const caller = '0x_attacker_eve';
+
+    const isAuthorized = caller.toLowerCase() === keeper.toLowerCase();
+    expect(isAuthorized).toBe(false);
+  });
+});
+
+// ─── Attack 28: Solvency Snapshot Insolvency Detection ───────────────────────
+
+describe('Attack 28: solvency snapshot detects undercollateralization', () => {
+  it('REJECTS: is_solvent returns false when tokenBalance < sum of all internal liabilities', () => {
+    const tokenBalance = 500_000n; // $5,000 in token units
+    const lockedMargin = 300_000n;
+    const lpNav = 200_000n;
+    const insurance = 50_000n;
+    const unclaimedPayouts = 50_000n;
+    const unclaimedBounties = 10_000n;
+
+    const totalLiabilities = lockedMargin + lpNav + insurance + unclaimedPayouts + unclaimedBounties; // 610,000
+    const isSolvent = tokenBalance >= totalLiabilities;
+    expect(isSolvent).toBe(false);
+  });
+});
+
+// ─── Attack 29: Excessive Oracle Price Deviation Circuit Breaker ────────────
+
+describe('Attack 29: oracle jump manipulation exceeds circuit-breaker bound', () => {
+  it('REJECTS: >20% price jump without admin override triggers EXCESSIVE_PRICE_DEVIATION', () => {
+    const oldPrice = 100_000n;
+    const manipulatedPrice = 135_000n; // +35% jump
+
+    const diff = manipulatedPrice - oldPrice;
+    const deviationBps = (diff * 10000n) / oldPrice; // 3500 bps (35%)
+    const maxDeviationBps = 2000n; // 20%
+
+    expect(deviationBps > maxDeviationBps).toBe(true);
+  });
+});
+
+

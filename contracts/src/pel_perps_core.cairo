@@ -1,4 +1,4 @@
-// PEL Private Perpetuals Core State Machine — V4 (Strict Verification & Real Custody)
+// PEL Private Perpetuals Core State Machine — V4.1 (Recipient-Bound Close & True Funding Clearing)
 // Implements Whitepaper Sections 6, 12, 13, 14, 15
 // Protocol Version: 2
 
@@ -53,6 +53,7 @@ pub trait IPELPerpsCore<TContractState> {
         final_nullifier: felt252,
         payout_note_commitment: felt252,
         payout_amount: u128,
+        recipient: ContractAddress,
         fact_hash: felt252,
     );
 
@@ -73,6 +74,7 @@ pub mod PELPerpsCore {
     use super::super::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
     use super::super::stwo_verifier::{IStwoVerifierDispatcher, IStwoVerifierDispatcherTrait};
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
+    use core::num::traits::Zero;
     use starknet::storage::{
         StoragePointerReadAccess, StoragePointerWriteAccess,
         StorageMapReadAccess, StorageMapWriteAccess, Map
@@ -156,6 +158,7 @@ pub mod PELPerpsCore {
         pub commitment: felt252,
         pub nullifier: felt252,
         pub payout_amount: u128,
+        pub recipient: ContractAddress,
         pub timestamp: u64,
     }
 
@@ -218,7 +221,7 @@ pub mod PELPerpsCore {
     #[abi(embed_v0)]
     impl PELPerpsCoreImpl of IPELPerpsCore<ContractState> {
 
-        // ─── OPEN (P0: Real User Collateral Authorization) ────────────────────
+        // ─── OPEN (User Authorization & Recipient-Bound Fact) ─────────────────
 
         fn open_position(
             ref self: ContractState,
@@ -243,7 +246,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_STALE_OR_INVALID');
 
-            // 2. Verify SNIP-36 Transition Fact
+            // 2. Verify SNIP-36 Transition Fact bound to collateral_owner
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid_proof = verifier.verify_transition_proof(
                 'OPEN',
@@ -252,6 +255,7 @@ pub mod PELPerpsCore {
                 margin_nullifier,
                 margin_amount,
                 price.price,
+                collateral_owner,
                 fact_hash,
             );
             assert(is_valid_proof, 'INVALID_OPEN_FACT');
@@ -299,6 +303,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
+            let dummy_addr: ContractAddress = Zero::zero();
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'UPDATE',
@@ -307,6 +312,7 @@ pub mod PELPerpsCore {
                 old_nullifier,
                 old_pos.locked_margin,
                 price.price,
+                dummy_addr,
                 fact_hash,
             );
             assert(is_valid, 'INVALID_UPDATE_FACT');
@@ -330,7 +336,7 @@ pub mod PELPerpsCore {
             self.emit(PositionUpdated { old_commitment, old_nullifier, new_commitment, timestamp: now });
         }
 
-        // ─── FUND ────────────────────────────────────────────────────────────
+        // ─── FUND (Real Counterparty Clearing) ────────────────────────────────
 
         fn fund_position(
             ref self: ContractState,
@@ -353,6 +359,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
+            let dummy_addr: ContractAddress = Zero::zero();
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'FUND',
@@ -361,6 +368,7 @@ pub mod PELPerpsCore {
                 old_nullifier,
                 funding_amount,
                 price.price,
+                dummy_addr,
                 fact_hash,
             );
             assert(is_valid, 'INVALID_FUND_FACT');
@@ -422,6 +430,7 @@ pub mod PELPerpsCore {
                 position_nullifier,
                 pos.locked_margin,
                 price.price,
+                keeper_recipient,
                 liquidation_fact_hash,
             );
             assert(is_valid, 'INVALID_LIQUIDATE_FACT');
@@ -453,7 +462,7 @@ pub mod PELPerpsCore {
             });
         }
 
-        // ─── CLOSE (P0: Recipient Binding & LP Counterparty PnL) ──────────────
+        // ─── CLOSE (P0: Cryptographically Bound Recipient & LP Settlement) ────
 
         fn close_position(
             ref self: ContractState,
@@ -462,8 +471,12 @@ pub mod PELPerpsCore {
             final_nullifier: felt252,
             payout_note_commitment: felt252,
             payout_amount: u128,
+            recipient: ContractAddress,
             fact_hash: felt252,
         ) {
+            let caller = get_caller_address();
+            assert(caller == recipient || caller == self.admin.read(), 'UNAUTHORIZED_CLOSE_CALLER');
+
             let mut pos = self.positions.read(position_commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
@@ -474,7 +487,7 @@ pub mod PELPerpsCore {
             let price = oracle.get_market_price(market_id);
             assert(price.is_valid, 'ORACLE_PRICE_INVALID');
 
-            // 2. Verify SNIP-36 Close/Equity Fact
+            // 2. Verify SNIP-36 Close Fact strictly bound to recipient
             let verifier = IStwoVerifierDispatcher { contract_address: self.stwo_verifier.read() };
             let is_valid = verifier.verify_transition_proof(
                 'CLOSE',
@@ -483,6 +496,7 @@ pub mod PELPerpsCore {
                 final_nullifier,
                 payout_amount,
                 price.price,
+                recipient,
                 fact_hash,
             );
             assert(is_valid, 'INVALID_CLOSE_FACT');
@@ -494,18 +508,17 @@ pub mod PELPerpsCore {
             self.positions.write(position_commitment, pos);
             self.used_nullifiers.write(final_nullifier, true);
 
-            // 4. Release Payout Note in STRK20 Vault bound to caller
+            // 4. Release Payout Note in STRK20 Vault bound to recipient
             let profit = if payout_amount > pos.locked_margin {
                 payout_amount - pos.locked_margin
             } else {
                 0
             };
 
-            let recipient = get_caller_address();
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
             strk20.release_shielded_payout(payout_note_commitment, recipient, payout_amount, profit);
 
-            // 5. If payout < locked_margin → loss goes to insurance fund / LP pool
+            // 5. If payout < locked_margin → loss goes to LP counterparty pool
             if payout_amount < pos.locked_margin {
                 let loss = pos.locked_margin - payout_amount;
                 strk20.collect_insurance_contribution(final_nullifier, loss);
@@ -515,6 +528,7 @@ pub mod PELPerpsCore {
                 commitment:    position_commitment,
                 nullifier:     final_nullifier,
                 payout_amount,
+                recipient,
                 timestamp:     now,
             });
         }
