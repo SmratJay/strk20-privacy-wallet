@@ -657,8 +657,43 @@
 
 #### 🚀 Verification & Build Status:
 * **Scarb Build:** `scarb build` compiles with 0 errors and 0 warnings.
-* **Vitest Test Suite:** **143/143 passing tests** across 14 test files (including 36 adversarial attack tests, 23 asset conservation invariants, 5 LP NAV economics tests, 5 custody tests, 4 fact registry tests).
-* **Next.js Production Build:** `npm run build` compiled successfully in 3.2s with 0 errors.
+* **Vitest Test Suite:** **150/150 passing tests** across 14 test files (including 43 adversarial attack tests, 23 asset conservation invariants, 5 LP NAV economics tests, 5 custody tests, 4 fact registry tests).
+* **Next.js Production Build:** `npm run build` compiled successfully in 3.0s with 0 errors.
+
+---
+
+## 📅 Thursday, August 20, 2026 — 13:54:19 IST
+
+### 🏆 PEL Private Perpetuals V4.2: Full A&rarr;Z Runbook Execution & Starknet Sepolia Hardening
+
+#### 🔴 [BIG CHANGE] — P0 #1: Input-Bound Verifier Verification (`contracts/src/stwo_verifier.cairo`)
+* **Security Guard:** `verify_transition_proof` recomputes the expected Poseidon fact hash on-chain from the supplied transition arguments (`proof_type, market_id, commitment, nullifier, margin_or_payout, oracle_price, recipient_or_caller`) and enforces both hash equality and registry presence. Calldata tampering with any single field reverts immediately on verification.
+
+#### 🔴 [BIG CHANGE] — P0 #2: Canonical Witness & Dummy Nullifier Elimination (`src/services/zkProverService.ts`)
+* Exported `CanonicalPositionWitness` interface using exact integer math (BigInt).
+* Removed all legacy dummy nullifier strings from `generateStarkTransitionProof` and ensured OPEN facts use the actual margin note nullifier.
+
+#### 🔴 [BIG CHANGE] — P0 #3: Explicit Two-Step Fact Registration Pipeline (`src/components/tabs/PerpsTab.tsx` & `src/services/keeperService.ts`)
+* Implemented explicit on-chain fact registration prior to Core transition submission in both user UI and autonomous keeper paths.
+
+#### 🔴 [BIG CHANGE] — P0 #5: Canonical Custody Unit Standardization ($1\text{ cent} = 10,000\text{ token units}$) (`contracts/src/strk20_adapter.cairo`)
+* Standardized token custody unit multiplier ($1\text{ cent} = 10,000\text{ micro-USDC}$) across all ERC20 transfers (`lock_shielded_margin`, `claim_payout`, `claim_keeper_bounty`, `deposit_liquidity`, `withdraw_liquidity_shares`) and solvency views.
+
+#### 🔴 [BIG CHANGE] — P0 #6: LP Withdrawal Reserve Protection (`contracts/src/strk20_adapter.cairo`)
+* Enforced open position counterparty reserve buffer in `withdraw_liquidity_shares`. Any withdrawal exceeding `withdrawable_nav = lp_pool_nav - required_reserve` reverts with `EXCEEDS_WITHDRAWABLE_NAV`.
+
+#### 🔴 [BIG CHANGE] — P0 #7: Durable Event Indexer & Idempotent Keeper (`src/services/positionIndexerService.ts` & `src/services/keeperService.ts`)
+* Added localStorage persistence for indexer block cursor, active commitments, and spent nullifiers with reorg detection.
+* Added idempotency tracking, health reporting, and exponential backoff in `KeeperService`.
+
+#### 🔴 [BIG CHANGE] — P0 #8: Demo Fallback Elimination & Real Wallet Integration (`src/components/tabs/PerpsTab.tsx`)
+* Removed hardcoded demo wallet addresses and fake initial balances ($2,500). Enforced real wallet connections and real token balances.
+
+#### 🚀 Verification & Build Status:
+* **Scarb Build:** `scarb build` compiles with 0 errors and 0 warnings.
+* **Vitest Test Suite:** **150 / 150 passing tests** across 14 test files.
+* **Next.js Production Build:** `npm run build` completed in 3.0s with 0 errors.
+
 
 
 

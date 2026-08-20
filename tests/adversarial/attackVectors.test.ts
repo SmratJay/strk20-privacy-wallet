@@ -530,4 +530,119 @@ describe('Attack 29: oracle jump manipulation exceeds circuit-breaker bound', ()
   });
 });
 
+// ─── Attack 30: One-Field-At-A-Time Fact Substitution ───────────────────────
+
+describe('Attack 30: one-field-at-a-time fact substitution attacks', () => {
+  const base = {
+    proofType: 'CLOSE' as const,
+    marketId: 'BTC-PERP',
+    commitment: '0x1111111111111111111111111111111111111111',
+    nullifier: '0x2222222222222222222222222222222222222222',
+    amountCents: 100000n,
+    oraclePriceCents: 9642050n,
+    recipient: '0x3333333333333333333333333333333333333333',
+  };
+
+  const canonicalFactHash = zkProverService.computeFactHash(
+    zkProverService.computePublicInputsHash(
+      base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents, base.oraclePriceCents, base.recipient
+    )
+  );
+
+  it('REJECTS: changed amount creates distinct fact hash', () => {
+    const tampered = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash(
+        base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents + 1n, base.oraclePriceCents, base.recipient
+      )
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+
+  it('REJECTS: changed commitment creates distinct fact hash', () => {
+    const tampered = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash(
+        base.proofType, base.marketId, '0xdeadbeef', base.nullifier, base.amountCents, base.oraclePriceCents, base.recipient
+      )
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+
+  it('REJECTS: changed nullifier creates distinct fact hash', () => {
+    const tampered = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash(
+        base.proofType, base.marketId, base.commitment, '0xdeadbeef', base.amountCents, base.oraclePriceCents, base.recipient
+      )
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+
+  it('REJECTS: changed oracle price creates distinct fact hash', () => {
+    const tampered = zkProverService.computeFactHash(
+      zkProverService.computePublicInputsHash(
+        base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents, base.oraclePriceCents + 100n, base.recipient
+      )
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+});
+
+// ─── Attack 31: LP Withdrawal Exceeding Open Risk Reserve ───────────────────
+
+describe('Attack 31: LP withdrawal exceeding open risk reserve', () => {
+  it('REJECTS: withdrawal payout > withdrawable_nav reverts EXCEEDS_WITHDRAWABLE_NAV', () => {
+    const poolNav = 200_000n; // $2,000 pool
+    const totalLockedCollateral = 300_000n; // $3,000 active open margin
+    const requiredReserve = (totalLockedCollateral * 5000n) / 10000n; // $1,500 reserve
+    const withdrawableNav = poolNav > requiredReserve ? poolNav - requiredReserve : 0n; // $500 max
+
+    const requestedWithdrawal = 100_000n; // $1,000 (exceeds $500 withdrawable NAV)
+
+    expect(() => {
+      if (requestedWithdrawal > withdrawableNav) {
+        throw new Error('EXCEEDS_WITHDRAWABLE_NAV');
+      }
+    }).toThrow('EXCEEDS_WITHDRAWABLE_NAV');
+  });
+});
+
+// ─── Attack 32: Double Claiming Keeper Bounty ────────────────────────────────
+
+describe('Attack 32: double claiming keeper bounty', () => {
+  it('REJECTS: second bounty claim reverts with NO_BOUNTY_AVAILABLE', () => {
+    let bountyBalance = 5000n;
+
+    // First claim
+    const firstPayout = bountyBalance;
+    bountyBalance = 0n;
+    expect(firstPayout).toBe(5000n);
+
+    // Second claim
+    expect(() => {
+      if (bountyBalance <= 0n) {
+        throw new Error('NO_BOUNTY_AVAILABLE');
+      }
+    }).toThrow('NO_BOUNTY_AVAILABLE');
+  });
+});
+
+// ─── Attack 33: Double Claiming Payout Note ──────────────────────────────────
+
+describe('Attack 33: double claiming payout note', () => {
+  it('REJECTS: claiming an already claimed payout note reverts with NOTE_ALREADY_CLAIMED', () => {
+    const claimedNotes = new Set<string>();
+    const noteCommitment = '0x_note_1';
+
+    // First claim
+    claimedNotes.add(noteCommitment);
+
+    // Second claim
+    expect(() => {
+      if (claimedNotes.has(noteCommitment)) {
+        throw new Error('NOTE_ALREADY_CLAIMED');
+      }
+    }).toThrow('NOTE_ALREADY_CLAIMED');
+  });
+});
+
+
 

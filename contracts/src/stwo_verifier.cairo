@@ -1,8 +1,9 @@
-// PEL Fact Registry V4.1 (Strict Recipient-Bound Fact Registration & Verifier)
+// PEL Fact Registry V4.2 (Input-Bound Fact Registration & Verifier)
 // Implements Whitepaper Section 3.1 & 11
 //
-// Self-describing Fact Registration:
-// Binds all transition parameters including recipient/owner address to eliminate relayer substitution attacks.
+// Self-describing & Input-Bound Fact Verification:
+// Recomputes expected Poseidon fact hash inside verify_transition_proof from supplied arguments
+// and validates both hash equality AND verified_facts registration.
 // Fact Hash: Poseidon(Poseidon(proof_type, market_id, commitment, nullifier, amount, oracle_price, recipient), TAG)
 
 use starknet::ContractAddress;
@@ -124,6 +125,7 @@ pub mod StwoVerifier {
             state.finalize()
         }
 
+        // P0 #1: Input-Bound Verifier Verification (Recomputes Fact Hash from Transition Arguments)
         fn verify_transition_proof(
             self: @ContractState,
             proof_type: felt252,
@@ -135,7 +137,16 @@ pub mod StwoVerifier {
             recipient_or_caller: ContractAddress,
             fact_hash: felt252,
         ) -> bool {
-            self.verified_facts.read(fact_hash)
+            let inputs_hash = self.compute_public_inputs_hash(
+                proof_type, market_id, commitment, nullifier, margin_or_payout, oracle_price, recipient_or_caller
+            );
+
+            let mut state = PoseidonTrait::new();
+            state = state.update(inputs_hash);
+            state = state.update(STWO_TAG);
+            let expected_fact_hash = state.finalize();
+
+            (expected_fact_hash == fact_hash) && self.verified_facts.read(fact_hash)
         }
 
         // Self-describing registration with on-chain hashing & recipient binding
@@ -183,7 +194,7 @@ pub mod StwoVerifier {
             });
         }
 
-        // Emergency admin bypass for critical upgrades
+        // Emergency admin bypass for critical upgrades (isolated testnet assumption)
         fn register_emergency_fact(ref self: ContractState, fact_hash: felt252) {
             let caller = get_caller_address();
             assert(caller == self.admin.read(), 'UNAUTHORIZED_ADMIN');

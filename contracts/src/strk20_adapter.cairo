@@ -1,8 +1,13 @@
-// STRK20 Shielded Collateral & Proportional LP Counterparty Vault V4.1
+// STRK20 Shielded Collateral & Proportional LP Counterparty Vault V4.2
 // Implements Whitepaper Section 6, 8, 14
 //
+// Canonical Unit Standard:
+// - Internal Accounting Units: Cents ($1 = 100 cents)
+// - ERC20 Custody Base Units: TestUSDC (6 decimals, 1 USDC = 1,000,000 units)
+// - Multiplier: 1 Cent = 10,000 Token Units
+//
 // Global Financial Conservation Invariant:
-// IERC20.balanceOf(this) >= total_locked_collateral + lp_pool_nav + insurance_fund_balance + unclaimed_payouts_total + unclaimed_bounties_total
+// IERC20.balanceOf(this) >= (total_locked_collateral + lp_pool_nav + insurance_fund_balance + unclaimed_payouts_total + unclaimed_bounties_total) * 10000
 
 use starknet::ContractAddress;
 
@@ -34,6 +39,8 @@ pub trait ISTRK20Adapter<TContractState> {
     fn get_lp_shares_balance(self: @TContractState, provider: ContractAddress) -> u128;
     fn get_total_lp_shares(self: @TContractState) -> u128;
     fn get_lp_pool_nav(self: @TContractState) -> u128;
+    fn get_withdrawable_lp_nav(self: @TContractState) -> u128;
+    fn get_required_open_reserve(self: @TContractState) -> u128;
     fn get_available_liquidity(self: @TContractState) -> u128;
     fn get_share_price_e6(self: @TContractState) -> u128;
 
@@ -67,7 +74,9 @@ pub mod STRK20Adapter {
         StorageMapReadAccess, StorageMapWriteAccess, Map
     };
 
-    const SHARE_SCALE: u128 = 1000000_u128; // 1e6 share scale
+    const SHARE_SCALE: u128 = 1000000_u128;              // 1e6 share scale
+    const TOKEN_DECIMAL_MULTIPLIER: u128 = 10000_u128;   // 1 cent = 10,000 micro-USDC (6 decimals)
+    const RESERVE_BUFFER_BPS: u128 = 5000_u128;          // 50% locked margin reserve buffer
 
     #[storage]
     struct Storage {
@@ -75,7 +84,7 @@ pub mod STRK20Adapter {
         pel_core_address: ContractAddress,
         collateral_token: ContractAddress,
 
-        // Internal Accounting Buckets
+        // Internal Accounting Buckets (in cents)
         total_locked_collateral: u128,
         lp_pool_nav: u128,
         total_lp_shares: u128,
@@ -214,10 +223,11 @@ pub mod STRK20Adapter {
             assert(!self.used_margin_nullifiers.read(nullifier), 'MARGIN_NULLIFIER_ALREADY_USED');
             assert(amount > 0, 'INVALID_MARGIN_AMOUNT');
 
-            // Pull real ERC20 tokens directly from the authenticated collateral owner
+            // Pull real ERC20 tokens in base units (cents * 10,000)
             let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
             let this_contract = get_contract_address();
-            let success = token.transfer_from(collateral_owner, this_contract, amount.into());
+            let token_units_u128 = amount * TOKEN_DECIMAL_MULTIPLIER;
+            let success = token.transfer_from(collateral_owner, this_contract, token_units_u128.into());
             assert(success, 'ERC20_MARGIN_TRANSFER_FAILED');
 
             self.used_margin_nullifiers.write(nullifier, true);
@@ -290,9 +300,10 @@ pub mod STRK20Adapter {
             assert(cur_unclaimed >= amount, 'ACCOUNTING_MISMATCH');
             self.unclaimed_payouts_total.write(cur_unclaimed - amount);
 
-            // Push real ERC20 tokens to verified recipient
+            // Push real ERC20 tokens to verified recipient in base units (cents * 10,000)
             let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
-            let success = token.transfer(caller, amount.into());
+            let token_units_u128 = amount * TOKEN_DECIMAL_MULTIPLIER;
+            let success = token.transfer(caller, token_units_u128.into());
             assert(success, 'ERC20_PAYOUT_TRANSFER_FAILED');
 
             self.emit(PayoutClaimed { note_commitment: recipient_note_commitment, recipient: caller, amount });
@@ -379,14 +390,16 @@ pub mod STRK20Adapter {
             assert(cur_unclaimed_bounties >= bounty, 'ACCOUNTING_MISMATCH');
             self.unclaimed_bounties_total.write(cur_unclaimed_bounties - bounty);
 
+            // Push real ERC20 tokens in base units (cents * 10,000)
             let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
-            let success = token.transfer(keeper_recipient, bounty.into());
+            let token_units_u128 = bounty * TOKEN_DECIMAL_MULTIPLIER;
+            let success = token.transfer(keeper_recipient, token_units_u128.into());
             assert(success, 'ERC20_BOUNTY_TRANSFER_FAILED');
 
             self.emit(KeeperBountyClaimed { keeper: keeper_recipient, amount: bounty });
         }
 
-        // ─── PROPORTIONAL LP COUNTERPARTY POOL (NAV Model) ───────────────────
+        // ─── PROPORTIONAL LP COUNTERPARTY POOL (NAV Model & Reserve Safety) ──
 
         fn deposit_liquidity(ref self: ContractState, amount: u128) -> u128 {
             let caller = get_caller_address();
@@ -394,7 +407,8 @@ pub mod STRK20Adapter {
 
             let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
             let this_contract = get_contract_address();
-            let success = token.transfer_from(caller, this_contract, amount.into());
+            let token_units_u128 = amount * TOKEN_DECIMAL_MULTIPLIER;
+            let success = token.transfer_from(caller, this_contract, token_units_u128.into());
             assert(success, 'ERC20_LP_TRANSFER_FAILED');
 
             let total_shares = self.total_lp_shares.read();
@@ -417,6 +431,7 @@ pub mod STRK20Adapter {
             shares_to_mint
         }
 
+        // P0 #6: LP Withdrawals are Reserve-Aware (prevents draining required counterparty liquidity)
         fn withdraw_liquidity_shares(ref self: ContractState, shares: u128) -> u128 {
             let caller = get_caller_address();
             assert(shares > 0, 'INVALID_WITHDRAW_SHARES');
@@ -431,6 +446,11 @@ pub mod STRK20Adapter {
             let payout_amount = (shares * pool_nav) / total_shares;
             assert(payout_amount > 0, 'ZERO_WITHDRAWAL_PAYOUT');
 
+            // Enforce open interest counterparty reserve
+            let required_reserve = (self.total_locked_collateral.read() * RESERVE_BUFFER_BPS) / 10000_u128;
+            let withdrawable_nav = if pool_nav > required_reserve { pool_nav - required_reserve } else { 0 };
+            assert(payout_amount <= withdrawable_nav, 'EXCEEDS_WITHDRAWABLE_NAV');
+
             self.lp_shares_balances.write(caller, user_shares - shares);
             self.total_lp_shares.write(total_shares - shares);
 
@@ -438,7 +458,8 @@ pub mod STRK20Adapter {
             self.lp_pool_nav.write(pool_nav - payout_amount);
 
             let token = IERC20Dispatcher { contract_address: self.collateral_token.read() };
-            let success = token.transfer(caller, payout_amount.into());
+            let token_units_u128 = payout_amount * TOKEN_DECIMAL_MULTIPLIER;
+            let success = token.transfer(caller, token_units_u128.into());
             assert(success, 'ERC20_LP_WITHDRAW_FAILED');
 
             self.emit(LiquidityWithdrawn { provider: caller, shares_burned: shares, payout_amount });
@@ -455,6 +476,16 @@ pub mod STRK20Adapter {
 
         fn get_lp_pool_nav(self: @ContractState) -> u128 {
             self.lp_pool_nav.read()
+        }
+
+        fn get_required_open_reserve(self: @ContractState) -> u128 {
+            (self.total_locked_collateral.read() * RESERVE_BUFFER_BPS) / 10000_u128
+        }
+
+        fn get_withdrawable_lp_nav(self: @ContractState) -> u128 {
+            let pool_nav = self.lp_pool_nav.read();
+            let required_reserve = self.get_required_open_reserve();
+            if pool_nav > required_reserve { pool_nav - required_reserve } else { 0 }
         }
 
         fn get_available_liquidity(self: @ContractState) -> u128 {
@@ -482,11 +513,8 @@ pub mod STRK20Adapter {
             let unclaimed_payouts = self.unclaimed_payouts_total.read();
             let unclaimed_bounties = self.unclaimed_bounties_total.read();
 
-            let total_liabilities_u128 = locked + lp_nav + ins + unclaimed_payouts + unclaimed_bounties;
-            let total_liabilities_u256: u256 = total_liabilities_u128.into();
-
-            // 1 cent = 10,000 micro-USDC (6 decimals)
-            let total_liabilities_token_units = total_liabilities_u256 * 10000_u256;
+            let total_liabilities_cents = locked + lp_nav + ins + unclaimed_payouts + unclaimed_bounties;
+            let total_liabilities_token_units: u256 = (total_liabilities_cents * TOKEN_DECIMAL_MULTIPLIER).into();
             let is_solvent = token_balance >= total_liabilities_token_units;
 
             (token_balance, locked, lp_nav, ins, unclaimed_payouts, unclaimed_bounties, is_solvent)

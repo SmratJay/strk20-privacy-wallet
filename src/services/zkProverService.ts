@@ -40,6 +40,21 @@ import {
   maxFixed,
 } from '../protocol/fixedPoint';
 
+export interface CanonicalPositionWitness {
+  protocolVersion: 2;
+  marketId: 'BTC-PERP';
+  side: 'LONG' | 'SHORT';
+  quantitySats: bigint;
+  entryPriceCents: bigint;
+  marginCents: bigint;
+  fundingCents: bigint;
+  feesCents: bigint;
+  nonce: string;
+  ownerSecret: string;
+  marginNoteNullifier: string;
+  openedAtMs: number;
+}
+
 export interface PositionWitness {
   side: 'LONG' | 'SHORT';
   sizeTokens: number;
@@ -48,6 +63,7 @@ export interface PositionWitness {
   fundingAccumulator: number;
   nonce: string;
   ownerAddress: string;
+  marginNoteNullifier?: string;
 }
 
 export interface STARKProofResult {
@@ -432,10 +448,11 @@ class ZKProverService {
 
     switch (proofType) {
       case 'OPEN': {
+        const marginNullifier = witness.marginNoteNullifier || hash.computePoseidonHashOnElements(['0x6d617267696e', witness.ownerAddress, witness.nonce]);
         const res = this.generateOpenFact(
           state.ownerSecret, state.nonce, 'BTC-PERP', state.side,
           state.quantitySats, state.entryPriceCents, state.marginCents, oraclePriceCents,
-          '0x123456789abcdef0123456789abcdef', witness.ownerAddress,
+          marginNullifier, witness.ownerAddress,
         );
         fact = res.fact;
         break;

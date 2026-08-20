@@ -56,7 +56,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inspectedPosition, setInspectedPosition] = useState<PerpPosition | null>(null);
   const [sharingPosition, setSharingPosition] = useState<PerpPosition | null>(null);
-  const [shieldedBalanceUsd, setShieldedBalanceUsd] = useState<number>(2500);
+  const [shieldedBalanceUsd, setShieldedBalanceUsd] = useState<number>(0);
   const [activeChartPanel, setActiveChartPanel] = useState<'CHART' | 'ORDERBOOK' | 'DUAL'>('DUAL');
   const [activeBottomTab, setActiveBottomTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY'>('POSITIONS');
 
@@ -71,17 +71,19 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [currentTxHash, setCurrentTxHash] = useState<string | undefined>(undefined);
   const [currentExplorerUrl, setCurrentExplorerUrl] = useState<string | undefined>(undefined);
 
-  const effectiveAddress = walletAddress || '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+  const effectiveAddress = walletAddress || '';
 
   // Fetch and update user's live STRK20 Shielded Balance
   const updateShieldedBalance = useCallback(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && effectiveAddress) {
       try {
         const notes = vaultService.getNotes(effectiveAddress, 'SN_SEPOLIA');
         if (notes.length > 0) {
           const totalRaw = notes.filter(n => !n.isSpent).reduce((acc, n) => acc + n.amount, 0n);
           const bal = Number(totalRaw) / 1e6; // USDC decimals
-          if (bal > 0) setShieldedBalanceUsd(bal);
+          setShieldedBalanceUsd(bal);
+        } else {
+          setShieldedBalanceUsd(0);
         }
       } catch {}
     }
@@ -239,7 +241,26 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       ]);
 
       const browserAccount = (window as any).starknet?.account;
-      const userAddress = browserAccount?.address || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
+      const userAddress = browserAccount?.address || walletAddress;
+      if (!userAddress) {
+        throw new Error('Please connect your Starknet wallet first.');
+      }
+
+      const currentOraclePriceCents = BigInt(Math.floor((currentMarket.markPrice || 96420.50) * 100));
+      const marginCents = BigInt(Math.floor(marginNum * 100));
+
+      // Register Fact on StwoVerifier on-chain
+      await zkProverService.registerFactOnChain(
+        'OPEN',
+        selectedMarketId,
+        newPos.zkCommitment,
+        newPos.nullifier,
+        marginCents,
+        currentOraclePriceCents,
+        userAddress,
+        newPos.starkFactHash,
+        browserAccount
+      );
 
       // Step 2: Build Real Call to PELPerpsCore.open_position
       const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
@@ -367,7 +388,23 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       ]);
 
       const browserAccount = (window as any).starknet?.account;
-      const userAddress = browserAccount?.address || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
+      const userAddress = browserAccount?.address || walletAddress;
+      if (!userAddress) {
+        throw new Error('Please connect your Starknet wallet first.');
+      }
+
+      // Register Close Fact on StwoVerifier on-chain
+      await zkProverService.registerFactOnChain(
+        'CLOSE',
+        targetPos.marketId,
+        payoutNoteCommitment,
+        finalNullifier,
+        BigInt(Math.floor(payoutAmountUsd * 100)),
+        currentPriceCents,
+        userAddress,
+        closeFactHash,
+        browserAccount
+      );
 
       // Step 2: Build Real Call to PELPerpsCore.close_position
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
