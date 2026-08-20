@@ -232,7 +232,7 @@ pub mod PELPerpsCore {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            assert(caller == collateral_owner || caller == self.admin.read(), 'UNAUTHORIZED_COLLATERAL_OWNER');
+            assert(caller == collateral_owner, 'UNAUTHORIZED_COLLATERAL_OWNER');
 
             let market = self.markets.read(market_id);
             assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
@@ -486,7 +486,7 @@ pub mod PELPerpsCore {
         ) {
             assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
             let caller = get_caller_address();
-            assert(caller == recipient || caller == self.admin.read(), 'UNAUTHORIZED_CLOSE_CALLER');
+            assert(caller == recipient, 'UNAUTHORIZED_CLOSE_CALLER');
 
             let mut pos = self.positions.read(position_commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');

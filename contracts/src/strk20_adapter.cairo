@@ -288,7 +288,7 @@ pub mod STRK20Adapter {
 
             let intended_recipient = self.registered_note_recipients.read(recipient_note_commitment);
             let caller = get_caller_address();
-            assert(caller == intended_recipient || caller == self.admin.read(), 'UNAUTHORIZED_PAYOUT_CLAIMANT');
+            assert(caller == intended_recipient, 'UNAUTHORIZED_PAYOUT_CLAIMANT');
 
             assert(!self.claimed_notes.read(recipient_note_commitment), 'NOTE_ALREADY_CLAIMED');
             assert(!self.spent_payout_nullifiers.read(payout_nullifier), 'PAYOUT_NULLIFIER_ALREADY_SPENT');
@@ -389,7 +389,7 @@ pub mod STRK20Adapter {
 
         fn claim_keeper_bounty(ref self: ContractState, keeper_recipient: ContractAddress) {
             let caller = get_caller_address();
-            assert(caller == keeper_recipient || caller == self.admin.read(), 'UNAUTHORIZED_KEEPER');
+            assert(caller == keeper_recipient, 'UNAUTHORIZED_KEEPER');
 
             let bounty = self.keeper_bounties.read(keeper_recipient);
             assert(bounty > 0, 'NO_BOUNTY_AVAILABLE');

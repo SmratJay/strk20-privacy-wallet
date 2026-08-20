@@ -103,9 +103,7 @@ pub mod OracleAdapter {
         ) {
             let caller = get_caller_address();
             let authorized = self.oracle_publisher.read();
-            let admin = self.admin.read();
-            let is_admin = caller == admin;
-            assert(caller == authorized || is_admin, 'UNAUTHORIZED_ORACLE_PUBLISHER');
+            assert(caller == authorized, 'UNAUTHORIZED_ORACLE_PUBLISHER');
             assert(market_id == 'BTC-PERP', 'UNSUPPORTED_MARKET');
             assert(price > 0, 'INVALID_ZERO_PRICE');
 
@@ -118,9 +116,9 @@ pub mod OracleAdapter {
                 assert(round_id > current_round, 'NON_MONOTONIC_ROUND_ID');
             }
 
-            // Circuit breaker: check price deviation against last price unless admin overrides
+            // Circuit breaker: check price deviation against last price
             let old_price = self.prices.read(market_id).price;
-            if old_price > 0 && !is_admin {
+            if old_price > 0 {
                 let diff = if price > old_price { price - old_price } else { old_price - price };
                 let deviation_bps = (diff * 10000_u128) / old_price;
                 assert(deviation_bps <= MAX_DEVIATION_BPS, 'EXCESSIVE_PRICE_DEVIATION');

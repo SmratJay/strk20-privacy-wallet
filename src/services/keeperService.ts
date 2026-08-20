@@ -104,7 +104,11 @@ export class KeeperService {
       return [];
     }
 
-    const keeperRecipient = process.env.KEEPER_ADDRESS || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
+    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS;
+    if (!keeperRecipient) {
+      this.lastError = 'KEEPER_ADDRESS is not configured';
+      return [];
+    }
     const maintBps = BigInt(BTC_PERP_CONFIG.maintenanceMarginBps);
 
     for (const pos of activePositions) {

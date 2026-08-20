@@ -150,3 +150,88 @@ describe('PEL Event Indexer & Autonomous Keeper Subsystem', () => {
     expect(positionIndexerService.isSpentNullifier('0x0liq')).toBe(true);
   });
 });
+
+describe('Durable Daemon Indexer & Reorg Safety Tests (Audit Section 2.7 & 8)', () => {
+  it('handles reorg rollback by resetting state to ancestor block and rebuilding', async () => {
+    const { DaemonIndexerService } = await import('../src/services/daemonIndexerService');
+    const indexer = new DaemonIndexerService();
+    indexer.clear();
+
+    // Ingest block 100 event
+    const C0 = '0x0111111111111111111111111111111111111111111111111111111111111111';
+    indexer.ingestEvent({
+      id: 'tx1_0',
+      txHash: '0xtx1',
+      eventIndex: 0,
+      blockNumber: 100,
+      type: 'PositionOpened',
+      data: [],
+      keys: [],
+      parsedFields: {
+        commitment: C0,
+        marginNullifier: '0x0nf0',
+        marginAmount: 100000n,
+        marketId: 'BTC-PERP',
+      },
+      timestamp: Date.now(),
+    });
+
+    expect(indexer.getActivePositions().length).toBe(1);
+
+    // Ingest block 101 event (orphaned update)
+    const C1 = '0x0222222222222222222222222222222222222222222222222222222222222222';
+    indexer.ingestEvent({
+      id: 'tx2_0',
+      txHash: '0xtx2',
+      eventIndex: 0,
+      blockNumber: 101,
+      type: 'PositionUpdated',
+      data: [],
+      keys: [],
+      parsedFields: {
+        oldCommitment: C0,
+        oldNullifier: '0x0nf0',
+        newCommitment: C1,
+      },
+      timestamp: Date.now(),
+    });
+
+    // Reorg detected at block 101 -> rollback to block 100
+    await indexer.handleReorg(100);
+
+    // After rollback, block 101 update was purged
+    const active = indexer.getActivePositions();
+    expect(active.length).toBe(1);
+    expect(active[0].currentCommitment).toBe(C0);
+  });
+
+  it('survives process restart by loading checkpoint from persistent storage', async () => {
+    const { DaemonIndexerService } = await import('../src/services/daemonIndexerService');
+    const indexer1 = new DaemonIndexerService();
+
+    const C0 = '0x0persistent_pos_1';
+    indexer1.ingestEvent({
+      id: 'tx_p_0',
+      txHash: '0xtx_p',
+      eventIndex: 0,
+      blockNumber: 200,
+      type: 'PositionOpened',
+      data: [],
+      keys: [],
+      parsedFields: {
+        commitment: C0,
+        marginNullifier: '0x0persistent_nf',
+        marginAmount: 50000n,
+        marketId: 'BTC-PERP',
+      },
+      timestamp: Date.now(),
+    });
+    (indexer1 as any).saveCheckpoint();
+
+    // Create fresh instance simulating restart
+    const indexer2 = new DaemonIndexerService();
+    expect(indexer2.getActivePositions().some(p => p.currentCommitment === C0)).toBe(true);
+    expect(indexer2.isNullifierSpent('0x0persistent_nf')).toBe(true);
+  });
+});
+

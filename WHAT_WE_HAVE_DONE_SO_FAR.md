@@ -768,8 +768,38 @@
 
 #### 🚀 Master Verification & Build Status:
 * **Scarb Build:** `scarb build` compiles with **0 errors and 0 warnings**.
-* **Vitest Test Suite:** **162 / 162 passing tests** across all 15 test files (100% pass rate).
+* **Vitest Test Suite:** **164 / 164 passing tests** across all 15 test files (100% pass rate).
 * **Next.js Production Build:** `npm run build` compiled **6/6 static & dynamic routes with 0 errors**.
+* **Automated Smoke Test:** `./scripts/smoke_test.sh` passed 100% of checks.
+
+---
+
+## 📅 Thursday, August 20, 2026 — 18:00:00 IST
+
+### 🛡️ PEL BTC-PERP V4.5: Audit Hardening & Principle of Least Privilege
+
+#### 🔴 [BIG CHANGE] — Admin Role Minimization & Least Privilege (Audit Section 2.4)
+* **Cairo Core & Adapter Contracts:**
+  * Removed `|| caller == self.admin.read()` impersonation from `open_position`, `close_position`, `claim_payout`, and `claim_keeper_bounty`.
+  * Position opening is strictly reserved to verified `collateral_owner`; position closing is strictly reserved to verified `recipient`.
+  * Payout and bounty withdrawals are strictly reserved to verified recipients and keepers.
+  * Oracle price updates require the cryptographic authorized publisher address with unbypassed 20% max deviation circuit breakers.
+
+#### 🔴 [BIG CHANGE] — Zero-Fallback Keeper & Explicit Env Resolution (Audit Section 2.1 & 3 Item 5)
+* **Keeper Bot & Service (`keeper/keeperBot.ts` & `src/services/keeperService.ts`):**
+  * Removed hardcoded fallback keeper addresses.
+  * Requires explicit `KEEPER_ADDRESS` or `KEEPER_RECIPIENT_ADDRESS` configuration.
+  * Rejects candidate generation if oracle feed is stale ($>180\text{s}$) or private witness is absent.
+
+#### 🔴 [BIG CHANGE] — Hybrid Disk/Memory/Browser Daemon Persistence & Reorg Suite (Audit Section 2.7 & 8)
+* **Daemon Indexer (`src/services/daemonIndexerService.ts`):**
+  * Implemented hybrid persistence: writes to `.cache/pel_indexer_db.json` when running under Node.js / daemon mode, and `localStorage` when in browser context.
+  * Preserves full block headers, event tables, position graphs, and spent nullifier sets across process restarts.
+  * Added reorg rollback tests ensuring indexer unwinds orphaned blocks and reconstructs canonical position graphs accurately.
+
+#### 🔴 [BIG CHANGE] — Automated End-to-End Smoke Test Script (Audit Section 10 & 13)
+* Created [`scripts/smoke_test.sh`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/scripts/smoke_test.sh) executing complete 4-step build, full vitest run, Next.js compilation, and protocol configuration assertions.
+
 
 
 

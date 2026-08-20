@@ -97,30 +97,56 @@ export class DaemonIndexerService {
   }
 
   private saveCheckpoint(): void {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      const data = {
-        lastIndexedBlock: this.lastIndexedBlock,
-        lastBlockHash: this.lastBlockHash,
-        spentNullifiers: Array.from(this.spentNullifiers),
-        positions: Array.from(this.positions.entries()).map(([k, v]) => ({
-          k,
-          v: { ...v, lockedMarginCents: v.lockedMarginCents.toString() },
-        })),
-        edges: Array.from(this.commitmentEdges.entries()),
-        nullifiers: Array.from(this.nullifiersToCommitment.entries()),
-      };
-      localStorage.setItem(this.storageKey(), JSON.stringify(data));
-    } catch (err: any) {
-      this.lastError = 'Checkpoint save failed: ' + err?.message;
+    const data = {
+      lastIndexedBlock: this.lastIndexedBlock,
+      lastBlockHash: this.lastBlockHash,
+      spentNullifiers: Array.from(this.spentNullifiers),
+      positions: Array.from(this.positions.entries()).map(([k, v]) => ({
+        k,
+        v: { ...v, lockedMarginCents: v.lockedMarginCents.toString() },
+      })),
+      edges: Array.from(this.commitmentEdges.entries()),
+      nullifiers: Array.from(this.nullifiersToCommitment.entries()),
+    };
+
+    if (typeof window === 'undefined') {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const dir = path.join(process.cwd(), '.cache');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'pel_indexer_db.json'), JSON.stringify(data, null, 2));
+      } catch (err: any) {
+        this.lastError = 'Disk checkpoint save failed: ' + err?.message;
+      }
+    } else if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(this.storageKey(), JSON.stringify(data));
+      } catch (err: any) {
+        this.lastError = 'Browser checkpoint save failed: ' + err?.message;
+      }
     }
   }
 
   private loadCheckpoint(): void {
-    if (typeof localStorage === 'undefined') return;
+    let raw: string | null = null;
+    if (typeof window === 'undefined') {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const file = path.join(process.cwd(), '.cache', 'pel_indexer_db.json');
+        if (fs.existsSync(file)) {
+          raw = fs.readFileSync(file, 'utf8');
+        }
+      } catch {}
+    } else if (typeof localStorage !== 'undefined') {
+      try {
+        raw = localStorage.getItem(this.storageKey());
+      } catch {}
+    }
+
+    if (!raw) return;
     try {
-      const raw = localStorage.getItem(this.storageKey());
-      if (!raw) return;
       const data = JSON.parse(raw);
       this.lastIndexedBlock = data.lastIndexedBlock || 0;
       this.lastBlockHash = data.lastBlockHash || '0x0';
@@ -183,6 +209,11 @@ export class DaemonIndexerService {
     const ancestor = this.blocks.get(ancestorBlock);
     this.lastBlockHash = ancestor ? ancestor.blockHash : '0x0';
     this.saveCheckpoint();
+  }
+
+  ingestEvent(ev: IndexedEventRecord): void {
+    this.events.set(ev.id, ev);
+    this.applyEventToState(ev);
   }
 
   // ─── Event Processing & State Machine Transitions ───────────────────────────
@@ -278,6 +309,20 @@ export class DaemonIndexerService {
         break;
       }
     }
+  }
+
+  clear(): void {
+    this.blocks.clear();
+    this.events.clear();
+    this.positions.clear();
+    this.commitmentEdges.clear();
+    this.nullifiersToCommitment.clear();
+    this.spentNullifiers.clear();
+    this.keeperJobs.clear();
+    this.lastIndexedBlock = 0;
+    this.lastBlockHash = '0x0';
+    this.lastError = undefined;
+    this.saveCheckpoint();
   }
 
   // ─── Public Queries & Health ────────────────────────────────────────────────

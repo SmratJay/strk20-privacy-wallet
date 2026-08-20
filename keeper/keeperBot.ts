@@ -16,7 +16,11 @@ async function main() {
   console.log('  Monitoring active on-chain commitments & solvency risk');
   console.log('===========================================================');
 
-  const KEEPER_BENEFICIARY = process.env.KEEPER_RECIPIENT_ADDRESS || '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+  const KEEPER_BENEFICIARY = process.env.KEEPER_RECIPIENT_ADDRESS || process.env.KEEPER_ADDRESS;
+  if (!KEEPER_BENEFICIARY) {
+    console.error('FATAL: KEEPER_RECIPIENT_ADDRESS or KEEPER_ADDRESS environment variable must be set.');
+    process.exit(1);
+  }
   console.log(`Keeper Beneficiary Address: ${KEEPER_BENEFICIARY}`);
 
   setInterval(async () => {
