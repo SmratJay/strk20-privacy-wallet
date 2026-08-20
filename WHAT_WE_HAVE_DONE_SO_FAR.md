@@ -800,6 +800,39 @@
 #### 🔴 [BIG CHANGE] — Automated End-to-End Smoke Test Script (Audit Section 10 & 13)
 * Created [`scripts/smoke_test.sh`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/scripts/smoke_test.sh) executing complete 4-step build, full vitest run, Next.js compilation, and protocol configuration assertions.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 18:30:00 IST
+
+### 🏆 PEL BTC-PERP V4.5 Execution Runbook: Complete Elimination of Discrepancies & Real Cairo Integration
+
+#### 🔴 [P0-01] — Canonical Pragma / OracleAdapter Integration
+* Replaced fake REST fallback in `pragmaOracleService.ts` with direct on-chain query to `OracleAdapter.cairo` via Starknet `RpcProvider`.
+* Enforced strict fail-closed semantics: if oracle is unreachable, price is zero, or age $>180\text{s}$, returns `isFresh: false` and `priceUsd: 0`.
+
+#### 🔴 [P0-04] — CLOSE Fact Schema Alignment & Private Witness Recovery
+* Updated `PerpsTab.tsx` and `zkProverService.ts` to strictly bind `(positionCommitment, finalNullifier, payoutCommitment, payoutAmount, oraclePrice, recipient)`.
+* Deleted no-witness fake fallback in `handleClosePosition`; now requires explicit private witness from local encrypted storage.
+
+#### 🔴 [P0-05] — Prover-Only Normal Fact Registration
+* In `contracts/src/stwo_verifier.cairo`, restricted `register_open_fact`, `register_update_fact`, `register_fund_fact`, `register_close_fact`, `register_liquidate_fact` strictly to `assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER')`.
+* Kept isolated emergency fact registration path for admin only.
+
+#### 🔴 [P0-02] — Real Cairo Contract Integration Test Suite
+* Implemented [`tests/integration/realCairoContractIntegration.test.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/tests/integration/realCairoContractIntegration.test.ts) verifying the compiled Sierra/CASM contract artifacts and ABI entrypoints from `contracts/target/dev/`.
+* Tested real calldata encoding for Flow 1 (Open $\to$ Update $\to$ Fund $\to$ Close $\to$ Claim), Flow 2 (Liquidation $\to$ Bounty), and Fact field mutation attacks.
+
+#### 🔴 [P0-03] — Dual Release Gate Architecture
+* Created [`scripts/local_quality_gate.sh`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/scripts/local_quality_gate.sh) covering Scarb build, 169 Vitest tests, Next.js typecheck, and fallback hygiene check.
+* Created [`scripts/sepolia_smoke_test.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/scripts/sepolia_smoke_test.ts) covering live RPC connection, contract address verification, Core $\leftrightarrow$ Adapter $\leftrightarrow$ Verifier $\leftrightarrow$ Oracle wiring, and price freshness.
+
+#### 🚀 Master Verification & Build Status:
+* **Scarb Build:** `scarb build` compiles with **0 errors and 0 warnings**.
+* **Vitest Test Suite:** **169 / 169 passing tests** across all 16 test files (100% pass rate).
+* **Next.js Production Build:** `npm run build` compiled **6/6 static & dynamic routes with 0 errors**.
+* **Local Quality Gate:** `./scripts/local_quality_gate.sh` passed 100% green.
+
+
 
 
 

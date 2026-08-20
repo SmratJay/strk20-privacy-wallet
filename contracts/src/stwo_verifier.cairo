@@ -438,9 +438,7 @@ pub mod StwoVerifier {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER');
             assert(oracle_price > 0, 'INVALID_ZERO_PRICE');
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 
@@ -463,9 +461,7 @@ pub mod StwoVerifier {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER');
             assert(oracle_price > 0, 'INVALID_ZERO_PRICE');
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 
@@ -490,9 +486,7 @@ pub mod StwoVerifier {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER');
             assert(oracle_price > 0, 'INVALID_ZERO_PRICE');
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 
@@ -516,9 +510,7 @@ pub mod StwoVerifier {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER');
             assert(oracle_price > 0, 'INVALID_ZERO_PRICE');
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 
@@ -541,9 +533,7 @@ pub mod StwoVerifier {
             fact_hash: felt252,
         ) {
             let caller = get_caller_address();
-            let is_admin = caller == self.admin.read();
-            let is_prover = caller == self.prover_address.read();
-            assert(is_admin || is_prover, 'UNAUTHORIZED_PROVER');
+            assert(caller == self.prover_address.read(), 'UNAUTHORIZED_PROVER');
             assert(oracle_price > 0, 'INVALID_ZERO_PRICE');
             assert(market_id == 'BTC-PERP', 'INVALID_MARKET_ID');
 

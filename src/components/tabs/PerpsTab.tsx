@@ -47,7 +47,7 @@ interface PerpsTabProps {
 export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const { showToast } = useToast();
   const [markets, setMarkets] = useState<PerpMarket[]>(() => perpsService.getMarkets());
-  const [selectedMarketId, setSelectedMarketId] = useState<'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP'>('BTC-PERP');
+  const [selectedMarketId, setSelectedMarketId] = useState<'BTC-PERP'>('BTC-PERP');
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT' | 'STOP'>('MARKET');
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
   const [marginUsd, setMarginUsd] = useState<string>('100');
@@ -358,48 +358,40 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       let closeFactHash: string;
       let payoutAmountUsd: number;
 
-      // Step 1: Check if canonical witness is in witnessStore
-      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment);
-      const currentPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
-
-      if (witness) {
-        const closeFact = zkProverService.generateCloseFact(witness, currentPriceCents, currentPriceCents);
-        payoutNoteCommitment = closeFact.payoutNoteCommitment;
-        finalNullifier = closeFact.fact.nullifier;
-        closeFactHash = closeFact.fact.factHash;
-        payoutAmountUsd = (Number(closeFact.payoutCents) / 100) * partialPct;
-      } else {
-        const pnlUsd = zkProverService.evaluatePnLCircuit(targetPos.side, targetPos.sizeTokens, targetPos.entryPrice, currentMarket.markPrice);
-        payoutAmountUsd = Math.max(0, (targetPos.marginUsd + pnlUsd) * partialPct);
-        const payoutCents = BigInt(Math.floor(payoutAmountUsd * 100));
-        finalNullifier = zkProverService.computeNullifier(effectiveAddress, targetPos.zkCommitment);
-        payoutNoteCommitment = zkProverService.computePositionCommitment(
-          effectiveAddress, targetPos.marketId, targetPos.side,
-          0n, 0n, payoutCents, 0n, '0x09999ba4e'
-        );
-        const fact = zkProverService.buildFact('CLOSE', targetPos.marketId, payoutNoteCommitment, finalNullifier, payoutCents, currentPriceCents);
-        closeFactHash = fact.factHash;
-      }
-
-      setModalSteps((prev) => [
-        { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${(targetPos.unrealizedPnlUsd * partialPct).toFixed(2)}` },
-        { ...prev[1], status: 'LOADING' },
-        prev[2],
-      ]);
-
       const browserAccount = (window as any).starknet?.account;
       const userAddress = browserAccount?.address || walletAddress;
       if (!userAddress) {
         throw new Error('Please connect your Starknet wallet first.');
       }
 
-      // Register Close Fact on StwoVerifier on-chain
-      await zkProverService.registerFactOnChain(
-        'CLOSE',
+      // Step 1: Check canonical witness in witnessStore (P0-04: No weak fallback)
+      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment);
+      if (!witness) {
+        throw new Error('Position witness not found in private shielded storage. Cannot construct valid close proof.');
+      }
+
+      const currentPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
+      const closeFactRes = zkProverService.generateCloseFact(witness, currentPriceCents, currentPriceCents, userAddress);
+
+      payoutNoteCommitment = closeFactRes.payoutNoteCommitment;
+      finalNullifier = closeFactRes.fact.nullifier;
+      closeFactHash = closeFactRes.fact.factHash;
+      payoutAmountUsd = Number(closeFactRes.payoutCents) / 100;
+      const payoutCents = closeFactRes.payoutCents;
+
+      setModalSteps((prev) => [
+        { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${targetPos.unrealizedPnlUsd.toFixed(2)}` },
+        { ...prev[1], status: 'LOADING' },
+        prev[2],
+      ]);
+
+      // Register Close Fact on StwoVerifier on-chain with exact typed arguments (P0-04)
+      await zkProverService.registerCloseFactOnChain(
         targetPos.marketId,
-        payoutNoteCommitment,
+        targetPos.zkCommitment,
         finalNullifier,
-        BigInt(Math.floor(payoutAmountUsd * 100)),
+        payoutNoteCommitment,
+        payoutCents,
         currentPriceCents,
         userAddress,
         closeFactHash,
@@ -409,7 +401,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       // Step 2: Build Real Call to PELPerpsCore.close_position
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
         userAddress,
-        targetPos.marketId,
+        targetPos.marketId as 'BTC-PERP',
         targetPos.zkCommitment,
         finalNullifier,
         payoutNoteCommitment,
@@ -498,8 +490,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                 <button
                   key={m.id}
                   onClick={() => {
-                    if (isLive) {
-                      setSelectedMarketId(m.id);
+                    if (isLive && m.id === 'BTC-PERP') {
+                      setSelectedMarketId('BTC-PERP');
                     } else {
                       showToast({
                         type: 'info',

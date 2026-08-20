@@ -184,9 +184,8 @@ export class KeeperService {
     this.inFlightTransactions.add(idempotencyKey);
 
     try {
-      // Step 1: Register Fact on StwoVerifier
-      await zkProverService.registerFactOnChain(
-        'LIQUIDATE',
+      // Step 1: Register Fact on StwoVerifier with typed registration method
+      await zkProverService.registerLiquidateFactOnChain(
         candidate.marketId,
         candidate.commitment,
         candidate.nullifier,
@@ -207,6 +206,14 @@ export class KeeperService {
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
+
+      // Step 3: Finality Assertion (Audit Section 8 - Finality algorithm)
+      // Check on-chain that position is closed/liquidated
+      const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(candidate.commitment);
+      if (onChainRecord.exists && onChainRecord.isOpen) {
+        console.warn('[KeeperService] Position still open after liquidation tx broadcast; waiting for next finality poll');
+      }
+
       this.processedLiquidations.add(idempotencyKey);
       this.inFlightTransactions.delete(idempotencyKey);
       this.lastSuccessTimestamp = Date.now();
@@ -244,8 +251,13 @@ export class KeeperService {
    */
   start(intervalMs: number = 5000, keeperRecipient?: string, signerAccount?: any) {
     if (this.isRunning) return;
+    const recipient = keeperRecipient || process.env.KEEPER_ADDRESS;
+    if (!recipient) {
+      this.lastError = 'KEEPER_CONFIG_ERROR: KEEPER_ADDRESS is required to start keeper bot';
+      console.warn('[KeeperService] Cannot start autonomous bot: KEEPER_ADDRESS is missing');
+      return;
+    }
     this.isRunning = true;
-    const recipient = keeperRecipient || process.env.KEEPER_ADDRESS || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
 
     this.intervalId = setInterval(async () => {
       try {

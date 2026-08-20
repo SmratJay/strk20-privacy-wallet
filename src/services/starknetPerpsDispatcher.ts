@@ -76,7 +76,7 @@ export class StarknetPerpsDispatcher {
    */
   buildOpenPositionCall(
     collateralOwner: string,
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
+    marketId: 'BTC-PERP' = 'BTC-PERP',
     commitment: string,
     marginNullifier: string,
     marginAmountUsd: number,
@@ -106,7 +106,7 @@ export class StarknetPerpsDispatcher {
    */
   buildClosePositionCall(
     recipient: string,
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
+    marketId: 'BTC-PERP' = 'BTC-PERP',
     positionCommitment: string,
     finalNullifier: string,
     payoutNoteCommitment: string,
@@ -137,7 +137,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.liquidate_position
    */
   buildLiquidatePositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
+    marketId: 'BTC-PERP' = 'BTC-PERP',
     positionCommitment: string,
     positionNullifier: string,
     liquidationFactHash: string,
@@ -164,7 +164,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.update_position
    */
   buildUpdatePositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
+    marketId: 'BTC-PERP' = 'BTC-PERP',
     oldCommitment: string,
     oldNullifier: string,
     newCommitment: string,
@@ -191,7 +191,7 @@ export class StarknetPerpsDispatcher {
    * Builds the call to PELPerpsCore.fund_position (7 arguments)
    */
   buildFundPositionCall(
-    marketId: 'BTC-PERP' | 'ETH-PERP' | 'STRK-PERP' = 'BTC-PERP',
+    marketId: 'BTC-PERP' = 'BTC-PERP',
     commitment: string,
     oldNullifier: string,
     newCommitment: string,

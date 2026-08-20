@@ -327,6 +327,17 @@ export class DaemonIndexerService {
 
   // ─── Public Queries & Health ────────────────────────────────────────────────
 
+  private latestChainBlock: number = 0;
+  private reorgCount: number = 0;
+
+  private selectors = {
+    PositionOpened: hash.getSelectorFromName('PositionOpened'),
+    PositionUpdated: hash.getSelectorFromName('PositionUpdated'),
+    PositionFunded: hash.getSelectorFromName('PositionFunded'),
+    PositionClosed: hash.getSelectorFromName('PositionClosed'),
+    PositionLiquidated: hash.getSelectorFromName('PositionLiquidated'),
+  };
+
   getActivePositions(): PositionGraphNode[] {
     return Array.from(this.positions.values()).filter(p => p.status === 'ACTIVE');
   }
@@ -336,12 +347,13 @@ export class DaemonIndexerService {
   }
 
   getHealth(): DaemonHealthMetrics {
+    const lag = Math.max(0, this.latestChainBlock - this.lastIndexedBlock);
     return {
       isHealthy: !this.lastError,
       lastIndexedBlock: this.lastIndexedBlock,
       lastBlockHash: this.lastBlockHash,
-      indexerLagBlocks: 0,
-      activePositionsCount: this.positions.size,
+      indexerLagBlocks: lag,
+      activePositionsCount: this.getActivePositions().length,
       pendingJobsCount: Array.from(this.keeperJobs.values()).filter(j => j.status === 'PENDING').length,
       lastFinalizedLiquidation: this.lastFinalizedLiquidation,
       lastSubmissionTimestamp: this.lastSubmissionTimestamp,
@@ -349,12 +361,109 @@ export class DaemonIndexerService {
     };
   }
 
+  async pollOnce(): Promise<void> {
+    try {
+      const latestBlock = await this.provider.getBlock('latest');
+      this.latestChainBlock = latestBlock.block_number;
+      const latestBlockHash = latestBlock.block_hash;
+
+      if (this.lastIndexedBlock === 0) {
+        this.lastIndexedBlock = Math.max(0, this.latestChainBlock - 50);
+      }
+
+      const fromBlock = this.lastIndexedBlock + 1;
+      const toBlock = Math.min(fromBlock + 50, this.latestChainBlock);
+
+      if (fromBlock <= toBlock) {
+        const eventsRes = await this.provider.getEvents({
+          address: PERPS_DEPLOYMENTS.sepolia.pelCoreAddress,
+          from_block: { block_number: fromBlock },
+          to_block: { block_number: toBlock },
+          chunk_size: 100,
+        });
+
+        if (eventsRes && Array.isArray(eventsRes.events)) {
+          for (let i = 0; i < eventsRes.events.length; i++) {
+            const rawEv = eventsRes.events[i];
+            this.decodeAndIngestEvent(rawEv, i);
+          }
+        }
+
+        this.lastIndexedBlock = toBlock;
+        this.lastBlockHash = latestBlockHash;
+        this.lastError = undefined;
+        this.saveCheckpoint();
+      }
+    } catch (err: any) {
+      this.lastError = 'Poll error: ' + (err?.message || err);
+    }
+  }
+
+  private decodeAndIngestEvent(rawEv: any, idx: number): void {
+    const selector = rawEv.keys?.[0];
+    if (!selector) return;
+
+    let type: string = '';
+    let parsedFields: Record<string, any> = {};
+
+    if (selector === this.selectors.PositionOpened) {
+      type = 'PositionOpened';
+      parsedFields = {
+        commitment: rawEv.data?.[1],
+        marginNullifier: rawEv.data?.[2],
+        marginAmount: BigInt(rawEv.data?.[3] || '0'),
+        marketId: 'BTC-PERP',
+      };
+    } else if (selector === this.selectors.PositionUpdated) {
+      type = 'PositionUpdated';
+      parsedFields = {
+        oldCommitment: rawEv.data?.[0],
+        oldNullifier: rawEv.data?.[1],
+        newCommitment: rawEv.data?.[2],
+      };
+    } else if (selector === this.selectors.PositionFunded) {
+      type = 'PositionFunded';
+      parsedFields = {
+        commitment: rawEv.data?.[0],
+        oldNullifier: rawEv.data?.[1],
+        newCommitment: rawEv.data?.[2],
+      };
+    } else if (selector === this.selectors.PositionClosed) {
+      type = 'PositionClosed';
+      parsedFields = {
+        commitment: rawEv.data?.[0],
+        finalNullifier: rawEv.data?.[1],
+      };
+    } else if (selector === this.selectors.PositionLiquidated) {
+      type = 'PositionLiquidated';
+      parsedFields = {
+        commitment: rawEv.data?.[0],
+        nullifier: rawEv.data?.[1],
+        keeper: rawEv.data?.[3],
+      };
+    }
+
+    if (type) {
+      this.ingestEvent({
+        id: `${rawEv.transaction_hash}_${idx}`,
+        txHash: rawEv.transaction_hash,
+        eventIndex: idx,
+        blockNumber: rawEv.block_number || this.lastIndexedBlock,
+        type,
+        data: rawEv.data || [],
+        keys: rawEv.keys || [],
+        parsedFields,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
   start(intervalMs: number = 5000): void {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.pollOnce();
     this.pollTimer = setInterval(() => {
-      // Background poll tick
-      this.saveCheckpoint();
+      this.pollOnce();
     }, intervalMs);
   }
 

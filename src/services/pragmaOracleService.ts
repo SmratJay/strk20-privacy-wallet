@@ -1,19 +1,22 @@
 /**
- * @file pragmaOracleService.ts
- * @description Market Price Feed Integration for PEL Perpetuals
+ * @file src/services/pragmaOracleService.ts
+ * @description Canonical On-Chain Pragma/OracleAdapter Price Feed Integration (Audit Section 3 & P0-01)
  *
- * NOTE ON TRUST BOUNDARY:
- * Live ticker data is fetched via REST API from Binance Market Data for real-time responsiveness.
- * On-chain, prices are authenticated and published to OracleAdapter.cairo by an authorized oracle publisher.
+ * Enforces:
+ * - Direct on-chain read from OracleAdapter.cairo on Starknet Sepolia
+ * - Exact canonical integer price normalization (cents <-> USD)
+ * - Strict fail-closed semantics: If oracle query fails or age > 180s, returns isFresh=false
+ * - Zero fallback to unverified off-chain APIs for settlement / risk decisions
  */
 
-import { priceService } from './priceService';
-import { liveMarketDataService } from './liveMarketDataService';
+import { RpcProvider, Contract } from 'starknet';
 import { PERPS_DEPLOYMENTS } from './starknetPerpsDispatcher';
+import { BTC_PERP_CONFIG } from '../protocol/types';
 
 export interface OracleMarketFeed {
   pairId: string;
   priceUsd: number;
+  priceCents: bigint;
   timestamp: number;
   decimals: number;
   numSources: number;
@@ -25,76 +28,83 @@ export interface OracleMarketFeed {
 export type PragmaMarketFeed = OracleMarketFeed; // Backwards compatibility alias
 
 class PragmaOracleService {
+  private provider: RpcProvider;
   private cache: Record<string, OracleMarketFeed> = {};
   private lastFetchedAt: number = 0;
 
+  constructor(rpcUrl: string = process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia') {
+    this.provider = new RpcProvider({ nodeUrl: rpcUrl });
+  }
+
+  /**
+   * Fetch canonical market price directly from on-chain OracleAdapter
+   */
   async getMarketPrice(
     pair: 'BTC/USD' | 'ETH/USD' | 'STRK/USD' = 'BTC/USD',
     network: 'mainnet' | 'sepolia' = 'sepolia'
   ): Promise<OracleMarketFeed> {
     const now = Date.now();
     const config = PERPS_DEPLOYMENTS[network === 'mainnet' ? 'sepolia' : network];
-    const publisherAddress = config.oracleAdapterAddress;
+    const oracleAddress = config.oracleAdapterAddress;
 
-    // Sub-second 750ms cache for ultra fast tick responsiveness
+    // Fast 750ms in-memory cache to prevent RPC spam
     if (this.cache[pair] && now - this.lastFetchedAt < 750) {
       return this.cache[pair];
     }
 
     try {
-      // 1. Query Live Market Data Service first
-      const ticker = await liveMarketDataService.fetchLiveTicker('BTC-PERP');
+      // 1. Call on-chain OracleAdapter.get_market_price('BTC-PERP')
+      const marketIdFelt = '0x4254432d50455250'; // 'BTC-PERP' in hex
+      const callResult = await this.provider.callContract({
+        contractAddress: oracleAddress,
+        entrypoint: 'get_market_price',
+        calldata: [marketIdFelt],
+      });
 
-      if (ticker && ticker.price > 0) {
+      if (callResult && callResult.length >= 3) {
+        const rawPrice = BigInt(callResult[0]); // price in cents
+        const rawTimestamp = Number(BigInt(callResult[1]));
+        const rawIsValid = BigInt(callResult[2]) !== 0n;
+
+        const nowSec = Math.floor(now / 1000);
+        const ageSec = nowSec - rawTimestamp;
+        const isFresh = rawIsValid && rawPrice > 0n && ageSec >= 0 && ageSec <= BTC_PERP_CONFIG.maxOracleAgeSecs;
+
+        const priceUsd = Number(rawPrice) / 100;
         const feed: OracleMarketFeed = {
-          pairId: pair,
-          priceUsd: ticker.price,
-          timestamp: Math.floor(Date.now() / 1000),
-          decimals: 8,
-          numSources: 5,
-          isFresh: true,
-          oraclePublisher: publisherAddress,
-          sourceLabel: 'Binance REST API (Relayed to OracleAdapter)',
+          pairId: 'BTC/USD',
+          priceUsd,
+          priceCents: rawPrice,
+          timestamp: rawTimestamp,
+          decimals: 2,
+          numSources: 1, // On-chain Pragma OracleAdapter
+          isFresh,
+          oraclePublisher: oracleAddress,
+          sourceLabel: 'Pragma / OracleAdapter (Starknet Sepolia)',
         };
+
         this.cache[pair] = feed;
         this.lastFetchedAt = now;
         return feed;
       }
-    } catch {
-      // Fall through to priceService
+    } catch (err: any) {
+      // In devnet / local tests where RPC might not be live, check fallback environment or fail closed
+      console.warn('[PragmaOracleService] On-chain oracle read failed:', err?.message || err);
     }
 
-    try {
-      // 2. Query fallback price service
-      const prices = await priceService.getPrices();
-      const price = prices.BTC || 96420.0;
-
-      const feed: OracleMarketFeed = {
-        pairId: pair,
-        priceUsd: price,
-        timestamp: Math.floor(Date.now() / 1000),
-        decimals: 8,
-        numSources: 4,
-        isFresh: true,
-        oraclePublisher: publisherAddress,
-        sourceLabel: 'CoinGecko Fallback API',
-      };
-
-      this.cache[pair] = feed;
-      this.lastFetchedAt = now;
-      return feed;
-    } catch {
-      return {
-        pairId: pair,
-        priceUsd: 96420.0,
-        timestamp: Math.floor(Date.now() / 1000),
-        decimals: 8,
-        numSources: 3,
-        isFresh: true,
-        oraclePublisher: publisherAddress,
-        sourceLabel: 'Static Hardcoded Baseline',
-      };
-    }
+    // Fail closed if on-chain query failed or returned empty
+    const staleFeed: OracleMarketFeed = {
+      pairId: pair,
+      priceUsd: 0,
+      priceCents: 0n,
+      timestamp: 0,
+      decimals: 2,
+      numSources: 0,
+      isFresh: false,
+      oraclePublisher: oracleAddress,
+      sourceLabel: 'Oracle Unavailable (Failed Closed)',
+    };
+    return staleFeed;
   }
 
   /**
@@ -105,7 +115,10 @@ class PragmaOracleService {
     network: 'mainnet' | 'sepolia' = 'sepolia'
   ): Promise<bigint> {
     const feed = await this.getMarketPrice(pair, network);
-    return BigInt(Math.floor(feed.priceUsd * 100));
+    if (!feed.isFresh) {
+      throw new Error('ORACLE_UNAVAILABLE: On-chain price feed is stale or unreachable.');
+    }
+    return feed.priceCents;
   }
 }
 

@@ -10,7 +10,7 @@
  * - LIQ_FACT: H(LIQUIDATE_TAG, market, position_commitment, position_nullifier, liquidation_amount, oracle_price, keeper)
  */
 
-import { hash, num, Call } from 'starknet';
+import { hash, num, Call, AccountInterface } from 'starknet';
 import { factRegistryDispatcher } from './factRegistryDispatcher';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from './starknetPerpsDispatcher';
 import {
@@ -556,17 +556,20 @@ class ZKProverService {
 
     const bountyCents  = (mCents * 200n) / 10000n; // 2%
     const badDebtCents = equityCents < 0n ? -equityCents : 0n;
-    const nullifier    = this.computeNullifier(state.ownerSecret, state.commitment);
+    const commitment   = state.commitment || this.computePositionCommitment(
+      state.ownerSecret, state.marketId, state.side, qSats, epCents, mCents, fundCents, state.nonce
+    );
+    const nullifier    = this.computeNullifier(state.ownerSecret, commitment);
 
     const factHash = this.computeLiquidateFactHash(
-      state.marketId, state.commitment, nullifier, mCents, oraclePriceCents, keeperRecipient,
+      state.marketId, commitment, nullifier, mCents, oraclePriceCents, keeperRecipient,
     );
 
     const fact: TransitionFact = {
       proofType: 'LIQUIDATE',
       factHash,
       publicInputsHash: factHash,
-      commitment: state.commitment,
+      commitment,
       nullifier,
       amountCents: mCents,
       oraclePriceCents,
@@ -575,7 +578,7 @@ class ZKProverService {
 
     return {
       fact,
-      commitment: state.commitment,
+      commitment,
       nullifier,
       bountyCents,
       badDebtCents,
@@ -788,6 +791,154 @@ class ZKProverService {
       calldata,
     };
 
+    await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
+  }
+
+  // ─── DEDICATED TYPED REGISTRATION METHODS (P0-04 & P0-05) ───────────────────
+
+  async registerOpenFactOnChain(
+    marketId: string,
+    commitment: string,
+    marginNullifier: string,
+    marginCents: bigint,
+    oraclePriceCents: bigint,
+    owner: string,
+    factHash: string,
+    signerAccount?: AccountInterface,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<void> {
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const call: Call = {
+      contractAddress: PERPS_DEPLOYMENTS[network].stwoVerifierAddress,
+      entrypoint: 'register_open_fact',
+      calldata: [
+        marketFelt,
+        commitment,
+        marginNullifier,
+        marginCents.toString(),
+        oraclePriceCents.toString(),
+        owner || '0x0',
+        factHash,
+      ],
+    };
+    await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
+  }
+
+  async registerUpdateFactOnChain(
+    marketId: string,
+    oldCommitment: string,
+    oldNullifier: string,
+    newCommitment: string,
+    newMarginCents: bigint,
+    oraclePriceCents: bigint,
+    factHash: string,
+    signerAccount?: AccountInterface,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<void> {
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const call: Call = {
+      contractAddress: PERPS_DEPLOYMENTS[network].stwoVerifierAddress,
+      entrypoint: 'register_update_fact',
+      calldata: [
+        marketFelt,
+        oldCommitment,
+        oldNullifier,
+        newCommitment,
+        newMarginCents.toString(),
+        oraclePriceCents.toString(),
+        factHash,
+      ],
+    };
+    await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
+  }
+
+  async registerFundFactOnChain(
+    marketId: string,
+    oldCommitment: string,
+    oldNullifier: string,
+    newCommitment: string,
+    fundingCents: bigint,
+    newMarginCents: bigint,
+    oraclePriceCents: bigint,
+    isLongPays: boolean,
+    factHash: string,
+    signerAccount?: AccountInterface,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<void> {
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const call: Call = {
+      contractAddress: PERPS_DEPLOYMENTS[network].stwoVerifierAddress,
+      entrypoint: 'register_fund_fact',
+      calldata: [
+        marketFelt,
+        oldCommitment,
+        oldNullifier,
+        newCommitment,
+        fundingCents.toString(),
+        newMarginCents.toString(),
+        oraclePriceCents.toString(),
+        isLongPays ? '0x1' : '0x0',
+        factHash,
+      ],
+    };
+    await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
+  }
+
+  async registerCloseFactOnChain(
+    marketId: string,
+    positionCommitment: string,
+    finalNullifier: string,
+    payoutCommitment: string,
+    payoutAmountCents: bigint,
+    oraclePriceCents: bigint,
+    recipient: string,
+    factHash: string,
+    signerAccount?: AccountInterface,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<void> {
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const call: Call = {
+      contractAddress: PERPS_DEPLOYMENTS[network].stwoVerifierAddress,
+      entrypoint: 'register_close_fact',
+      calldata: [
+        marketFelt,
+        positionCommitment,
+        finalNullifier,
+        payoutCommitment,
+        payoutAmountCents.toString(),
+        oraclePriceCents.toString(),
+        recipient || '0x0',
+        factHash,
+      ],
+    };
+    await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
+  }
+
+  async registerLiquidateFactOnChain(
+    marketId: string,
+    positionCommitment: string,
+    positionNullifier: string,
+    liquidationAmountCents: bigint,
+    oraclePriceCents: bigint,
+    keeper: string,
+    factHash: string,
+    signerAccount?: AccountInterface,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<void> {
+    const marketFelt = '0x' + Buffer.from(marketId).toString('hex');
+    const call: Call = {
+      contractAddress: PERPS_DEPLOYMENTS[network].stwoVerifierAddress,
+      entrypoint: 'register_liquidate_fact',
+      calldata: [
+        marketFelt,
+        positionCommitment,
+        positionNullifier,
+        liquidationAmountCents.toString(),
+        oraclePriceCents.toString(),
+        keeper || '0x0',
+        factHash,
+      ],
+    };
     await starknetPerpsDispatcher.executeOnChain(signerAccount, call, network);
   }
 }
