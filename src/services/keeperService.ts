@@ -207,11 +207,19 @@ export class KeeperService {
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
 
-      // Step 3: Finality Assertion (Audit Section 8 - Finality algorithm)
-      // Check on-chain that position is closed/liquidated
+      // Step 3: Strict Fail-Closed Finality Assertion (Audit Section 10 & P0-04)
+      // Check on-chain that position is actually inactive
       const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(candidate.commitment);
       if (onChainRecord.exists && onChainRecord.isOpen) {
-        console.warn('[KeeperService] Position still open after liquidation tx broadcast; waiting for next finality poll');
+        this.inFlightTransactions.delete(idempotencyKey);
+        this.lastError = 'FINALITY_UNCONFIRMED: Position remains open on-chain after transaction broadcast';
+        return {
+          success: false,
+          commitment: candidate.commitment,
+          txHash: executionRes.transactionHash,
+          explorerUrl: executionRes.explorerUrl,
+          error: this.lastError,
+        };
       }
 
       this.processedLiquidations.add(idempotencyKey);

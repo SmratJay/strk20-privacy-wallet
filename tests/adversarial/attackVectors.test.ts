@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { zkProverService } from '../../src/services/zkProverService';
+import { buildLegacyFact } from '../helpers/legacyFactModel';
 import {
   calcPnlCents,
   calcEquityCents,
@@ -127,8 +128,8 @@ describe('Attack 6: close an already-closed (is_active=false) position', () => {
     const { commitment } = buildValidLongCommitment();
     const nullifier = zkProverService.computeNullifier(OWNER_SECRET, commitment);
 
-    const fact1 = zkProverService.buildFact('CLOSE', MARKET_ID, commitment, nullifier, MARGIN_CENTS, BTC_PRICE_CENTS);
-    const fact2 = zkProverService.buildFact('CLOSE', MARKET_ID, commitment, nullifier, MARGIN_CENTS, BTC_PRICE_CENTS);
+    const fact1 = buildLegacyFact('CLOSE', MARKET_ID, commitment, nullifier, MARGIN_CENTS, BTC_PRICE_CENTS);
+    const fact2 = buildLegacyFact('CLOSE', MARKET_ID, commitment, nullifier, MARGIN_CENTS, BTC_PRICE_CENTS);
     // Same inputs → same fact_hash (deterministic) — proving that replay is always detectable
     expect(fact1.factHash).toEqual(fact2.factHash);
   });
@@ -281,11 +282,11 @@ describe('Attack 13: config_version mismatch', () => {
   it('PASSES: STWO_FACT_TAG is versioned — tag change invalidates old proofs', () => {
     // The STWO_FACT_TAG is embedded in every fact_hash computation.
     // If the tag changes, old proofs produce different fact_hashes.
-    const fact1 = zkProverService.computeFactHash('0xabc123');
+    const fact1 = zkProverService.computeOpenFactHash('BTC-PERP', '0x123', '0x456', 100000n, 9642050n, '0x0');
     expect(fact1).toBeTruthy();
     expect(typeof fact1).toBe('string');
     // Verify determinism
-    expect(zkProverService.computeFactHash('0xabc123')).toEqual(fact1);
+    expect(zkProverService.computeOpenFactHash('BTC-PERP', '0x123', '0x456', 100000n, 9642050n, '0x0')).toEqual(fact1);
   });
 });
 
@@ -328,10 +329,9 @@ describe('Attack 15: localStorage PnL manipulation is ignored by protocol', () =
 describe('Attack 16: client-side forged fact rejected by FactRegistry', () => {
   it('REJECTS: unregistered fact hash is rejected by on-chain verification', () => {
     // Attacker computes expected Poseidon fact locally without submitting to prover
-    const fakeInputsHash = zkProverService.computePublicInputsHash(
-      'OPEN', 'BTC-PERP', '0x1234', '0x5678', 100_000n, 9_642_050n,
+    const forgedFactHash = zkProverService.computeOpenFactHash(
+      'BTC-PERP', '0x1234', '0x5678', 100_000n, 9_642_050n, '0x0'
     );
-    const forgedFactHash = zkProverService.computeFactHash(fakeInputsHash);
 
     // Mock Fact Registry storage
     const verifiedFacts = new Map<string, boolean>();
@@ -457,13 +457,8 @@ describe('Attack 25: relayer recipient substitution attack on close_position', (
     const aliceRecipient = '0x0111111111111111111111111111111111111111';
     const eveAttacker = '0x0222222222222222222222222222222222222222';
 
-    const aliceFactHash = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash('CLOSE', 'BTC-PERP', '0x1', '0x2', 100000n, 9642050n, aliceRecipient)
-    );
-
-    const eveFactHash = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash('CLOSE', 'BTC-PERP', '0x1', '0x2', 100000n, 9642050n, eveAttacker)
-    );
+    const aliceFactHash = zkProverService.computeCloseFactHash('BTC-PERP', '0x1', '0x2', '0x3', 100000n, 9642050n, aliceRecipient);
+    const eveFactHash = zkProverService.computeCloseFactHash('BTC-PERP', '0x1', '0x2', '0x3', 100000n, 9642050n, eveAttacker);
 
     expect(aliceFactHash).not.toBe(eveFactHash);
   });

@@ -832,6 +832,43 @@
 * **Next.js Production Build:** `npm run build` compiled **6/6 static & dynamic routes with 0 errors**.
 * **Local Quality Gate:** `./scripts/local_quality_gate.sh` passed 100% green.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 18:45:00 IST
+
+### 💎 PEL BTC-PERP V4.5: Final Runtime Integration & Release Readiness
+
+#### 🔴 [P0-03] — Purge Generic `buildFact()` from Production
+* Completely purged `buildFact()`, `computePublicInputsHash()`, and `computeFactHash()` from production [`src/services/zkProverService.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/src/services/zkProverService.ts).
+* Isolated legacy helper in [`tests/helpers/legacyFactModel.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/tests/helpers/legacyFactModel.ts) for mock test shapes.
+* Verified zero generic `buildFact` calls across production execution paths.
+
+#### 🔴 [P0-04] — Strict Fail-Closed Keeper Finality
+* In [`src/services/keeperService.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/src/services/keeperService.ts), updated `executeLiquidation` to strictly assert `Core.get_position(commitment).is_active == false`.
+* If position remains open after broadcast, keeper rejects finalization, keeps the job pending/in-flight for retry, and returns `success: false`.
+
+#### 🔴 [P1] — Indexer Checkpoint Invariant & Complete Persistence
+* In [`src/services/daemonIndexerService.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/src/services/daemonIndexerService.ts), enforced exact invariant: `lastIndexedBlock == N` and `lastBlockHash == hash(N)` by fetching exact block headers.
+* Added support for `PEL_INDEXER_START_BLOCK` environment variable for customizable historical replay.
+* Hardened serialization for full collection persistence (blocks, events, positions, nullifiers, keeper jobs).
+
+#### 🔴 [P0-01] — Real Cairo Runtime Integration & Adversarial Suite
+* Expanded [`tests/integration/realCairoContractIntegration.test.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/tests/integration/realCairoContractIntegration.test.ts) to 10 comprehensive tests:
+  - 8 Cross-contract wiring assertions (Core $\to$ Verifier, Core $\to$ Adapter, Core $\to$ Oracle, Adapter $\to$ Token, Adapter $\to$ Core, Verifier $\to$ Prover, Oracle $\to$ Publisher, Market config).
+  - Flow 1 (Open $\to$ Update $\to$ Fund $\to$ Close $\to$ Claim).
+  - Flow 2 (Liquidation $\to$ Keeper Bounty Allocation).
+  - 6 Runtime Adversarial Attacks: margin mutation, payout mutation, payout commitment forgery, recipient address swapping, healthy position liquidation rejection, LP withdrawal reserve floor protection.
+
+#### 🔴 [P0-02] — Real Sepolia State-Changing E2E Script
+* Implemented [`scripts/sepolia_perps_e2e.ts`](file:///Users/jaybhati/Desktop/Mercury/strk20-privacy-wallet/scripts/sepolia_perps_e2e.ts) executing live on-chain lifecycle against Starknet Sepolia with pre-flight safety checks, test account verification, and transaction receipts.
+
+#### 🚀 Master Verification & Quality Gate:
+* **Scarb Build:** `scarb build` compiles with **0 errors and 0 warnings**.
+* **Vitest Test Suite:** **175 / 175 passing tests** across all 16 test files (100% pass rate).
+* **Next.js Production Build:** `npm run build` compiled **6/6 static & dynamic routes with 0 errors**.
+* **Local Quality Gate:** `./scripts/local_quality_gate.sh` passed 100% green.
+
+
 
 
 

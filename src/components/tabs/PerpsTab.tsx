@@ -249,9 +249,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       const currentOraclePriceCents = BigInt(Math.floor((currentMarket.markPrice || 96420.50) * 100));
       const marginCents = BigInt(Math.floor(marginNum * 100));
 
-      // Register Fact on StwoVerifier on-chain
-      await zkProverService.registerFactOnChain(
-        'OPEN',
+      // Register Fact on StwoVerifier on-chain with dedicated typed method (P0-03 & P0-05)
+      await zkProverService.registerOpenFactOnChain(
         selectedMarketId,
         newPos.zkCommitment,
         newPos.nullifier,

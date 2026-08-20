@@ -97,17 +97,22 @@ export class DaemonIndexerService {
   }
 
   private saveCheckpoint(): void {
+    const replacer = (_key: string, value: any) =>
+      typeof value === 'bigint' ? value.toString() : value;
+
     const data = {
       lastIndexedBlock: this.lastIndexedBlock,
       lastBlockHash: this.lastBlockHash,
+      blocks: Array.from(this.blocks.entries()),
+      events: Array.from(this.events.entries()),
       spentNullifiers: Array.from(this.spentNullifiers),
-      positions: Array.from(this.positions.entries()).map(([k, v]) => ({
-        k,
-        v: { ...v, lockedMarginCents: v.lockedMarginCents.toString() },
-      })),
+      positions: Array.from(this.positions.entries()),
       edges: Array.from(this.commitmentEdges.entries()),
       nullifiers: Array.from(this.nullifiersToCommitment.entries()),
+      keeperJobs: Array.from(this.keeperJobs.entries()),
     };
+
+    const json = JSON.stringify(data, replacer, 2);
 
     if (typeof window === 'undefined') {
       try {
@@ -115,13 +120,13 @@ export class DaemonIndexerService {
         const path = require('path');
         const dir = path.join(process.cwd(), '.cache');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, 'pel_indexer_db.json'), JSON.stringify(data, null, 2));
+        fs.writeFileSync(path.join(dir, 'pel_indexer_db.json'), json);
       } catch (err: any) {
         this.lastError = 'Disk checkpoint save failed: ' + err?.message;
       }
     } else if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(this.storageKey(), JSON.stringify(data));
+        localStorage.setItem(this.storageKey(), json);
       } catch (err: any) {
         this.lastError = 'Browser checkpoint save failed: ' + err?.message;
       }
@@ -150,15 +155,25 @@ export class DaemonIndexerService {
       const data = JSON.parse(raw);
       this.lastIndexedBlock = data.lastIndexedBlock || 0;
       this.lastBlockHash = data.lastBlockHash || '0x0';
+      if (Array.isArray(data.blocks)) {
+        this.blocks = new Map(data.blocks);
+      }
+      if (Array.isArray(data.events)) {
+        this.events = new Map(data.events);
+      }
       if (Array.isArray(data.spentNullifiers)) {
         this.spentNullifiers = new Set(data.spentNullifiers);
       }
       if (Array.isArray(data.positions)) {
         for (const item of data.positions) {
-          this.positions.set(item.k, {
-            ...item.v,
-            lockedMarginCents: BigInt(item.v.lockedMarginCents),
-          });
+          const k = Array.isArray(item) ? item[0] : item.k;
+          const v = Array.isArray(item) ? item[1] : item.v;
+          if (k && v) {
+            this.positions.set(k, {
+              ...v,
+              lockedMarginCents: BigInt(v.lockedMarginCents || 0),
+            });
+          }
         }
       }
       if (Array.isArray(data.edges)) {
@@ -166,6 +181,9 @@ export class DaemonIndexerService {
       }
       if (Array.isArray(data.nullifiers)) {
         this.nullifiersToCommitment = new Map(data.nullifiers);
+      }
+      if (Array.isArray(data.keeperJobs)) {
+        this.keeperJobs = new Map(data.keeperJobs);
       }
     } catch {
       // Clean fallback on corrupt state
@@ -368,7 +386,8 @@ export class DaemonIndexerService {
       const latestBlockHash = latestBlock.block_hash;
 
       if (this.lastIndexedBlock === 0) {
-        this.lastIndexedBlock = Math.max(0, this.latestChainBlock - 50);
+        const envStart = process.env.PEL_INDEXER_START_BLOCK ? parseInt(process.env.PEL_INDEXER_START_BLOCK, 10) : 0;
+        this.lastIndexedBlock = envStart > 0 ? envStart : Math.max(0, this.latestChainBlock - 50);
       }
 
       const fromBlock = this.lastIndexedBlock + 1;
@@ -389,8 +408,19 @@ export class DaemonIndexerService {
           }
         }
 
+        // Fetch exact header of toBlock to preserve lastIndexedBlock == N and lastBlockHash == hash(N)
+        let toBlockHash = latestBlockHash;
+        try {
+          if (toBlock < this.latestChainBlock) {
+            const toBlockHeader: any = await this.provider.getBlock(toBlock);
+            if (toBlockHeader && toBlockHeader.block_hash) {
+              toBlockHash = toBlockHeader.block_hash;
+            }
+          }
+        } catch {}
+
         this.lastIndexedBlock = toBlock;
-        this.lastBlockHash = latestBlockHash;
+        this.lastBlockHash = toBlockHash;
         this.lastError = undefined;
         this.saveCheckpoint();
       }

@@ -121,17 +121,17 @@ describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
   it('Invariant 8 [Sealed Fact Hash]: fact_hash is deterministic for same (proof_type, commitment, nullifier, amount, oracle)', () => {
     const validCommit = '0x0111111111111111111111111111111111111111111111111111111111111111';
     const validNull   = '0x0222222222222222222222222222222222222222222222222222222222222222';
-    const f1 = zkProverService.buildFact('OPEN', MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE);
-    const f2 = zkProverService.buildFact('OPEN', MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE);
-    expect(f1.factHash).toBe(f2.factHash);
+    const f1 = zkProverService.computeOpenFactHash(MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE, '0x0');
+    const f2 = zkProverService.computeOpenFactHash(MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE, '0x0');
+    expect(f1).toBe(f2);
   });
 
   it('Invariant 9 [Proof Type Isolation]: fact_hashes differ across proof types', () => {
     const validCommit = '0x0111111111111111111111111111111111111111111111111111111111111111';
     const validNull   = '0x0222222222222222222222222222222222222222222222222222222222222222';
-    const fOpen  = zkProverService.buildFact('OPEN',  MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE);
-    const fClose = zkProverService.buildFact('CLOSE', MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE);
-    expect(fOpen.factHash).not.toBe(fClose.factHash);
+    const fOpen  = zkProverService.computeOpenFactHash(MARKET_ID, validCommit, validNull, MARGIN_CENTS, BTC_PRICE, '0x0');
+    const fClose = zkProverService.computeCloseFactHash(MARKET_ID, validCommit, validNull, validCommit, MARGIN_CENTS, BTC_PRICE, '0x0');
+    expect(fOpen).not.toBe(fClose);
   });
 
   it('Invariant 10 [Exact Linear PnL]: LONG PnL = q * (markPrice - entryPrice)', () => {

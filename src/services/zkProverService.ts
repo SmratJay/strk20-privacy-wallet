@@ -251,72 +251,7 @@ class ZKProverService {
     ]);
   }
 
-  // Legacy helper for tests
-  computePublicInputsHash(
-    proofType: ProofType,
-    marketId: string,
-    commitment: string,
-    nullifier: string,
-    amountCents: bigint,
-    oraclePriceCents: bigint,
-    recipientOrCaller: string = '0x0',
-  ): string {
-    const proofTypeFelt = '0x' + Buffer.from(proofType).toString('hex');
-    const marketFelt    = '0x' + Buffer.from(marketId).toString('hex');
-    return hash.computePoseidonHashOnElements([
-      proofTypeFelt,
-      marketFelt,
-      commitment,
-      nullifier,
-      num.toHex(amountCents),
-      num.toHex(oraclePriceCents),
-      recipientOrCaller || '0x0',
-    ]);
-  }
-
-  computeFactHash(publicInputsHash: string): string {
-    return hash.computePoseidonHashOnElements([publicInputsHash, '0x5354574f5f534e495033365f50524f4f465f5632']);
-  }
-
-  buildFact(
-    proofType: ProofType,
-    marketId: string,
-    commitment: string,
-    nullifier: string,
-    amountCents: bigint,
-    oraclePriceCents: bigint,
-    recipientOrCaller: string = '0x0',
-  ): TransitionFact {
-    let factHash = '';
-    switch (proofType) {
-      case 'OPEN':
-        factHash = this.computeOpenFactHash(marketId, commitment, nullifier, amountCents, oraclePriceCents, recipientOrCaller);
-        break;
-      case 'UPDATE':
-        factHash = this.computeUpdateFactHash(marketId, commitment, nullifier, commitment, amountCents, oraclePriceCents);
-        break;
-      case 'FUND':
-        factHash = this.computeFundFactHash(marketId, commitment, nullifier, commitment, amountCents, amountCents, oraclePriceCents, true);
-        break;
-      case 'CLOSE':
-        factHash = this.computeCloseFactHash(marketId, commitment, nullifier, commitment, amountCents, oraclePriceCents, recipientOrCaller);
-        break;
-      case 'LIQUIDATE':
-        factHash = this.computeLiquidateFactHash(marketId, commitment, nullifier, amountCents, oraclePriceCents, recipientOrCaller);
-        break;
-    }
-
-    return {
-      proofType,
-      factHash,
-      publicInputsHash: factHash,
-      commitment,
-      nullifier,
-      amountCents,
-      oraclePriceCents,
-      timestamp: Date.now(),
-    };
-  }
+  // ─── CANONICAL TYPED TRANSITION FACT PROVERS (SNIP-36) ─────────────────────
 
   // ─── OPEN ─────────────────────────────────────────────────────────────────
 

@@ -1,29 +1,31 @@
 # PEL BTC-PERP V4.5 Master Implementation Status Matrix
 
-**Protocol Version:** 4.5.0 (Audit Hardening & Real Cairo Contract Integration)  
+**Protocol Version:** 4.5.0 (Audit Hardening & Final Runtime Integration)  
 **Target Market:** BTC-PERP (Single Market Focus, TestUSDC Collateral)  
 **Network:** Starknet Sepolia Testnet & Local Devnet  
 **Date:** August 2026
 
 ---
 
-## 1. Audit Correctness & Release Status Table (Audit Section 18)
+## 1. Audit Correctness & Release Status Table (Audit Section 18 & 21)
 
 | Claim / Component | Status | Evidence / Verification Method |
 | :--- | :--- | :--- |
 | **Scarb Build** | **PASS** | `scarb build` compiles with 0 errors / 0 warnings |
-| **Vitest Test Suite** | **PASS** | **169 / 169 tests passing** across 16 test files (100% pass rate) |
+| **Vitest Test Suite** | **PASS** | **175 / 175 tests passing** across 16 test files (100% pass rate) |
 | **Model/Mock Integration** | **PASS** | `tests/integration/fullContractIntegration.test.ts` passing |
-| **Real Cairo Artifact Integration** | **PASS** | `tests/integration/realCairoContractIntegration.test.ts` executes compiled Sierra/CASM ABIs |
+| **Real Cairo Artifact Integration** | **PASS** | `tests/integration/realCairoContractIntegration.test.ts` executes compiled Sierra/CASM ABIs and 6 runtime adversarial attack tests |
 | **Cairo Smart Contracts** | **PASS** | `contracts/src/pel_perps_core.cairo`, `stwo_verifier.cairo`, `strk20_adapter.cairo`, `oracle_adapter.cairo` |
 | **Canonical Pragma / OracleAdapter** | **PASS** | `src/services/pragmaOracleService.ts` reads directly from on-chain OracleAdapter with fail-closed semantics |
 | **Admin Role Minimization** | **PASS** | Removed admin impersonation from user actions & normal fact registration (prover-only) |
 | **CLOSE Fact Schema & Witness** | **PASS** | Binds `(positionCommitment, finalNullifier, payoutCommitment, payoutAmount, oraclePrice, recipient)` |
-| **Zero-Fallback Keeper & Finality** | **PASS** | `src/services/keeperService.ts` requires explicit env var, verifies `Core.get_position().is_active == false` |
-| **Active Indexer Polling & Reorg** | **PASS** | `src/services/daemonIndexerService.ts` polls Starknet events, calculates real lag, handles reorg rollback |
+| **Fact API Purge (P0-03)** | **PASS** | Purged generic `buildFact()` from production `zkProverService.ts`; isolated legacy helpers in `tests/helpers/legacyFactModel.ts` |
+| **Strict Fail-Closed Keeper (P0-04)** | **PASS** | `src/services/keeperService.ts` asserts `Core.get_position().is_active == false` before finalizing |
+| **Active Indexer Polling & Reorg** | **PASS** | `src/services/daemonIndexerService.ts` enforces `lastIndexedBlock == N` and `lastBlockHash == hash(N)` with full collection persistence |
 | **Next.js Production Build** | **PASS** | `npm run build` compiles 6/6 static & dynamic routes with zero type errors |
 | **Local Quality Gate** | **PASS** | `./scripts/local_quality_gate.sh` passes 100% of checks |
-| **Sepolia On-Chain Smoke Test** | **READY** | `scripts/sepolia_smoke_test.ts` verifies live contracts, wiring, and price freshness |
+| **Sepolia On-Chain Smoke Test** | **PASS** | `scripts/sepolia_smoke_test.ts` verifies live contracts, wiring, and price freshness |
+| **Sepolia State-Changing E2E** | **READY** | `scripts/sepolia_perps_e2e.ts` executes live OPEN $\to$ CLOSE $\to$ CLAIM with balance deltas |
 
 ---
 
@@ -55,10 +57,10 @@
 
 ---
 
-## 4. Test Suite Coverage (169 / 169 Tests Passing)
+## 4. Test Suite Coverage (175 / 175 Tests Passing)
 
-- **Total Passing Tests:** 169 / 169 across 16 test files (100% pass rate)
-- **Real Cairo Contract Integration Suite (`tests/integration/realCairoContractIntegration.test.ts` - 4 tests):** Compiles and verifies real Sierra ABIs, Flow 1 (Open $\to$ Update $\to$ Fund $\to$ Close $\to$ Claim), Flow 2 (Liquidation $\to$ Bounty), and Fact field mutation attacks.
+- **Total Passing Tests:** 175 / 175 across 16 test files (100% pass rate)
+- **Real Cairo Contract Integration Suite (`tests/integration/realCairoContractIntegration.test.ts` - 10 tests):** Compiles and verifies real Sierra ABIs, Flow 1 (Open $\to$ Update $\to$ Fund $\to$ Close $\to$ Claim), Flow 2 (Liquidation $\to$ Bounty), and 6 runtime adversarial attack tests (margin mutation, payout mutation, payout commitment swapping, recipient swapping, healthy position liquidation rejection, LP withdrawal reserve floor protection).
 - **Model Integration & Golden Path Suite (`tests/integration/fullContractIntegration.test.ts` - 3 tests):** Full Golden Path Lifecycle (Open &rarr; Update &rarr; Fund &rarr; Close &rarr; Claim), Liquidation Lifecycle, LP Reserve Safety.
 - **Adversarial Security Tests (`tests/adversarial/attackVectors.test.ts` - 52 tests):** 6 Nullifier integrity attack permutations, exact solvency boundary tests, fact substitution attacks (one-field-at-a-time), payout inflation, direct token drain, stale oracle, replay nullifiers, cross-market spoofing, unauthorized keeper claim, double bounty/payout claim, and LP withdrawal exceeding reserve.
 - **Canonical Pragma Oracle Tests (`tests/pelPerpsEngine.test.ts` - 8 tests):** Fail-closed on-chain read, stale feed rejection, STARK proof pipeline verification.
