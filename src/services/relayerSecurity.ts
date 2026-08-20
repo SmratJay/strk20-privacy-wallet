@@ -16,6 +16,11 @@ export const ALLOWED_ENTRYPOINTS = [
   'claim_keeper_bounty',
   'claim_payout',
   'register_verified_fact',
+  'register_open_fact',
+  'register_update_fact',
+  'register_fund_fact',
+  'register_close_fact',
+  'register_liquidate_fact',
   'deposit_liquidity',
   'withdraw_liquidity_shares',
   'approve',
@@ -53,6 +58,26 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
   register_verified_fact: {
     expectedLength: 8,
     fieldNames: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'recipient', 'fact_hash'],
+  },
+  register_open_fact: {
+    expectedLength: 7,
+    fieldNames: ['market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'owner', 'fact_hash'],
+  },
+  register_update_fact: {
+    expectedLength: 7,
+    fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'new_margin', 'oracle_price', 'fact_hash'],
+  },
+  register_fund_fact: {
+    expectedLength: 9,
+    fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'funding', 'new_margin', 'oracle_price', 'direction', 'fact_hash'],
+  },
+  register_close_fact: {
+    expectedLength: 8,
+    fieldNames: ['market_id', 'position_commitment', 'final_nullifier', 'payout_commitment', 'payout_amount', 'oracle_price', 'recipient', 'fact_hash'],
+  },
+  register_liquidate_fact: {
+    expectedLength: 7,
+    fieldNames: ['market_id', 'position_commitment', 'position_nullifier', 'liquidation_amount', 'oracle_price', 'keeper', 'fact_hash'],
   },
   deposit_liquidity: {
     expectedLength: 1,

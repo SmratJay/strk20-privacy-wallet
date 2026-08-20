@@ -49,7 +49,7 @@ class PragmaOracleService {
         const feed: OracleMarketFeed = {
           pairId: pair,
           priceUsd: ticker.price,
-          timestamp: Date.now(),
+          timestamp: Math.floor(Date.now() / 1000),
           decimals: 8,
           numSources: 5,
           isFresh: true,
@@ -72,7 +72,7 @@ class PragmaOracleService {
       const feed: OracleMarketFeed = {
         pairId: pair,
         priceUsd: price,
-        timestamp: Date.now(),
+        timestamp: Math.floor(Date.now() / 1000),
         decimals: 8,
         numSources: 4,
         isFresh: true,
@@ -87,7 +87,7 @@ class PragmaOracleService {
       return {
         pairId: pair,
         priceUsd: 96420.0,
-        timestamp: Date.now(),
+        timestamp: Math.floor(Date.now() / 1000),
         decimals: 8,
         numSources: 3,
         isFresh: true,

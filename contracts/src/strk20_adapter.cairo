@@ -344,18 +344,28 @@ pub mod STRK20Adapter {
             });
         }
 
-        // ─── COLLECT FUNDING PAYMENT (Real LP Counterparty Clearing) ─────────
+        // ─── COLLECT / CLEAR FUNDING PAYMENT (Bidirectional Clearing) ───────
         fn collect_funding_payment(ref self: ContractState, nullifier: felt252, amount: u128, is_long_pays: bool) {
             let caller = get_caller_address();
             assert(caller == self.pel_core_address.read() || caller == self.admin.read(), 'UNAUTHORIZED_PEL_CORE');
 
-            let current_locked = self.total_locked_collateral.read();
-            assert(current_locked >= amount, 'INSUFFICIENT_LOCKED_MARGIN');
-            self.total_locked_collateral.write(current_locked - amount);
+            if is_long_pays {
+                // Trader pays funding -> Deduct from trader margin, credit to LP pool NAV
+                let current_locked = self.total_locked_collateral.read();
+                assert(current_locked >= amount, 'INSUFFICIENT_LOCKED_MARGIN');
+                self.total_locked_collateral.write(current_locked - amount);
 
-            // Funding paid by trader goes to LP counterparty pool NAV
-            let current_lp_nav = self.lp_pool_nav.read();
-            self.lp_pool_nav.write(current_lp_nav + amount);
+                let current_lp_nav = self.lp_pool_nav.read();
+                self.lp_pool_nav.write(current_lp_nav + amount);
+            } else {
+                // Trader receives funding -> Deduct from LP pool NAV, credit to trader margin
+                let current_lp_nav = self.lp_pool_nav.read();
+                assert(current_lp_nav >= amount, 'INSUFFICIENT_POOL_NAV');
+                self.lp_pool_nav.write(current_lp_nav - amount);
+
+                let current_locked = self.total_locked_collateral.read();
+                self.total_locked_collateral.write(current_locked + amount);
+            }
 
             self.emit(FundingCollected { nullifier, amount, is_long_pays });
         }

@@ -77,18 +77,9 @@ describe('PEL Private Perpetuals Protocol Test Suite', () => {
     expect(proof.nullifier.startsWith('0x')).toBe(true);
 
     // Verify mathematical equality with Cairo Poseidon structure
-    const proofTypeFelt = '0x' + Buffer.from('OPEN').toString('hex');
-    const marketFelt    = '0x' + Buffer.from('BTC-PERP').toString('hex');
-    const amountFelt    = '0x' + (100n * 100n).toString(16); // $100 in cents
-    const priceFelt     = '0x' + (95_000n * 100n).toString(16); // $95,000 in cents
-
-    const manualInputsHash = hash.computePoseidonHashOnElements([
-      proofTypeFelt, marketFelt, proof.commitment, proof.nullifier, amountFelt, priceFelt, witness.ownerAddress,
-    ]);
-    expect(proof.publicInputsHash).toBe(manualInputsHash);
-
-    const STWO_TAG = '0x5354574f5f534e495033365f50524f4f465f5632';
-    const manualFactHash = hash.computePoseidonHashOnElements([manualInputsHash, STWO_TAG]);
+    const manualFactHash = zkProverService.computeOpenFactHash(
+      'BTC-PERP', proof.commitment, proof.nullifier, 100n * 100n, 95_000n * 100n, witness.ownerAddress,
+    );
     expect(proof.factHash).toBe(manualFactHash);
   });
 

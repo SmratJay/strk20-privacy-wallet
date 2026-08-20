@@ -128,6 +128,36 @@ export function loadWitness(
   return all.find(w => w.commitment === commitment) ?? null;
 }
 
+/** Search all namespaces for a witness matching the commitment. */
+export function findWitnessByCommitment(commitment: string): PrivatePositionState | null {
+  if (typeof localStorage !== 'undefined') {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(NAMESPACE)) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try {
+            const list = deserialise(raw);
+            const found = list.find(w => w.commitment === commitment);
+            if (found) return found;
+          } catch {}
+        }
+      }
+    }
+  } else {
+    for (const [key, raw] of memStore.entries()) {
+      if (key.startsWith(NAMESPACE)) {
+        try {
+          const list = deserialise(raw);
+          const found = list.find(w => w.commitment === commitment);
+          if (found) return found;
+        } catch {}
+      }
+    }
+  }
+  return null;
+}
+
 /** List all witnesses for an address. */
 export function listWitnesses(walletAddress: string): PrivatePositionState[] {
   return loadAllWitnesses(walletAddress);

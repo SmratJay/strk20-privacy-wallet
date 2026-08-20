@@ -694,6 +694,38 @@
 * **Vitest Test Suite:** **150 / 150 passing tests** across 14 test files.
 * **Next.js Production Build:** `npm run build` completed in 3.0s with 0 errors.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 14:15:00 IST
+
+### 🚀 PEL BTC-PERP V4.3: Final Correctness & Release Implementation
+
+#### 🔴 [BIG CHANGE] — Domain-Separated Typed Fact Schemas ([P0-01 &rarr; P0-05])
+* **Cairo StwoVerifier (`contracts/src/stwo_verifier.cairo`):**
+  * Implemented typed transition facts: `STWO_PEL_OPEN_V4`, `STWO_PEL_UPDATE_V4`, `STWO_PEL_FUND_V4`, `STWO_PEL_CLOSE_V4`, `STWO_PEL_LIQ_V4`.
+  * Added typed verification methods: `verify_open_fact`, `verify_update_fact`, `verify_fund_fact`, `verify_close_fact`, `verify_liquidate_fact`.
+  * Every method recomputes the exact domain-separated Poseidon hash on-chain and checks `verified_facts[fact_hash] == true`.
+* **TypeScript ZK Prover (`src/services/zkProverService.ts`):**
+  * Added exact matching typed hash generators (`computeOpenFactHash`, `computeUpdateFactHash`, `computeFundFactHash`, `computeCloseFactHash`, `computeLiquidateFactHash`).
+  * Updated `registerFactOnChain` to dispatch to the corresponding typed entrypoint.
+
+#### 🔴 [BIG CHANGE] — Position &rarr; Payout Note Commitment Binding ([P0-06])
+* `close_position` binds `position_commitment`, `final_nullifier`, `payout_commitment`, `payout_amount`, and `recipient` in the single close fact.
+* Any tampering with the payout note commitment or recipient breaks the on-chain fact hash verification.
+
+#### 🔴 [BIG CHANGE] — Semantic Liquidation & Fail-Closed Stale Oracle ([P0-07 &rarr; P0-09])
+* **Solvency Evaluation:** `KeeperService.scanActivePositions` evaluates true mathematical solvency ($\text{equity} \le \text{maintenanceMargin}$) rather than unconditionally flagging positions. Healthy positions are rejected from candidate queues.
+* **Fail-Closed Stale Oracle:** If the Pragma oracle query fails or is older than 180s, the keeper emits 0 liquidation candidates and registers 0 facts.
+
+#### 🔴 [BIG CHANGE] — Bidirectional Funding Clearing ([P0-10])
+* `collect_funding_payment` in `contracts/src/strk20_adapter.cairo` now supports both trader-pays-LP (`is_long_pays == true`) and LP-pays-trader (`is_long_pays == false`), preserving asset conservation invariant at all times.
+
+#### 🚀 Verification & Build Status:
+* **Scarb Build:** `scarb build` compiles with 0 errors and 0 warnings.
+* **Vitest Test Suite:** **152 / 152 passing tests** across 14 test files (100% pass rate).
+* **Next.js Production Build:** `npm run build` compiled successfully in 2.9s with 0 errors.
+
+
 
 
 

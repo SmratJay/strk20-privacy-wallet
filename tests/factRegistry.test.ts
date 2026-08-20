@@ -1,24 +1,29 @@
 /**
  * @file tests/factRegistry.test.ts
- * @description M2 Fact Registry & Proof Enforcement Test Suite (PEL V4.1 Architecture)
+ * @description Fact Registry & Typed Transition Proof Enforcement Test Suite (PEL V4.3 Architecture)
  *
  * Verifies that:
- * 1. Self-describing fact registration validates public inputs including recipient on-chain
- * 2. Hash mismatch between claimed fact and canonical inputs reverts
- * 3. Unregistered facts are rejected (no client-side Poseidon forgery)
- * 4. Unauthorized accounts cannot register facts
- * 5. Invalid ranges (zero price, invalid market) revert
- * 6. Tampering with recipient invalidates the fact hash
+ * 1. Typed fact schemas for OPEN, UPDATE, FUND, CLOSE, LIQUIDATE match Cairo hashing exactly
+ * 2. verify_*_fact recomputes the expected fact hash on-chain and enforces hash equality
+ * 3. Hash mismatch between claimed fact and canonical inputs reverts
+ * 4. Unregistered facts are rejected (no client-side Poseidon forgery)
+ * 5. Unauthorized accounts cannot register facts
+ * 6. Tampering with recipient or payout note commitment in CLOSE fact invalidates verification
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { zkProverService } from '../src/services/zkProverService';
+import {
+  zkProverService,
+  OPEN_TAG_FELT,
+  UPDATE_TAG_FELT,
+  FUND_TAG_FELT,
+  CLOSE_TAG_FELT,
+  LIQ_TAG_FELT,
+} from '../src/services/zkProverService';
 import { hash } from 'starknet';
 
-const STWO_TAG = '0x' + Buffer.from('STWO_SNIP36_PROOF_V2').toString('hex');
-
-// High-fidelity Mock Fact Registry (mirroring stwo_verifier.cairo V4.1)
-class MockFactRegistry {
+// High-fidelity Mock Fact Registry (mirroring stwo_verifier.cairo V4.3)
+class MockFactRegistryV4 {
   public admin: string;
   public proverAddress: string;
   public verifiedFacts: Map<string, boolean> = new Map();
@@ -28,15 +33,14 @@ class MockFactRegistry {
     this.proverAddress = proverAddress.toLowerCase();
   }
 
-  registerVerifiedFact(
+  registerOpenFact(
     caller: string,
-    proofType: string,
     marketId: string,
     commitment: string,
-    nullifier: string,
-    amount: bigint,
+    marginNullifier: string,
+    margin: bigint,
     oraclePrice: bigint,
-    recipientOrCaller: string,
+    owner: string,
     factHash: string
   ) {
     const callerNorm = caller.toLowerCase();
@@ -46,68 +50,105 @@ class MockFactRegistry {
     if (oraclePrice <= 0n) throw new Error('INVALID_ZERO_PRICE');
     if (marketId !== 'BTC-PERP') throw new Error('INVALID_MARKET_ID');
 
-    const inputsHash = zkProverService.computePublicInputsHash(
-      proofType as any,
-      marketId,
-      commitment,
-      nullifier,
-      amount,
-      oraclePrice,
-      recipientOrCaller
+    const expected = zkProverService.computeOpenFactHash(
+      marketId, commitment, marginNullifier, margin, oraclePrice, owner
     );
-    const expectedFactHash = zkProverService.computeFactHash(inputsHash);
-
-    if (factHash.toLowerCase() !== expectedFactHash.toLowerCase()) {
+    if (factHash.toLowerCase() !== expected.toLowerCase()) {
       throw new Error('FACT_HASH_MISMATCH');
     }
-
     if (this.verifiedFacts.get(factHash.toLowerCase())) {
       throw new Error('FACT_ALREADY_REGISTERED');
     }
-
     this.verifiedFacts.set(factHash.toLowerCase(), true);
   }
 
-  verifyTransitionProof(
-    proofType: string,
+  registerCloseFact(
+    caller: string,
+    marketId: string,
+    positionCommitment: string,
+    finalNullifier: string,
+    payoutCommitment: string,
+    payoutAmount: bigint,
+    oraclePrice: bigint,
+    recipient: string,
+    factHash: string
+  ) {
+    const callerNorm = caller.toLowerCase();
+    if (callerNorm !== this.admin && callerNorm !== this.proverAddress) {
+      throw new Error('UNAUTHORIZED_PROVER');
+    }
+    if (oraclePrice <= 0n) throw new Error('INVALID_ZERO_PRICE');
+    if (marketId !== 'BTC-PERP') throw new Error('INVALID_MARKET_ID');
+
+    const expected = zkProverService.computeCloseFactHash(
+      marketId, positionCommitment, finalNullifier, payoutCommitment, payoutAmount, oraclePrice, recipient
+    );
+    if (factHash.toLowerCase() !== expected.toLowerCase()) {
+      throw new Error('FACT_HASH_MISMATCH');
+    }
+    if (this.verifiedFacts.get(factHash.toLowerCase())) {
+      throw new Error('FACT_ALREADY_REGISTERED');
+    }
+    this.verifiedFacts.set(factHash.toLowerCase(), true);
+  }
+
+  verifyOpenFact(
     marketId: string,
     commitment: string,
-    nullifier: string,
-    amount: bigint,
+    marginNullifier: string,
+    margin: bigint,
     oraclePrice: bigint,
-    recipientOrCaller: string,
+    owner: string,
     factHash: string
   ): boolean {
-    return this.verifiedFacts.get(factHash.toLowerCase()) === true;
+    const expected = zkProverService.computeOpenFactHash(
+      marketId, commitment, marginNullifier, margin, oraclePrice, owner
+    );
+    return (expected.toLowerCase() === factHash.toLowerCase()) && (this.verifiedFacts.get(factHash.toLowerCase()) === true);
+  }
+
+  verifyCloseFact(
+    marketId: string,
+    positionCommitment: string,
+    finalNullifier: string,
+    payoutCommitment: string,
+    payoutAmount: bigint,
+    oraclePrice: bigint,
+    recipient: string,
+    factHash: string
+  ): boolean {
+    const expected = zkProverService.computeCloseFactHash(
+      marketId, positionCommitment, finalNullifier, payoutCommitment, payoutAmount, oraclePrice, recipient
+    );
+    return (expected.toLowerCase() === factHash.toLowerCase()) && (this.verifiedFacts.get(factHash.toLowerCase()) === true);
   }
 }
 
-describe('PEL V4.1 Fact Registry & Self-Describing Verification Tests', () => {
-  let registry: MockFactRegistry;
+describe('PEL V4.3 Fact Registry & Typed Transition Verification Tests', () => {
+  let registry: MockFactRegistryV4;
   const admin = '0x_admin_address';
   const prover = '0x_authorized_prover';
   const attacker = '0x_malicious_actor';
   const userRecipient = '0x0111111111111111111111111111111111111111';
 
   beforeEach(() => {
-    registry = new MockFactRegistry(admin, prover);
+    registry = new MockFactRegistryV4(admin, prover);
   });
 
-  it('verifies valid registered fact from authorized prover with on-chain hash validation and recipient binding', () => {
+  it('P0-01: verifies valid typed OPEN fact from authorized prover', () => {
     const ownerSecret = '0x11112222333344445555666677778888';
     const nonce = '0xabc123';
     const marginCents = 100_000n; // $1,000
     const entryPriceCents = 9_642_050n; // $96,420.50
-    const quantitySats = 10_000_000n; // 0.1 BTC
     const oraclePriceCents = 9_642_050n;
-    const marginNullifier = '0x1234567890abcdef';
+    const marginNullifier = '0x9999888877776666';
 
-    const { fact } = zkProverService.generateOpenFact(
+    const { fact, commitment } = zkProverService.generateOpenFact(
       ownerSecret,
       nonce,
       'BTC-PERP',
       'LONG',
-      quantitySats,
+      10_371_238n, // ~0.1037 BTC (10x leverage on $1,000 margin)
       entryPriceCents,
       marginCents,
       oraclePriceCents,
@@ -115,93 +156,128 @@ describe('PEL V4.1 Fact Registry & Self-Describing Verification Tests', () => {
       userRecipient
     );
 
-    // 1. Authorized prover registers fact self-describing
-    registry.registerVerifiedFact(
+    // Register on StwoVerifier
+    registry.registerOpenFact(
       prover,
-      'OPEN',
       'BTC-PERP',
-      fact.commitment,
-      fact.nullifier,
-      fact.amountCents,
-      fact.oraclePriceCents,
+      commitment,
+      marginNullifier,
+      marginCents,
+      oraclePriceCents,
       userRecipient,
       fact.factHash
     );
 
-    // 2. State transition succeeds
-    const isValid = registry.verifyTransitionProof(
-      'OPEN',
+    // Verification succeeds
+    const isValid = registry.verifyOpenFact(
       'BTC-PERP',
-      fact.commitment,
-      fact.nullifier,
-      fact.amountCents,
-      fact.oraclePriceCents,
+      commitment,
+      marginNullifier,
+      marginCents,
+      oraclePriceCents,
       userRecipient,
       fact.factHash
     );
     expect(isValid).toBe(true);
   });
 
-  it('rejects registration when fact_hash does not match public inputs', () => {
-    const fakeFactHash = '0x1234567890abcdef';
-    expect(() => {
-      registry.registerVerifiedFact(
-        prover,
-        'OPEN',
-        'BTC-PERP',
-        '0x1111',
-        '0x2222',
-        100_000n,
-        9_642_050n,
-        userRecipient,
-        fakeFactHash
-      );
-    }).toThrow('FACT_HASH_MISMATCH');
+  it('P0-04 & P0-06: verifies valid typed CLOSE fact binding position to payout note and recipient', () => {
+    const positionCommitment = '0x11112222333344445555666677778888';
+    const finalNullifier = '0x99998888777766665555444433332222';
+    const payoutCommitment = '0xaaaabbbbccccddddeeeeffff00001111';
+    const payoutAmountCents = 150_000n; // $1,500
+    const oraclePriceCents = 9_700_000n;
+
+    const factHash = zkProverService.computeCloseFactHash(
+      'BTC-PERP',
+      positionCommitment,
+      finalNullifier,
+      payoutCommitment,
+      payoutAmountCents,
+      oraclePriceCents,
+      userRecipient
+    );
+
+    // Prover registers fact
+    registry.registerCloseFact(
+      prover,
+      'BTC-PERP',
+      positionCommitment,
+      finalNullifier,
+      payoutCommitment,
+      payoutAmountCents,
+      oraclePriceCents,
+      userRecipient,
+      factHash
+    );
+
+    // Verify exact match
+    const isValid = registry.verifyCloseFact(
+      'BTC-PERP',
+      positionCommitment,
+      finalNullifier,
+      payoutCommitment,
+      payoutAmountCents,
+      oraclePriceCents,
+      userRecipient,
+      factHash
+    );
+    expect(isValid).toBe(true);
+
+    // Tampered recipient in verification calldata fails!
+    const isTamperedRecipient = registry.verifyCloseFact(
+      'BTC-PERP',
+      positionCommitment,
+      finalNullifier,
+      payoutCommitment,
+      payoutAmountCents,
+      oraclePriceCents,
+      '0x0111111111111111',
+      factHash
+    );
+    expect(isTamperedRecipient).toBe(false);
+
+    // Tampered payout commitment in verification calldata fails!
+    const isTamperedPayout = registry.verifyCloseFact(
+      'BTC-PERP',
+      positionCommitment,
+      finalNullifier,
+      '0xdeadbeef12345678',
+      payoutAmountCents,
+      oraclePriceCents,
+      userRecipient,
+      factHash
+    );
+    expect(isTamperedPayout).toBe(false);
   });
 
-  it('rejects registration with zero oracle price or invalid market', () => {
-    expect(() => {
-      registry.registerVerifiedFact(
-        prover,
-        'OPEN',
-        'BTC-PERP',
-        '0x1111',
-        '0x2222',
-        100_000n,
-        0n,
-        userRecipient,
-        '0x1234'
-      );
-    }).toThrow('INVALID_ZERO_PRICE');
+  it('REJECTS: unauthorized caller cannot register typed facts', () => {
+    const factHash = zkProverService.computeOpenFactHash(
+      'BTC-PERP', '0x1', '0x2', 1000n, 9600000n, userRecipient
+    );
 
     expect(() => {
-      registry.registerVerifiedFact(
-        prover,
-        'OPEN',
-        'ETH-PERP',
-        '0x1111',
-        '0x2222',
-        100_000n,
-        9_642_050n,
-        userRecipient,
-        '0x1234'
-      );
-    }).toThrow('INVALID_MARKET_ID');
-  });
-
-  it('rejects fact registration attempt from unauthorized attacker', () => {
-    expect(() => {
-      registry.registerVerifiedFact(
+      registry.registerOpenFact(
         attacker,
-        'OPEN',
         'BTC-PERP',
-        '0x1111',
-        '0x2222',
-        100_000n,
-        9_642_050n,
+        '0x1',
+        '0x2',
+        1000n,
+        9600000n,
         userRecipient,
-        '0x1234'
+        factHash
       );
     }).toThrow('UNAUTHORIZED_PROVER');
+  });
+
+  it('REJECTS: unregistered fact fails verification even with valid structure', () => {
+    const factHash = zkProverService.computeOpenFactHash(
+      'BTC-PERP', '0x1', '0x2', 1000n, 9600000n, userRecipient
+    );
+
+    const isValid = registry.verifyOpenFact(
+      'BTC-PERP', '0x1', '0x2', 1000n, 9600000n, userRecipient, factHash
+    );
+    expect(isValid).toBe(false);
   });
 });

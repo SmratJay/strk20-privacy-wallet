@@ -534,53 +534,57 @@ describe('Attack 29: oracle jump manipulation exceeds circuit-breaker bound', ()
 
 describe('Attack 30: one-field-at-a-time fact substitution attacks', () => {
   const base = {
-    proofType: 'CLOSE' as const,
     marketId: 'BTC-PERP',
     commitment: '0x1111111111111111111111111111111111111111',
     nullifier: '0x2222222222222222222222222222222222222222',
+    payoutCommitment: '0x3333333333333333333333333333333333333333',
     amountCents: 100000n,
     oraclePriceCents: 9642050n,
-    recipient: '0x3333333333333333333333333333333333333333',
+    recipient: '0x4444444444444444444444444444444444444444',
   };
 
-  const canonicalFactHash = zkProverService.computeFactHash(
-    zkProverService.computePublicInputsHash(
-      base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents, base.oraclePriceCents, base.recipient
-    )
+  const canonicalFactHash = zkProverService.computeCloseFactHash(
+    base.marketId, base.commitment, base.nullifier, base.payoutCommitment, base.amountCents, base.oraclePriceCents, base.recipient
   );
 
   it('REJECTS: changed amount creates distinct fact hash', () => {
-    const tampered = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash(
-        base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents + 1n, base.oraclePriceCents, base.recipient
-      )
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, base.commitment, base.nullifier, base.payoutCommitment, base.amountCents + 1n, base.oraclePriceCents, base.recipient
     );
     expect(tampered).not.toBe(canonicalFactHash);
   });
 
-  it('REJECTS: changed commitment creates distinct fact hash', () => {
-    const tampered = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash(
-        base.proofType, base.marketId, '0xdeadbeef', base.nullifier, base.amountCents, base.oraclePriceCents, base.recipient
-      )
+  it('REJECTS: changed position commitment creates distinct fact hash', () => {
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, '0xdeadbeef', base.nullifier, base.payoutCommitment, base.amountCents, base.oraclePriceCents, base.recipient
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+
+  it('REJECTS: changed payout note commitment creates distinct fact hash', () => {
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, base.commitment, base.nullifier, '0xdeadbeef12345678', base.amountCents, base.oraclePriceCents, base.recipient
     );
     expect(tampered).not.toBe(canonicalFactHash);
   });
 
   it('REJECTS: changed nullifier creates distinct fact hash', () => {
-    const tampered = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash(
-        base.proofType, base.marketId, base.commitment, '0xdeadbeef', base.amountCents, base.oraclePriceCents, base.recipient
-      )
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, base.commitment, '0xdeadbeef', base.payoutCommitment, base.amountCents, base.oraclePriceCents, base.recipient
     );
     expect(tampered).not.toBe(canonicalFactHash);
   });
 
   it('REJECTS: changed oracle price creates distinct fact hash', () => {
-    const tampered = zkProverService.computeFactHash(
-      zkProverService.computePublicInputsHash(
-        base.proofType, base.marketId, base.commitment, base.nullifier, base.amountCents, base.oraclePriceCents + 100n, base.recipient
-      )
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, base.commitment, base.nullifier, base.payoutCommitment, base.amountCents, base.oraclePriceCents + 100n, base.recipient
+    );
+    expect(tampered).not.toBe(canonicalFactHash);
+  });
+
+  it('REJECTS: changed recipient creates distinct fact hash', () => {
+    const tampered = zkProverService.computeCloseFactHash(
+      base.marketId, base.commitment, base.nullifier, base.payoutCommitment, base.amountCents, base.oraclePriceCents, '0x0111111111111111'
     );
     expect(tampered).not.toBe(canonicalFactHash);
   });

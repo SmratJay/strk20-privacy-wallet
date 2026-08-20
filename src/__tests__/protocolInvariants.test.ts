@@ -90,12 +90,12 @@ describe('PEL Perpetuals Protocol-Grade Invariants & Security Suite', () => {
     expect(proof.factHash).toBeTruthy();
     expect(proof.factHash.startsWith('0x')).toBe(true);
 
-    // Reconstruct exact Poseidon public inputs
-    const recomputed = zkProverService.computePublicInputsHash(
-      'OPEN', MARKET_ID, proof.commitment, proof.nullifier,
+    // Reconstruct exact Poseidon typed fact
+    const recomputed = zkProverService.computeOpenFactHash(
+      MARKET_ID, proof.commitment, proof.nullifier,
       usdToCents(500), usdToCents(95000), OWNER_SECRET,
     );
-    expect(proof.publicInputsHash).toBe(recomputed);
+    expect(proof.factHash).toBe(recomputed);
   });
 
   it('Invariant 5 [Commitment Binding]: Identical inputs produce identical commitment (determinism)', () => {
