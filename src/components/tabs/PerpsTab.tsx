@@ -489,27 +489,47 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       {/* Top Protocol Status & Market Strip */}
       <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-4 shadow-xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          {/* Market Selector Chips */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
+          {/* Market Switcher Pill Navigation (Scope: BTC-PERP Live) */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
             {markets.map((m) => {
               const isSelected = m.id === selectedMarketId;
+              const isLive = m.id === 'BTC-PERP';
               return (
                 <button
                   key={m.id}
-                  onClick={() => setSelectedMarketId(m.id as any)}
+                  onClick={() => {
+                    if (isLive) {
+                      setSelectedMarketId(m.id);
+                    } else {
+                      showToast({
+                        type: 'info',
+                        title: `${m.id} (Roadmap V5)`,
+                        description: 'BTC-PERP is the active live settlement market on Starknet Sepolia.',
+                      });
+                    }
+                  }}
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     isSelected
                       ? 'bg-[#a855f7] text-white shadow-lg shadow-[#a855f7]/30 ring-1 ring-white/20'
-                      : 'bg-[#18181b] text-[#a1a1aa] hover:text-white hover:bg-[#27272a] border border-[#27272a]'
+                      : isLive
+                      ? 'bg-[#18181b] text-[#a1a1aa] hover:text-white hover:bg-[#27272a] border border-[#27272a]'
+                      : 'bg-[#18181b]/50 text-[#71717a] hover:text-[#a1a1aa] border border-[#27272a]/50 opacity-70'
                   }`}
                 >
                   <span className="w-5 h-5 rounded-md bg-black/40 flex items-center justify-center text-[10px] font-mono">
                     {m.id.split('-')[0]}
                   </span>
                   <span>{m.id}</span>
-                  <span className={`text-[10px] ${m.change24hPct >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                    {m.change24hPct >= 0 ? '+' : ''}{m.change24hPct.toFixed(1)}%
-                  </span>
+                  {!isLive && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-normal">
+                      Soon
+                    </span>
+                  )}
+                  {isLive && (
+                    <span className={`text-[10px] ${m.change24hPct >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {m.change24hPct >= 0 ? '+' : ''}{m.change24hPct.toFixed(1)}%
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -980,15 +1000,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                               {isInspecting ? 'HIDE ZK' : 'INSPECT ZK'}
                             </button>
                             <button
-                              onClick={() => handleClosePosition(pos.id, 0.5)}
-                              className="px-2 py-1 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white text-[10px] font-semibold transition-colors"
-                              title="Close 50% Size"
-                            >
-                              50%
-                            </button>
-                            <button
                               onClick={() => handleClosePosition(pos.id, 1.0)}
-                              className="px-2.5 py-1 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-[10px] font-semibold border border-[#3f3f46] transition-colors"
+                              className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-[10px] font-semibold border border-[#3f3f46] transition-colors"
                             >
                               MARKET CLOSE
                             </button>
@@ -1001,6 +1014,17 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Blueprint Section 14 (Page 16): Explicit Privacy & Custody Disclosure */}
+      <div className="p-3.5 bg-[#18181b]/80 border border-[#27272a] rounded-2xl text-xs text-[#a1a1aa] flex flex-col md:flex-row items-start md:items-center justify-between gap-2 shadow-md">
+        <div className="flex items-center gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-[#a855f7] shrink-0" />
+          <span>
+            <strong className="text-zinc-200">Private Perpetual Positions:</strong> Sensitive position parameters live in a client-side private witness and are represented on-chain through commitments/nullifiers, while settlement is backed by real ERC20 custody.
+          </span>
+        </div>
+        <span className="text-[10px] font-mono text-zinc-500 shrink-0">Starknet Sepolia • V4.3</span>
       </div>
     </div>
   );

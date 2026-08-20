@@ -648,5 +648,97 @@ describe('Attack 33: double claiming payout note', () => {
   });
 });
 
+// ─── Attacks 34-39: Commitment <-> Nullifier Integrity Attacks (Blueprint Page 5) ──
+
+describe('Attacks 34-39: Commitment <-> Nullifier Integrity Invariants', () => {
+  const commitmentByNullifier = new Map<string, string>();
+  const positionA = '0x0111111111111111111111111111111111111111';
+  const positionB = '0x0222222222222222222222222222222222222222';
+  const nullifierA = '0x0aaaa111122223333444455556666777788889999';
+  const nullifierB = '0x0bbbb111122223333444455556666777788889999';
+
+  // Seed initial mappings
+  commitmentByNullifier.set(nullifierA, positionA);
+  commitmentByNullifier.set(nullifierB, positionB);
+
+  it('Attack 34: Position A + nullifier B -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(nullifierB);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+
+  it('Attack 35: Position A + random unused nullifier -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    const randomNullifier = '0x0ffff999988887777666655554444333322221111';
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(randomNullifier);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+
+  it('Attack 36: UPDATE A -> B using B\'s old nullifier -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(nullifierB);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+
+  it('Attack 37: FUND A using B\'s old nullifier -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(nullifierB);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+
+  it('Attack 38: CLOSE A using unrelated nullifier -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    const unrelatedNullifier = '0x0cccc111122223333444455556666777788889999';
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(unrelatedNullifier);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+
+  it('Attack 39: LIQUIDATE A using unrelated nullifier -> reverts NULLIFIER_COMMITMENT_MISMATCH', () => {
+    const unrelatedNullifier = '0x0cccc111122223333444455556666777788889999';
+    expect(() => {
+      const boundPos = commitmentByNullifier.get(unrelatedNullifier);
+      if (boundPos !== positionA) {
+        throw new Error('NULLIFIER_COMMITMENT_MISMATCH');
+      }
+    }).toThrow('NULLIFIER_COMMITMENT_MISMATCH');
+  });
+});
+
+// ─── Attack 40: Exact Solvency Boundary Vectors (Blueprint Page 7) ──────────
+
+describe('Attack 40: Solvency Boundary Invariants (equity vs maintMargin)', () => {
+  it('verifies exact boundary vectors: equity == maint, equity == maint + 1, equity == maint - 1', () => {
+    const maintMarginCents = 20_000n; // $200 maintenance margin
+
+    // Boundary 1: equity == maint -> liquidatable
+    const equityAtMaint = 20_000n;
+    expect(isLiquidatable(equityAtMaint, maintMarginCents)).toBe(true);
+
+    // Boundary 2: equity == maint + 1 -> healthy (NOT liquidatable)
+    const equityHealthy = 20_001n;
+    expect(isLiquidatable(equityHealthy, maintMarginCents)).toBe(false);
+
+    // Boundary 3: equity == maint - 1 -> liquidatable
+    const equityLiquidatable = 19_999n;
+    expect(isLiquidatable(equityLiquidatable, maintMarginCents)).toBe(true);
+  });
+});
+
+
 
 

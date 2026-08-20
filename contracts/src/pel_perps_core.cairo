@@ -235,6 +235,7 @@ pub mod PELPerpsCore {
             assert(caller == collateral_owner || caller == self.admin.read(), 'UNAUTHORIZED_COLLATERAL_OWNER');
 
             let market = self.markets.read(market_id);
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
             assert(market.is_active, 'MARKET_NOT_ACTIVE');
             assert(margin_amount > 0, 'INVALID_MARGIN_AMOUNT');
             assert(!self.used_nullifiers.read(margin_nullifier), 'NULLIFIER_ALREADY_SPENT');
@@ -291,9 +292,11 @@ pub mod PELPerpsCore {
             new_commitment: felt252,
             fact_hash: felt252,
         ) {
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
             let mut old_pos = self.positions.read(old_commitment);
             assert(old_pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(old_pos.market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(self.commitment_by_nullifier.read(old_nullifier) == old_commitment, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(old_nullifier), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
 
@@ -328,6 +331,7 @@ pub mod PELPerpsCore {
                 updated_at:       now,
                 is_active:        true,
             });
+            self.commitment_by_nullifier.write(old_pos.margin_nullifier, new_commitment);
 
             self.emit(PositionUpdated { old_commitment, old_nullifier, new_commitment, timestamp: now });
         }
@@ -344,9 +348,11 @@ pub mod PELPerpsCore {
             is_long_pays: bool,
             fact_hash: felt252,
         ) {
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
             let mut pos = self.positions.read(commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(self.commitment_by_nullifier.read(old_nullifier) == commitment, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(old_nullifier), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
 
@@ -420,6 +426,7 @@ pub mod PELPerpsCore {
             let mut pos = self.positions.read(position_commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(self.commitment_by_nullifier.read(position_nullifier) == position_commitment, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(position_nullifier), 'NULLIFIER_ALREADY_SPENT');
 
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
@@ -477,12 +484,14 @@ pub mod PELPerpsCore {
             recipient: ContractAddress,
             fact_hash: felt252,
         ) {
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
             let caller = get_caller_address();
             assert(caller == recipient || caller == self.admin.read(), 'UNAUTHORIZED_CLOSE_CALLER');
 
             let mut pos = self.positions.read(position_commitment);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(self.commitment_by_nullifier.read(final_nullifier) == position_commitment, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(final_nullifier), 'FINAL_NULLIFIER_ALREADY_SPENT');
 
             // 1. Verify Oracle Price

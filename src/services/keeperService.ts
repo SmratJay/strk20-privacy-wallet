@@ -123,47 +123,31 @@ export class KeeperService {
         const marginCents = BigInt(pos.marginAmountCents || onChain.lockedMargin);
         if (marginCents <= 0n) continue;
 
-        // 2. Load position witness if available (or construct state for evaluation)
+        // 2. Load position witness for mathematical solvency evaluation
         const witness = findWitnessByCommitment(pos.currentCommitment);
-
-        let equityCents = 0n;
-        let maintMarginCents = 0n;
-        let liquidatable = false;
-        let nullifier = pos.spentNullifiers[pos.spentNullifiers.length - 1] || '0x0';
-        let factHash = '';
-
-        if (witness) {
-          nullifier = witness.nullifier || zkProverService.computeNullifier(witness.ownerSecret, witness.commitment);
-          const pnlCents = calcPnlCents(witness.side, witness.quantitySats, witness.entryPriceCents, oraclePriceCents);
-          equityCents = calcEquityCents(witness.marginCents, pnlCents, witness.fundingCents || 0n, witness.feesCents || 0n);
-          maintMarginCents = calcMaintMarginCents(witness.quantitySats, oraclePriceCents, maintBps);
-
-          liquidatable = isLiquidatable(equityCents, maintMarginCents);
-          if (!liquidatable) {
-            // Healthy position: reject from liquidation queue
-            continue;
-          }
-
-          // Build valid LIQUIDATE fact via ZK prover circuit
-          const liqResult = zkProverService.generateLiquidateFact(
-            witness,
-            oraclePriceCents,
-            oraclePriceCents,
-            keeperRecipient
-          );
-          factHash = liqResult.factHash;
-        } else {
-          // If witness not stored, fallback to on-chain locked margin check
-          maintMarginCents = (marginCents * maintBps) / 10000n;
-          factHash = zkProverService.computeLiquidateFactHash(
-            pos.marketId,
-            pos.currentCommitment,
-            nullifier,
-            marginCents,
-            oraclePriceCents,
-            keeperRecipient
-          );
+        if (!witness) {
+          // Blueprint P0-03 & Section 5: No witness / no valid prover artifact => no liquidation candidate
+          continue;
         }
+
+        const nullifier = witness.nullifier || zkProverService.computeNullifier(witness.ownerSecret, witness.commitment);
+        const pnlCents = calcPnlCents(witness.side, witness.quantitySats, witness.entryPriceCents, oraclePriceCents);
+        const equityCents = calcEquityCents(witness.marginCents, pnlCents, witness.fundingCents || 0n, witness.feesCents || 0n);
+        const maintMarginCents = calcMaintMarginCents(witness.quantitySats, oraclePriceCents, maintBps);
+
+        const liquidatable = isLiquidatable(equityCents, maintMarginCents);
+        if (!liquidatable) {
+          // Healthy position: reject from liquidation queue
+          continue;
+        }
+
+        // Build valid LIQUIDATE fact via ZK prover circuit
+        const liqResult = zkProverService.generateLiquidateFact(
+          witness,
+          oraclePriceCents,
+          oraclePriceCents,
+          keeperRecipient
+        );
 
         candidates.push({
           marketId: pos.marketId,
@@ -173,7 +157,7 @@ export class KeeperService {
           equityCents,
           maintenanceMarginCents: maintMarginCents,
           isLiquidatable: true,
-          factHash,
+          factHash: liqResult.factHash,
           bountyEstimatedCents: (marginCents * 200n) / 10000n, // 2% bounty
         });
       } catch (err: any) {

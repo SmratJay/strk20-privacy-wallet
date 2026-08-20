@@ -725,6 +725,53 @@
 * **Vitest Test Suite:** **152 / 152 passing tests** across 14 test files (100% pass rate).
 * **Next.js Production Build:** `npm run build` compiled successfully in 2.9s with 0 errors.
 
+---
+
+## 📅 Thursday, August 20, 2026 — 16:50:00 IST
+
+### 🏆 PEL BTC-PERP V4.4 Master Blueprint: Complete 25-Point Protocol Hardening & Full Integration
+
+#### 🔴 [BIG CHANGE] — Commitment <-> Nullifier Invariant & Strict Lineage ([P0-02])
+* **Cairo Core (`contracts/src/pel_perps_core.cairo`):**
+  * Enforced `assert(commitment_by_nullifier[old_nullifier] == old_commitment)` on `update_position` and `fund_position`.
+  * Enforced `assert(commitment_by_nullifier[position_nullifier] == position_commitment)` on `liquidate_position`.
+  * Enforced `assert(commitment_by_nullifier[final_nullifier] == position_commitment)` on `close_position`.
+  * Updated `commitment_by_nullifier` atomically upon every state update and funding increment.
+  * Added market pause assertions (`assert(!self.market_paused.read(market_id))`).
+
+#### 🔴 [BIG CHANGE] — Zero-Fallback Keeper Solvency Engine ([P0-03 & Section 5])
+* **Keeper Service (`src/services/keeperService.ts`):**
+  * Eliminated all no-witness fallback paths. Positions without valid client witnesses are skipped completely.
+  * Evaluates exact mathematical solvency ($\text{equity} \le \text{maintenanceMargin}$) at current live Pragma mark price.
+  * Enforces fail-closed stale oracle guard (if $>180\text{s}$, zero liquidations attempted).
+
+#### 🔴 [BIG CHANGE] — Persistent Daemon Indexer & Reorg Rollback Engine ([P1-03 & Section 11/12])
+* **Daemon Indexer (`src/services/daemonIndexerService.ts`):**
+  * Created durable storage model tracking block headers, parsed event logs, position graph, commitment edges, spent nullifiers, and keeper jobs.
+  * Implemented reorg detection algorithm: unwinds blocks above ancestor, purges orphaned events, and reconstructs canonical position graph atomically.
+  * Exposed live health telemetry (`indexerLagBlocks`, `activePositionsCount`, `pendingJobsCount`, `lastSubmissionTimestamp`, `lastFinalizedLiquidation`, `lastError`).
+
+#### 🔴 [BIG CHANGE] — Scope Freeze & Explicit Privacy / Custody Disclosures ([P1-04 & P1-05])
+* **Scope Freeze (`src/components/tabs/PerpsTab.tsx`):**
+  * Locked live settlement exclusively to `BTC-PERP` (USDC collateral). Disabled non-BTC market execution with roadmap badges.
+  * Removed partial-close 50% UI button to maintain 1:1 correspondence with the verified complete close transition.
+  * Added institutional privacy disclosure: *"Sensitive position parameters live in a client-side private witness and are represented on-chain through commitments/nullifiers, while settlement is backed by real ERC20 custody."*
+
+#### 🔴 [BIG CHANGE] — Comprehensive Contract Integration & Adversarial Matrix Suite
+* **Real Integration Tests (`tests/integration/fullContractIntegration.test.ts`):**
+  * **Flow 1 (Golden Path):** End-to-end simulation of Mint USDC &rarr; Approve &rarr; Register OPEN Fact &rarr; Core.open_position &rarr; UPDATE &rarr; FUND(+) &rarr; FUND(-) &rarr; CLOSE &rarr; CLAIM payout note.
+  * **Flow 2 (Liquidation Path):** OPEN &rarr; 5% adverse price drop &rarr; Keeper Solvency Evaluation &rarr; Register LIQ Fact &rarr; Core.liquidate_position &rarr; 2% Keeper Bounty Claim.
+  * **Flow 3 (LP Reserve Protection):** LP cannot drain funds below open interest counterparty risk reserve.
+* **Adversarial Invariant Tests (`tests/adversarial/attackVectors.test.ts`):**
+  * Added Attacks 34 to 39 covering all 6 nullifier integrity permutations (cross-position replay, random nullifier, mismatched update/fund/close/liquidate nullifiers).
+  * Added Attack 40 testing exact boundary solvency vectors (`equity == maint`, `equity == maint + 1`, `equity == maint - 1`).
+
+#### 🚀 Master Verification & Build Status:
+* **Scarb Build:** `scarb build` compiles with **0 errors and 0 warnings**.
+* **Vitest Test Suite:** **162 / 162 passing tests** across all 15 test files (100% pass rate).
+* **Next.js Production Build:** `npm run build` compiled **6/6 static & dynamic routes with 0 errors**.
+
+
 
 
 
