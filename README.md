@@ -1,110 +1,126 @@
-# 🔒 STRK20 Privacy Wallet (Umbra Mode)
+# 🍊 ORRANGE: Confidential DeFi & Privacy-Native Perpetuals on Starknet
 
-> **Umbra-grade privacy UX on Starknet — fully powered by the native STRK20 Note-Based Privacy Pool.**
+> **The complete privacy execution stack on Starknet — combining Umbra-grade Stealth Payments (STRK20) with Zero-Knowledge Shielded Perpetual Futures (PEL BTC-PERP).**
 
-Built by **Jai Bhati** ([@SmratJay](https://github.com/SmratJay)) — Founder of [orrange.xyz](https://orrange.xyz), web3 degen & ZK enthusiast.
+Built by **Jai Bhati** ([@SmratJay](https://github.com/SmratJay)) — Founder of [orrange.xyz](https://orrange.xyz).
 
-[![Tests](https://img.shields.io/badge/tests-10%2F10%20passing-emerald)](https://github.com/SmratJay/strk20-privacy-wallet)
+[![Cairo Scarb](https://img.shields.io/badge/Cairo%20Scarb-v2.16.0%20PASS-emerald)](https://github.com/SmratJay/strk20-privacy-wallet)
+[![Tests](https://img.shields.io/badge/tests-175%2F175%20passing-emerald)](https://github.com/SmratJay/strk20-privacy-wallet)
 [![Starknet](https://img.shields.io/badge/starknet-v10.4.0-blue)](https://starknetjs.com)
+[![Next.js](https://img.shields.io/badge/Next.js-v15.5.23-black)](https://nextjs.org)
 [![AVNU](https://img.shields.io/badge/AVNU%20SDK-v4.2.0-purple)](https://docs.avnu.fi)
 [![License](https://img.shields.io/badge/license-MIT-zinc)](./LICENSE)
 
 ---
 
-## 🎯 What is this?
+## 🎯 What is ORRANGE?
 
-**STRK20 Privacy Wallet** delivers the iconic **Umbra stealth UX** (*"publish once, receive privately, spend freely"*) directly on Starknet by leveraging the native, live-on-mainnet **STRK20 Note-Based (UTXO) Privacy Pool**.
+**ORRANGE** is a privacy-first decentralized financial platform built on Starknet. It bridges consumer-grade stealth payment UX with institutional-grade zero-knowledge derivatives trading.
 
-Zero new contracts to audit. Zero protocol changes. The production-grade zero-knowledge cryptography and Stwo prover engine already live on Starknet — this wallet provides the universal consumer and DeFi interface for **Braavos, Argent X, Ready Wallet, and Cartridge**.
-
-### ⚔️ STRK20 vs Umbra Comparison
-
-| Dimension | Umbra (Ethereum L1) | STRK20 Privacy Wallet (Starknet) |
-|---|---|---|
-| **Key Architecture** | 2-key stealth meta-address (spending + viewing) | **1 Registered Viewing Key** (off-chain signature derivation) |
-| **Payment Destination** | Per-payment stealth addresses (visible on-chain) | **Encrypted UTXO pool notes** (zero public recipient trail) |
-| **Wallet Compatibility** | Limited to standard EVM injected wallets | **Universal Starknet Support** (Braavos, Argent X, Ready Wallet) |
-| **Scanning Mechanism** | Public announcement events on-chain | **Directional subchannel scanning** in WriteOnce storage |
-| **Withdrawal / Spend** | External relayer network required for gas decoupling | **Pool-mediated withdrawals & sponsored paymaster relays** |
-| **Anonymity Set** | Isolated to users of the stealth contract | **Unified pool** across transfers, shielding, and DeFi |
-| **Selective Disclosure** | Manual viewing key export | **ECDH threshold auditor key escrow** (`SetViewingKey`) |
+### 🌟 Core Capabilities:
+1. **🔒 STRK20 Privacy Wallet (Umbra Mode):** Shield, send, unshield, and transfer tokens privately using Starknet's native note-based privacy pool with single-key stealth invoices.
+2. **⚡ PEL Private Perpetuals (`BTC-PERP`):** Shielded perpetual futures with $1\times$ to $50\times$ leverage. Position size, entry price, leverage, and liquidation points are hidden off-chain in encrypted Poseidon witnesses; only SNIP-36 STARK transition facts are verified on-chain.
+3. **💧 Pooled LP Counterparty Vault (`STRK20Adapter`):** GMX-style pooled liquidity with proportional NAV share pricing, fee attribution, and automated withdrawable reserve floor protection.
+4. **🤖 Autonomous Keeper & Indexer Subsystem:** Proof-based solvency evaluations ($\text{equity} \le \text{maintenanceMargin}$), fail-closed oracle freshness guards, and real-time Starknet RPC event polling with reorg recovery.
+5. **🔄 AVNU DEX Aggregator:** Live best-execution swaps across Ekubo and JediSwap with paymaster gasless routing.
 
 ---
 
-## ✨ Features & Architecture
+## 🏛️ Platform Architecture
 
 ```
-                                ┌─────────────────────────────────────────┐
-                                │       STRK20 PRIVACY WALLET (Next.js)   │
-                                └────────────────────┬────────────────────┘
-                                                     │
-             ┌──────────────────────┬────────────────┼────────────────┬──────────────────────┐
-             │                      │                │                │                      │
-             ▼                      ▼                ▼                ▼                      ▼
-     [ Core UI & Tabs ]     [ Stealth Engine ]  [ UTXO Vault ]   [ DeFi Router ]       [ Crypto & Audit ]
-     • Dual Balance Viewer  • Umbra 1-Key Share • Local Notes    • AVNU Live DEX       • Poseidon Note IDs
-     • On-Chain Shielding   • Stealth QR Invoices• Spend Tracking• Multi-Call Route    • Nullifier Tree
-     • Encrypted UTXO Send  • Deep-Link Payment • Nullifier Sync • Real Slippage Calc  • Homomorphic Masking
-     • Unshield Withdrawal  • Address Book      • Block Scanner  • Paymaster Relaying  • Selective Auditor
-     • Decrypted History    • Directional Keys                                           Escrow Proof
+                                    ┌──────────────────────────────────────────────────┐
+                                    │               ORRANGE PLATFORM                   │
+                                    └─────────────────────────┬────────────────────────┘
+                                                              │
+                    ┌─────────────────────────────────────────┴─────────────────────────────────────────┐
+                    │                                                                                   │
+                    ▼                                                                                   ▼
+    ┌───────────────────────────────┐                                                   ┌───────────────────────────────┐
+    │     STRK20 PRIVACY WALLET     │                                                   │      PEL SHIELDED PERPS       │
+    ├───────────────────────────────┤                                                   ├───────────────────────────────┤
+    │ • Umbra Stealth Invoices      │                                                   │ • BTC-PERP (1x - 50x)         │
+    │ • Encrypted UTXO Notes        │                                                   │ • Shielded Poseidon Witnesses │
+    │ • Subchannel Scanner          │                                                   │ • STARK SNIP-36 Fact Registry │
+    │ • Selective Auditor Escrow    │                                                   │ • Pooled LP Counterparty NAV  │
+    │ • AVNU Live DEX Swaps         │                                                   │ • Zero-Fallback Keeper Bot    │
+    └───────────────┬───────────────┘                                                   └───────────────┬───────────────┘
+                    │                                                                                   │
+                    └─────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                      │
+                                                      ▼
+                       ┌─────────────────────────────────────────────────────────────┐
+                       │                 STARKNET CAIRO SMART CONTRACTS              │
+                       │  - PELPerpsCore (State Machine & Nullifier Lineage)         │
+                       │  - StwoVerifier (Prover-Only Domain-Separated Fact Verifier)│
+                       │  - STRK20Adapter (ERC20 Custody, Payout Notes, LP Pool)     │
+                       │  - OracleAdapter (Canonical Mark Price & Circuit Breaker)   │
+                       │  - TestUSDC (6-decimal Collateral Token)                    │
+                       └─────────────────────────────────────────────────────────────┘
 ```
 
-1. **Universal Wallet Support (Umbra Client Mode)** — Native in-browser encrypted UTXO vault engine (`vaultService.ts`) enables full shielding, private spending, and note tracking across **Braavos, Argent X, and Ready Wallet** without requiring proprietary wallet extensions.
-2. **Dual Balance Dashboard** — Real-time comparative balance dashboard displaying transparent ERC-20 balances alongside encrypted pool UTXO notes for `STRK`, `ETH`, `USDC`, and `USDT`.
-3. **Dynamic Network Toggle (Mainnet ↔ Sepolia)** — Sticky global network context (`NetworkContext.tsx`) with verified token contracts, faucet links, and dedicated privacy pool addresses on both networks.
-4. **Stealth Payment Invoices & Deep-Links** — Umbra-style payment request generator with real-time vector QR codes (`qrcode.react`) and self-referential deep-links (`/?tab=SEND&to=...&amount=...&token=...&memo=...`) that automatically load the Send tab with pre-filled invoices.
-5. **Real-Time AVNU DEX Swaps** — Live DEX aggregation routing across Ekubo and JediSwap with atomic multi-call trade execution and zero-gas paymaster support.
-6. **UTXO Subchannel & Note Inspector** — Live RPC block scanner and sequential WriteOnce subchannel note discovery engine with Poseidon Note ID and Nullifier derivation.
-7. **Selective Disclosure & Auditor Modal** — Demonstrates STRK20's threshold auditor viewing key escrow mechanism for tax and regulatory compliance without mass surveillance.
-8. **Contact Address Book** — Client-side encrypted address book for managing saved privacy contacts and stealth viewing keys.
+---
+
+## ⚡ PEL Private Perpetuals (`BTC-PERP`)
+
+Unlike standard public perpetual DEXs (dYdX, GMX) where trading positions, stop losses, and liquidation prices are visible to all observers, **PEL encrypts all trade parameters off-chain**:
+
+```
+[Trader Shielded Note] ──► [Encrypted Witness Store] ──► [Poseidon Commitment C] ──► [StwoVerifier]
+                                  (q, P_entry, Margin, Secret)                              │
+                                                                                            ▼
+[STRK20 Payout Note] ◄── [Claim Note] ◄── [Core.close_position] ◄── [SNIP-36 CLOSE Fact] ◄──┘
+```
+
+### Trading Specs:
+- **Active Market:** `BTC-PERP` (TestUSDC collateral, 6 decimals, $1\text{ cent} = 10,000\text{ token units}$)
+- **Max Leverage:** $50\times$
+- **Maintenance Margin:** $2.00\%$ ($200\text{ bps}$)
+- **Taker Fee:** $0.05\%$ ($5\text{ bps}$)
+- **Oracle Freshness:** Max price age $180\text{s}$ with $20\%$ price deviation circuit breaker
 
 ---
 
-## 🔐 Cryptography & Invariants
+## 🧪 Comprehensive Verification & Release Evidence
 
-All cryptographic primitives are implemented in [`src/services/strk20Crypto.ts`](./src/services/strk20Crypto.ts) and strictly match the STRK20 protocol specification:
+ORRANGE enforces a strict quality gate where all Cairo contracts, unit tests, integration tests, adversarial attack vectors, and Next.js builds must pass before release.
 
-- **Domain Separation Tags:**
-  - Note ID: `0x4e4f54455f49445f5441473a5631` (`NOTE_ID_TAG:V1`)
-  - Nullifier: `0x4e554c4c49464945525f5441473a5631` (`NULLIFIER_TAG:V1`)
-  - Channel Key: `0x4348414e4e454c5f4b45595f5441473a5631` (`CHANNEL_KEY_TAG:V1`)
-  - Amount Mask: `0x454e435f414d4f554e545f5441473a5631` (`ENC_AMOUNT_TAG:V1`)
-  - Auditor Escrow: `0x41554449544f525f455343524f575f5441473a5631` (`AUDITOR_ESCROW_TAG:V1`)
-- **Note ID Formula:**
-  $$\text{NoteID} = \text{poseidon}(\text{NOTE\_ID\_TAG}, \text{channel\_key}, \text{token}, \text{index}, 0)$$
-- **Nullifier Formula:**
-  $$\text{Nullifier} = \text{poseidon}(\text{NULLIFIER\_TAG}, \text{channel\_key}, \text{token}, \text{index}, 0, \text{owner\_private\_key})$$
-- **STARK Curve ECDH Channel Key:**
-  $$\text{ChannelKey} = \text{poseidon}(\text{CHANNEL\_KEY\_TAG}, \text{ECDH}(d_{\text{sender}}, Q_{\text{recipient}})_x, \text{sender}, \text{recipient})$$
-- **Homomorphic Symmetric Amount Masking:**
-  $$\text{MaskedAmount} = (\text{poseidon}(\text{ENC\_AMOUNT\_TAG}, \text{channel\_key}, \text{token}, \text{index}, 0, \text{salt}) + \text{amount}) \pmod{2^{128}}$$
+```bash
+./scripts/local_quality_gate.sh
+```
+
+### Verification Matrix:
+- **Cairo Scarb Build:** Passes with **0 errors and 0 warnings**.
+- **Automated Vitest Suite:** **175 / 175 tests passing** across 16 test files (100% pass rate).
+  - `tests/integration/realCairoContractIntegration.test.ts` (10 tests: compiled Sierra ABIs, Flow 1 golden path, Flow 2 liquidation, and 6 runtime adversarial attacks).
+  - `tests/adversarial/attackVectors.test.ts` (52 tests: nullifier forgery, fact mutation, payout inflation, stale oracle rejection, double bounty rejection).
+  - `tests/invariants/assetConservation.test.ts` (23 tests: zero-sum balance conservation, fee tracking, 150-iteration fuzzing simulation).
+  - `tests/indexerAndKeeper.test.ts` (7 tests: reorg rollbacks, process restart persistence, indexer lag).
+- **Next.js Production Build:** Compiles **6/6 static & dynamic routes with 0 errors**.
+- **Codebase Hygiene:** 0 hardcoded test keys or fallback addresses.
 
 ---
 
-## 🛠️ Tech Stack & Dependencies
+## 📄 On-Chain Smart Contract Deployments (Sepolia Testnet)
 
-| Package | Version | Purpose |
-|---|---|---|
-| `next` | `^15.1.7` | React 19 App Router Frontend |
-| `starknet` | `^10.4.0` | Starknet.js v10 with WalletAccountV6 & Poseidon cryptography |
-| `@avnu/avnu-sdk` | `^4.2.0` | Live DEX Aggregator quotes & multi-call routing |
-| `@starknet-io/get-starknet-discovery` | `6.0.3` | Universal Starknet wallet discovery |
-| `@starknet-io/types-js` | `0.10.3` | Wallet API type definitions |
-| `qrcode.react` | `^4.2.0` | Dynamic SVG vector QR code rendering |
-| `lucide-react` | `^1.16.0` | Clean, modern iconography |
-| `vitest` | `^4.1.10` | Automated cryptographic unit test runner |
-| `tailwindcss` | `^3.4.17` | Responsive dark-theme styling |
+| Contract | Address | Purpose |
+| :--- | :--- | :--- |
+| **`PELPerpsCore`** | [`0x07dc4ec...e62b09a`](https://sepolia.voyager.online/contract/0x07dc4ecd80209424c5387ad6e2d1487f5979ad2cf584a275463695cebe62b09a) | Core perp state machine & commitment graph |
+| **`StwoVerifier`** | [`0x0757f5c...ae350d7`](https://sepolia.voyager.online/contract/0x0757f5c9e2b17a02241cfb1c1d0cfae60f7e1b78fcad85e33dff603a1ae350d7) | Typed SNIP-36 transition fact registry |
+| **`STRK20Adapter`** | [`0x00fba68...8adceca`](https://sepolia.voyager.online/contract/0x00fba68c5b9f71c42247b9736c478a531e21b72e519c72a818c3924f38adceca) | Collateral custody, LP pool NAV, and payout notes |
+| **`OracleAdapter`** | [`0x0283c7c...cf2bc08`](https://sepolia.voyager.online/contract/0x0283c7cbcc9e8dc9da04c86fe34807481baef80bf485e94bbfb1d83cecf2bc08) | Canonical on-chain mark price feed |
+| **`TestUSDC`** | [`0x053c912...ecf368a8`](https://sepolia.voyager.online/contract/0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8) | 6-decimal standard ERC20 collateral token |
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js ≥ 20.0.0
-- npm ≥ 10.0.0
-- Starknet browser wallet (Braavos, Argent X, or Ready Wallet)
+- **Node.js** $\ge 20.0.0$
+- **Scarb** $\ge 2.16.0$ (for Cairo contract compilation)
+- **Starknet Browser Wallet** (Argent X, Braavos, or Cartridge Controller)
 
-### Installation
+### Quick Start:
 
 ```bash
 # 1. Clone the repository
@@ -114,47 +130,17 @@ cd strk20-privacy-wallet
 # 2. Install dependencies
 npm install
 
-# 3. Configure environment variables
-cp .env.example .env.local
-# Add your Alchemy / Cartridge Starknet RPC keys if needed
+# 3. Compile Cairo smart contracts
+cd contracts && scarb build && cd ..
 
-# 4. Run automated cryptographic test suite
-npm test
+# 4. Run local quality gate (Scarb + Vitest + Next.js build)
+./scripts/local_quality_gate.sh
 
-# 5. Start local development server
+# 5. Start development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser.
-
----
-
-## 🧪 Testing & Verification
-
-The repository includes a comprehensive unit test suite covering domain tags, Poseidon Note ID determinism, nullifier uniqueness, STARK ECDH shared secrets, auditor escrow commitments, modular amount masking boundaries ($0$, normal amounts, and $2^{128}-1$), and u256 serialization formats.
-
-```bash
-# Run Vitest test suite (10/10 Passing)
-npm test
-
-# Validate TypeScript types
-npm run typecheck
-
-# Verify Next.js production bundle
-npm run build
-```
-
----
-
-## 📄 Protocol Reference & On-Chain Addresses
-
-- **STRK20 Mainnet Privacy Pool:**  
-  [`0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a`](https://voyager.online/contract/0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a)
-- **STRK20 Sepolia Testnet Privacy Pool:**  
-  [`0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91`](https://sepolia.voyager.online/contract/0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91)
-- **Official Documentation:** [strk20-by-example.org](https://strk20-by-example.org/)
-- **Protocol Whitepaper:** [Cryptology ePrint 2026/474](https://eprint.iacr.org/2026/474)
-- **Privacy SDK Monorepo:** [starkware-libs/starknet-privacy](https://github.com/starkware-libs/starknet-privacy)
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
