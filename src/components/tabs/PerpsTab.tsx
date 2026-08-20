@@ -172,7 +172,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     setMarginUsd(calculated);
   };
 
-  const SEPOLIA_USDC_ADDRESS = '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343';
+  const SEPOLIA_USDC_ADDRESS = PERPS_DEPLOYMENTS.sepolia.collateralTokenAddress;
 
   // Handle Opening Position on Starknet Sepolia
   const handleOpenPosition = async () => {
@@ -531,7 +531,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             {/* Mark Price with Green/Red Micro-flash */}
             <div className="flex items-center gap-2">
               <div>
-                <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Pragma Mark</span>
+                <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">Mark Price</span>
                 <span
                   className={`font-bold text-base transition-colors duration-300 ${
                     priceFlash === 'UP'
@@ -610,7 +610,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             </div>
 
             <div className="flex items-center gap-2 text-[11px] text-[#71717a] font-mono">
-              <span>Oracle: <span className="text-emerald-400 font-semibold">Pragma Median (Sub-second)</span></span>
+              <span>Oracle: <span className="text-emerald-400 font-semibold">PEL OracleAdapter (Sepolia)</span></span>
             </div>
           </div>
 
@@ -799,8 +799,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                 </span>
               </div>
               <div className="flex justify-between text-[#a1a1aa]">
-                <span>Protocol Fee (0.02%):</span>
-                <span className="text-[#a1a1aa]">${(notionalNum * 0.0002).toFixed(2)} USDC</span>
+                <span>Protocol Fee (0.05%):</span>
+                <span className="text-[#a1a1aa]">${(notionalNum * 0.0005).toFixed(2)} USDC</span>
               </div>
             </div>
 
