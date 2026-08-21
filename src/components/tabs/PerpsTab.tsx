@@ -31,7 +31,7 @@ import { pelCircuitService } from '@/services/pelCircuitService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
-import { strk20SdkService } from '@/services/strk20SdkService';
+import { strk20SdkService, getStrk20ViewingKey } from '@/services/strk20SdkService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
 import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, requestWitnessEncryptionSignature, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
@@ -86,8 +86,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       const account = (window as any).starknet?.account;
       try {
         if (account?.address) {
-          const viewingKey = (account as any).signer?.getPubKey?.()
-            ?? '0x' + '1'.padStart(64, '0');
+          // Real viewing key only — FAIL CLOSED if it cannot be derived (no fake key).
+          const viewingKey = await getStrk20ViewingKey(account);
           const discovery = await strk20SdkService.getShieldedBalance({
             account,
             address: account.address,
@@ -98,7 +98,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
           return;
         }
       } catch (err) {
-        // Real discovery unavailable (operator services not reachable). Fall through to cache.
+        // Real discovery unavailable (operator services not reachable OR no real viewing
+        // key). Fall through to cache — never fabricate.
         setShieldedBalanceIsReal(false);
       }
       try {
@@ -328,36 +329,53 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         prev[2],
       ]);
 
-      // Step 2: Build Real Call to PELPerpsCore.open_position with Groth16 calldata.
-      // Fail closed: never fabricate proof calldata.
+      // Step 2: CANONICAL STRK20 OPEN — drive the real STRK20 privacy pool.
+      //   STRK20 PrivateTransfers → computeAndInvoke → PELPerpsSTRK20Bridge →
+      //   PELPerpsCore.open_position_shielded (real Groth16 verification on-chain).
+      // The direct PELPerpsCore.open_position path is NOT used by the UI: collateral must
+      // be a real STRK20 shielded note, not an ERC20 transfer_from.
       if (!openProof.calldata || openProof.calldata.length === 0) {
         throw new Error('Open proof generation produced no calldata; aborting without broadcasting.');
       }
-      const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
-        userAddress,
-        selectedMarketId,
-        marginNum,
-        openProof.calldata
-      );
+      const bridgeAddress = PERPS_DEPLOYMENTS.sepolia.pelStrk20BridgeAddress;
+      if (!bridgeAddress) {
+        throw new Error('STRK20 bridge is not configured (NEXT_PUBLIC_STRK20_BRIDGE_SEPOLIA). Cannot open a private perp.');
+      }
+      const viewingKey = await getStrk20ViewingKey(browserAccount);
 
-      const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, openCall);
+      setModalSteps((prev) => [
+        { ...prev[0], status: 'SUCCESS', desc: `Proof ready — submitting STRK20 private invoke...` },
+        { ...prev[1], status: 'LOADING' },
+        prev[2],
+      ]);
+
+      const executionRes = await strk20SdkService.openPerpPosition(
+        { account: browserAccount, address: userAddress, viewingKey },
+        bridgeAddress,
+        selectedMarketId,
+        marginCents,
+        openProof.calldata,
+        nonce,
+      );
       setCurrentTxHash(executionRes.transactionHash);
-      setCurrentExplorerUrl(executionRes.explorerUrl);
+      setCurrentExplorerUrl(`https://sepolia.voyager.online/tx/${executionRes.transactionHash}`);
 
       setModalSteps((prev) => [
         prev[0],
-        { ...prev[1], status: 'SUCCESS', desc: `Broadcasted! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
+        { ...prev[1], status: 'SUCCESS', desc: `STRK20 private invoke submitted! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
         { ...prev[2], status: 'LOADING' },
       ]);
 
-      // Step 3: NEVER treat submission as success. The transaction must be accepted AND
-      // the position must exist on-chain before any local state is mutated.
+      // Step 3: NEVER treat submission as success. The STRK20 private transaction must be
+      // ACCEPTED and the position must exist on-chain before any local state is mutated.
       if (executionRes.status !== 'SUCCESS') {
-        throw new Error(`Position transaction did not succeed (status: ${executionRes.status}). Local state unchanged.`);
+        throw new Error(
+          `STRK20 open did not succeed on-chain (status: ${executionRes.status}). Local state unchanged.`,
+        );
       }
       const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(commitmentKey);
       if (!onChainRecord.isOpen) {
-        throw new Error('Position is NOT active on-chain after accepted transaction. Local state unchanged.');
+        throw new Error('Position is NOT active on-chain after STRK20 open. Local state unchanged.');
       }
 
       setModalSteps((prev) => [
@@ -502,66 +520,47 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         recipient: recipientVal,
       });
 
-      const payoutAmountUsd = Number(closeProof.payout) / 100;
-
       setModalSteps((prev) => [
         { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${targetPos.unrealizedPnlUsd.toFixed(2)}` },
         { ...prev[1], status: 'LOADING' },
         prev[2],
       ]);
 
-      // Build Real Call to PELPerpsCore.close_position with Groth16 calldata.
-      // Fail closed: never fabricate proof calldata.
+      // Build Real Close via the canonical close path (real CLOSE verifier) + authoritative
+      // payout read + STRK20 re-shield. Fail closed: never fabricate proof calldata.
       if (!closeProof.calldata || closeProof.calldata.length === 0) {
         throw new Error('Close proof generation produced no calldata; aborting without broadcasting.');
       }
-      const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
-        userAddress,
+      const viewingKey = await getStrk20ViewingKey(browserAccount);
+      const executionRes = await strk20SdkService.closePerpPosition(
+        { account: browserAccount, address: userAddress, viewingKey },
+        PERPS_DEPLOYMENTS.sepolia.pelCoreAddress,
         targetPos.marketId as 'BTC-PERP',
-        closeProof.calldata
+        closeProof.calldata,
       );
 
-      const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);
-
-      setCurrentTxHash(executionRes.transactionHash);
+      setCurrentTxHash(executionRes.closeTxHash);
       setCurrentExplorerUrl(executionRes.explorerUrl);
 
       setModalSteps((prev) => [
         prev[0],
-        { ...prev[1], status: 'SUCCESS', desc: `Settlement Broadcasted! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
+        { ...prev[1], status: 'SUCCESS', desc: `Settlement Broadcasted! Tx: ${executionRes.closeTxHash.slice(0, 16)}...` },
         { ...prev[2], status: 'LOADING' },
       ]);
 
-      // NEVER treat submission as success: the close transaction must be ACCEPTED before
-      // local state (witness delete, position close, payout note) is mutated.
-      if (executionRes.status !== 'SUCCESS') {
-        throw new Error(`Close transaction did not succeed (status: ${executionRes.status}). Local state unchanged.`);
-      }
+      const payoutAmountUsd = executionRes.authoritativePayoutUsd ?? Number(closeProof.payout) / 100;
+
       setModalSteps((prev) => [
         prev[0],
         prev[1],
-        { ...prev[2], status: 'SUCCESS', desc: `Settlement confirmed on Starknet Sepolia! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
+        {
+          ...prev[2],
+          status: 'SUCCESS',
+          desc: executionRes.payoutShielded
+            ? `Settlement confirmed + payout shielded into STRK20! Tx: ${executionRes.closeTxHash.slice(0, 16)}...`
+            : `Position closed. Payout pending privacy shield — retry shielding when operator services are available.`,
+        },
       ]);
-
-      // Shield the realized payout into the REAL STRK20 privacy pool (authoritative).
-      // If the operator proving/discovery services are unavailable, the payout is only
-      // recorded in the local cache and clearly labeled as such — never claimed as real.
-      let payoutShielded = false;
-      let shieldTx = '';
-      try {
-        if (browserAccount?.address && payoutAmountUsd > 0) {
-          const viewingKey = (browserAccount as any).signer?.getPubKey?.()
-            ?? '0x' + '1'.padStart(64, '0');
-          const shieldRes = await strk20SdkService.shield(
-            { account: browserAccount, address: browserAccount.address, viewingKey },
-            payoutAmountUsd,
-          );
-          payoutShielded = true;
-          shieldTx = shieldRes.transactionHash;
-        }
-      } catch (err: any) {
-        payoutShielded = false;
-      }
 
       // Local cache note is strictly a UI cache — authoritative state is STRK20 discovery.
       vaultService.addNote(
@@ -570,18 +569,18 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         SEPOLIA_USDC_ADDRESS,
         'USDC',
         BigInt(Math.floor(payoutAmountUsd * 1e6)),
-        shieldTx || executionRes.transactionHash
+        executionRes.closeTxHash
       );
 
       await deleteWitness(effectiveAddress, targetPos.zkCommitment, witnessSignature);
       perpsService.closePosition(effectiveAddress, positionId);
       loadPositions();
       showToast({
-        type: payoutShielded ? 'success' : 'info',
-        title: payoutShielded ? 'Position Settled + Payout Shielded' : 'Position Settled On-Chain',
-        description: payoutShielded
-          ? `Payout shielded into STRK20 pool. Tx: ${shieldTx.slice(0, 10)}...`
-          : `Tx: ${executionRes.transactionHash.slice(0, 10)}... | Payout in local cache — re-shield to STRK20 when operator services are available`,
+        type: executionRes.payoutShielded ? 'success' : 'info',
+        title: executionRes.payoutShielded ? 'Position Settled + Payout Shielded' : 'Position Settled On-Chain',
+        description: executionRes.payoutShielded
+          ? `Authoritative payout shielded into STRK20 pool. Tx: ${executionRes.closeTxHash.slice(0, 10)}...`
+          : `Tx: ${executionRes.closeTxHash.slice(0, 10)}... | Payout pending privacy shield — retry shielding when operator services are available`,
       });
       if (inspectedPosition?.id === positionId) {
         setInspectedPosition(null);

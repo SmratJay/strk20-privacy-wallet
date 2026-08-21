@@ -79,6 +79,7 @@ pub mod PELPerpsSTRK20Bridge {
     use super::IPELPerpsSTRK20Bridge;
     use super::super::types::u256_to_storage_key;
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
+    use super::super::pel_perps_core::{IPELPerpsCoreDispatcher, IPELPerpsCoreDispatcherTrait};
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{
         StoragePointerReadAccess, StoragePointerWriteAccess,
@@ -256,7 +257,13 @@ pub mod PELPerpsSTRK20Bridge {
         // ── STRK20 pool external-invocation: record the OPENED position ────
         //
         // invoke_additional_data layout:
-        //   [0] = nonce (fresh CSPRNG nonce bound to the position)
+        //   [0]            = nonce (fresh CSPRNG nonce bound to the position)
+        //   [1]            = OPEN proof calldata span length (Garaga header)
+        //   [2..]          = OPEN proof calldata payload
+        //
+        // After recording the in-pool collateral, the bridge relays the proof to
+        // PELPerpsCore.open_position_shielded so the REAL Groth16 proof is verified by the
+        // Core itself and the position state transition happens on-chain.
         fn privacy_invoke_with_computation(
             ref self: ContractState,
             computed: Span<felt252>,
@@ -288,6 +295,23 @@ pub mod PELPerpsSTRK20Bridge {
             self.position_commitments.write(identity_key, commitment_key);
             self.open_nonces.write(identity_key, nonce);
             self.used_close_nonces.write(nonce, true);
+
+            // Relay the proof to PELPerpsCore so it performs its OWN real Groth16
+            // verification and records the on-chain position (STRK20-collateral path).
+            let mut proof = array![];
+            if invoke_additional_data.len() >= 2 {
+                let pl: u128 = (*invoke_additional_data.at(1)).try_into().unwrap_or(0);
+                let mut i = 2_usize;
+                let mut copied = 0_u128;
+                while copied < pl && i < invoke_additional_data.len() {
+                    proof.append(*invoke_additional_data.at(i));
+                    copied += 1;
+                    i += 1;
+                };
+                assert(copied == pl, 'MALFORMED_PROOF_SPAN');
+            }
+            let pel_core = IPELPerpsCoreDispatcher { contract_address: self.pel_core.read() };
+            pel_core.open_position_shielded(identity_key, market_id, margin_cents, proof.span());
 
             let now = get_block_timestamp();
             self.emit(ShieldedPositionOpened {

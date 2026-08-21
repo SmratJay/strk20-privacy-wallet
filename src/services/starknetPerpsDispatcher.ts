@@ -5,11 +5,13 @@
  */
 
 import { Call, RpcProvider, uint256 } from 'starknet';
+import { USDC_SEPOLIA as STRK20_USDC_SEPOLIA } from './strk20SdkService';
 
 export interface DeploymentConfig {
   network: 'sepolia';
   pelCoreAddress: string;
   strk20AdapterAddress: string;
+  pelStrk20BridgeAddress: string;
   oracleAdapterAddress: string;
   openVerifierAddress: string;
   updateVerifierAddress: string;
@@ -25,6 +27,7 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
     network: 'sepolia',
     pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b',
     strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897',
+    pelStrk20BridgeAddress: process.env.NEXT_PUBLIC_STRK20_BRIDGE_SEPOLIA || '',
     oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f',
     // The five circuit-specific Groth16 verifiers MUST be distinct contracts.
     // Fail-closed: no shared fallback address (previously all five silently resolved
@@ -35,7 +38,7 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
     closeVerifierAddress: process.env.NEXT_PUBLIC_CLOSE_VERIFIER_SEPOLIA || '',
     liquidateVerifierAddress: process.env.NEXT_PUBLIC_LIQUIDATE_VERIFIER_SEPOLIA || '',
     stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
-    collateralTokenAddress: process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8',
+    collateralTokenAddress: process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA || '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343',
   },
 };
 
@@ -68,6 +71,31 @@ export function validateVerifierAddresses(config: DeploymentConfig): string[] {
     seen.add(normalized);
   }
   return problems;
+}
+
+/**
+ * Validate that the canonical collateral asset is consistent across the whole stack.
+ * P0 rule: STRK20 USDC == PEL collateral == payout == accounting unit == LP asset ==
+ * insurance asset. One token, everywhere.
+ */
+export function validateCanonicalCollateral(config: DeploymentConfig): string[] {
+  const problems: string[] = [];
+  const pelCollateral = (config.collateralTokenAddress || '').toLowerCase();
+  const strk20Usdc = STRK20_USDC_SEPOLIA.toLowerCase();
+  if (!pelCollateral) {
+    problems.push('collateralTokenAddress is unset');
+  } else if (pelCollateral !== strk20Usdc) {
+    problems.push(
+      `CANONICAL_COLLATERAL_MISMATCH: PEL collateral (${config.collateralTokenAddress}) ` +
+        `!= STRK20 USDC (${STRK20_USDC_SEPOLIA}). The protocol must use ONE canonical collateral token.`,
+    );
+  }
+  return problems;
+}
+
+/** Full deployment config validation: verifiers + canonical collateral. */
+export function validateDeploymentConfig(config: DeploymentConfig): string[] {
+  return [...validateVerifierAddresses(config), ...validateCanonicalCollateral(config)];
 }
 
 export interface ExecutionResult {
@@ -161,7 +189,11 @@ export class StarknetPerpsDispatcher {
         ],
       };
     } else {
-      // Legacy Signature: (collateralOwner, marketId, commitment, marginNullifier, marginAmountUsd, factHash)
+      // ⚠️ LEGACY-ONLY BRANCH (isolated for historical tests). NOT reachable from the
+      // production UI — the canonical user-facing OPEN goes through
+      // strk20SdkService.openPerpPosition → STRK20 pool → PELPerpsSTRK20Bridge →
+      // PELPerpsCore.open_position_shielded. This legacy signature builds the obsolete
+      // fact-based open call and MUST NOT be used by production code.
       const commitment = arg3 || '0x0';
       const marginNullifier = (arg4 as string) || '0x0';
       const marginAmountUsd = typeof arg5 === 'number' ? arg5 : 0;
@@ -347,7 +379,9 @@ export class StarknetPerpsDispatcher {
         ],
       };
     } else {
-      // Legacy: marketId, posCommitment, posNullifier, factHash, keeperAddress
+      // ⚠️ LEGACY-ONLY BRANCH (isolated for historical tests). The production keeper and
+      // UI liquidations use the canonical Groth16 calldata signature; this obsolete
+      // fact-based liquidation call MUST NOT be used by production code.
       const posCommitment = arg3 || '0x0';
       const posNullifier = arg4 || '0x0';
       const factHash = arg5 || '0x0';

@@ -241,6 +241,11 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
   await provider.waitForTransaction(setCore.transaction_hash);
   txHashes.wire_set_pel_core = setCore.transaction_hash;
 
+  // Authorize the bridge as the STRK20-collateral OPEN path in PELPerpsCore.
+  const setBridge = await admin.execute({ contractAddress: coreAddress, entrypoint: 'set_bridge', calldata: [bridgeAddress] });
+  await provider.waitForTransaction(setBridge.transaction_hash);
+  txHashes.wire_set_bridge = setBridge.transaction_hash;
+
   const setOracle = await admin.execute({ contractAddress: coreAddress, entrypoint: 'set_oracle_adapter', calldata: [oracleAddress] });
   await provider.waitForTransaction(setOracle.transaction_hash);
   txHashes.wire_set_oracle = setOracle.transaction_hash;

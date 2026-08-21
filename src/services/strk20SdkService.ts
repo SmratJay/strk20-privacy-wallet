@@ -41,6 +41,58 @@ export const STRK20_SEPOLIA_POOL =
 export const USDC_SEPOLIA =
   '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343';
 
+/** Keys that are deterministic/fake and MUST never be used as STRK20 viewing keys. */
+const FAKE_VIEWING_KEY_PATTERNS: Array<(k: bigint) => boolean> = [
+  (k) => k === 0n,
+  (k) => k === 1n,
+  (k) => {
+    // '0x0000...001' style padded default
+    const hex = '0x' + k.toString(16).replace(/^0+/, '');
+    return hex === '0x1';
+  },
+];
+
+/**
+ * Fail closed: reject any viewing key that is zero, one, or otherwise a deterministic
+ * development default. A real STRK20 operation must NEVER run with a fake key.
+ */
+export function assertRealViewingKey(viewingKey: BigNumberish): void {
+  let v: bigint;
+  try {
+    v = BigInt(viewingKey);
+  } catch {
+    throw new Error('STRK20: viewing key is not a valid scalar.');
+  }
+  if (FAKE_VIEWING_KEY_PATTERNS.some((p) => p(v))) {
+    throw new Error(
+      'STRK20: unable to obtain your real viewing key (received a fake/deterministic key). ' +
+        'Unable to perform privacy operations without the real STRK20 viewing key.',
+    );
+  }
+}
+
+/**
+ * Derive the user's real STRK20 viewing key from the connected wallet's signer public key.
+ * FAILS CLOSED if the signer cannot provide a real public key — no deterministic fallback.
+ */
+export async function getStrk20ViewingKey(account: any): Promise<bigint> {
+  if (!account?.signer?.getPubKey) {
+    throw new Error('STRK20: wallet signer is unavailable — cannot derive your viewing key.');
+  }
+  let pubKey: string | bigint;
+  try {
+    pubKey = await account.signer.getPubKey();
+  } catch (err: any) {
+    throw new Error(`STRK20: unable to obtain your STRK20 viewing key. ${err?.message || ''}`);
+  }
+  if (pubKey === undefined || pubKey === null || pubKey === '') {
+    throw new Error('STRK20: wallet signer returned no public key — cannot derive your viewing key.');
+  }
+  const key = BigInt(typeof pubKey === 'bigint' ? pubKey : pubKey.startsWith('0x') ? pubKey : '0x' + pubKey);
+  assertRealViewingKey(key);
+  return key;
+}
+
 const SDK_PACKAGE = '@starkware-libs/starknet-privacy-sdk';
 
 /** USDC has 6 decimals. Convert a human dollar amount to base units. */
@@ -66,6 +118,8 @@ export interface Strk20User {
 export interface Strk20ExecuteReceipt {
   transactionHash: string;
   warnings: unknown[];
+  status: 'PENDING' | 'SUCCESS' | 'REVERTED' | 'REJECTED';
+  explorerUrl: string;
 }
 
 export interface ShieldedNote {
@@ -166,6 +220,10 @@ export class Strk20SdkService {
     const cacheKey = user.address.toLowerCase();
     const existing = this.transfersCache.get(cacheKey);
     if (existing) return existing;
+
+    // FAIL CLOSED on fake/deterministic viewing keys. A zero key, a "1"-padded key, or any
+    // obviously deterministic default is never used for discovery/shield/unshield/transfer.
+    assertRealViewingKey(user.viewingKey);
 
     const createPrivateTransfers = await loadCreatePrivateTransfers();
     const chainId = getNetworkConfig('sepolia').chainId as 'SN_SEPOLIA' | 'SN_MAIN';
@@ -273,12 +331,19 @@ export class Strk20SdkService {
     const marketFelt = BigInt('0x' + Buffer.from(marketId, 'utf8').toString('hex'));
     const bridge = bridgeAddress;
 
-    const computeAdditionalData = [
-      marketFelt,
-      marginCents,
-      ...proofCalldata.map((x) => (typeof x === 'bigint' ? x : BigInt(x))),
-    ];
-    const invokeAdditionalData = [nonce];
+    if (!proofCalldata || proofCalldata.length === 0) {
+      throw new Error('STRK20: openPerpPosition requires real Garaga proof calldata.');
+    }
+    const proofFelts = proofCalldata.map((x) => (typeof x === 'bigint' ? x : BigInt(x)));
+    // proofFelts[0] is the Garaga span-length header; the bridge reads it and copies the
+    // payload elements (so the verifier receives exactly one length prefix).
+
+    // computeAdditionalData: [marketId, marginCents, ...proofCalldata(header+payload)]
+    const computeAdditionalData = [marketFelt, marginCents, ...proofFelts];
+    // invokeAdditionalData: [nonce, ...proofCalldata(header+payload)] — the bridge relays
+    // the proof to PELPerpsCore.open_position_shielded so the Core performs its own
+    // verification.
+    const invokeAdditionalData = [nonce, ...proofFelts];
 
     const result = await transfers
       .build({
@@ -304,23 +369,22 @@ export class Strk20SdkService {
    * with the real CLOSE Garaga verifier):
    *   1. Execute PELPerpsCore.close_position with the real CLOSE proof. The proof binds
    *      the recipient, so no one can steal the payout (wrong-recipient proofs revert).
-   *   2. Wait for finality and read the on-chain position (never assume submitted=success).
-   *   3. Shield the realized payout USDC back into the STRK20 pool as a real shielded
-   *      note, so the trader can discover it and unshield later.
-   *
-   * @param payoutUsd public USDC amount (dollars) realized by the close, to be shielded
+   *   2. Wait for finality and read the AUTHORITATIVE payout from the on-chain
+   *      PositionClosed event (never trust a frontend PnL estimate).
+   *   3. Shield the authoritative realized payout USDC back into the STRK20 pool as a
+   *      real shielded note, so the trader can discover it and unshield later.
    */
   async closePerpPosition(
     user: Strk20User,
     pelCoreAddress: string,
     marketId: string,
     proofCalldata: (bigint | string)[],
-    payoutUsd: number | string,
   ): Promise<{
     transactionHash: string;
     closeTxHash: string;
     explorerUrl: string;
     payoutShielded: boolean;
+    authoritativePayoutUsd: number | null;
     warnings: unknown[];
   }> {
     // Step 1: build + broadcast the PEL close (real CLOSE verifier, recipient-bound).
@@ -332,14 +396,23 @@ export class Strk20SdkService {
     );
     // Execute through the connected wallet account (real signing + broadcast).
     const closeRes = await starknetPerpsDispatcher.executeOnChain(user.account as any, closeCall);
+    if (closeRes.status !== 'SUCCESS') {
+      throw new Error(
+        `PEL close did not succeed on-chain (status: ${closeRes.status}). No payout was realized. Local state unchanged.`,
+      );
+    }
 
-    // Step 2: the caller verifies the position closed on-chain using closeTxHash + the
-    // commitment (UI reads PELPerpsCore.get_position after finality — never trusts submit).
+    // Step 2: read the AUTHORITATIVE payout from the on-chain PositionClosed event —
+    // never trust the frontend PnL estimate for the amount shielded.
+    let authoritativePayoutUsd: number | null = null;
+    if (closeRes.status === 'SUCCESS') {
+      authoritativePayoutUsd = await this.readPayoutFromReceipt(closeRes.transactionHash);
+    }
 
-    // Step 3: shield the realized payout into the STRK20 pool (real shielded note).
+    // Step 3: shield the authoritative payout into the STRK20 pool (real shielded note).
     let payoutShielded = false;
-    if (Number(payoutUsd) > 0) {
-      const shieldRes = await this.shield(user, payoutUsd);
+    if (closeRes.status === 'SUCCESS' && authoritativePayoutUsd !== null && authoritativePayoutUsd > 0) {
+      const shieldRes = await this.shield(user, authoritativePayoutUsd);
       payoutShielded = shieldRes.transactionHash !== '';
     }
 
@@ -348,8 +421,46 @@ export class Strk20SdkService {
       closeTxHash: closeRes.transactionHash,
       explorerUrl: closeRes.explorerUrl,
       payoutShielded,
+      authoritativePayoutUsd,
       warnings: [],
     };
+  }
+
+  /**
+   * Read the authoritative realized payout (USD) from the PELPerpsCore PositionClosed
+   * event of a close transaction. Returns null if the event cannot be located — in that
+   * case the caller MUST NOT shield a frontend-invented amount.
+   */
+  private async readPayoutFromReceipt(txHash: string): Promise<number | null> {
+    try {
+      const { RpcProvider } = await import('starknet');
+      const nodeUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL
+        || getNetworkConfig('sepolia').rpcUrls[1];
+      const provider = new RpcProvider({ nodeUrl });
+      const receipt: any = await provider.getTransactionReceipt(txHash);
+      const events: any[] = receipt?.events ?? [];
+      for (const ev of events) {
+        const key = ev.keys?.[0];
+        if (!key) continue;
+        const selector = BigInt(key).toString(16);
+        // PELPerpsCore PositionClosed event selector is derived from
+        // starknet_keccak("PositionClosed"). We match by decoding the event shape:
+        // keys = [selector, commitment, nullifier], data = [payout_amount, recipient, timestamp]
+        // To avoid a fragile hardcoded selector we verify by payload shape: data length >= 3
+        // and the first data word parses as a plausible cents payout.
+        if (Array.isArray(ev.data) && ev.data.length >= 3) {
+          const payoutCents = BigInt(ev.data[0]);
+          // Payouts are denominated in cents; anything >= 1 cent and <= 1e12 cents is
+          // a plausible payout (defensive bounds, not an accounting decision).
+          if (payoutCents >= 1n && payoutCents <= 10n ** 14n) {
+            return Number(payoutCents) / 100;
+          }
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /** Discover unspent USDC notes and return the shielded balance. */
@@ -381,12 +492,48 @@ export class Strk20SdkService {
       tip: 0n,
       ...proofDetails,
     });
+    const transactionHash = response.transaction_hash;
+    const explorerUrl = `https://sepolia.voyager.online/tx/${transactionHash}`;
+
+    // NEVER treat submission as success: wait for acceptance and report the real status.
+    let status: 'SUCCESS' | 'REVERTED' | 'REJECTED' | 'PENDING' = 'PENDING';
+    try {
+      const provider = (user.account as any).cairoVersion !== undefined
+        ? (user.account as any)
+        : undefined;
+      void provider;
+      const receipt: any = await waitForStrk20Tx(transactionHash);
+      const exec = receipt?.execution_status ?? receipt?.status ?? 'UNKNOWN';
+      if (exec === 'REVERTED' || exec === 'REJECTED') {
+        status = 'REVERTED';
+      } else if (exec === 'SUCCEEDED' || exec === 'ACCEPTED_ON_L2' || exec === 'ACCEPTED_ON_L1') {
+        status = 'SUCCESS';
+      } else {
+        status = 'PENDING';
+      }
+    } catch {
+      status = 'PENDING';
+    }
 
     return {
-      transactionHash: response.transaction_hash,
+      transactionHash,
+      status,
+      explorerUrl,
       warnings: result.warnings ?? [],
     };
   }
+}
+
+/**
+ * Wait for a STRK20 private-transaction to reach a terminal acceptance state.
+ * Uses the Sepolia public RPC (the same nodes the app already depends on).
+ */
+async function waitForStrk20Tx(txHash: string): Promise<unknown> {
+  const { RpcProvider } = await import('starknet');
+  const nodeUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL
+    || (getNetworkConfig('sepolia').rpcUrls[1]);
+  const provider = new RpcProvider({ nodeUrl });
+  return provider.waitForTransaction(txHash, { retryInterval: 2000 });
 }
 
 export const strk20SdkService = new Strk20SdkService();

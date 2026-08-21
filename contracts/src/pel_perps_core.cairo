@@ -15,6 +15,19 @@ pub trait IPELPerpsCore<TContractState> {
         proof_calldata: Span<felt252>,
     );
 
+    // Canonical STRK20-collateral OPEN: called ONLY by the authorized
+    // PELPerpsSTRK20Bridge after the pool has spent the trader's shielded note. The
+    // collateral is pool-custodied (in-pool collateral), so no ERC20 transfer is pulled —
+    // but the real Groth16 OPEN proof is verified by the Core itself before any state
+    // transition. `collateral_identity` is the pseudonymous STRK20 identity key.
+    fn open_position_shielded(
+        ref self: TContractState,
+        collateral_identity: felt252,
+        market_id: felt252,
+        margin_amount: u128,
+        proof_calldata: Span<felt252>,
+    );
+
     fn update_position(
         ref self: TContractState,
         market_id: felt252,
@@ -47,6 +60,7 @@ pub trait IPELPerpsCore<TContractState> {
     fn get_position(self: @TContractState, commitment: felt252) -> PositionRecord;
     fn get_market_config(self: @TContractState, market_id: felt252) -> MarketConfig;
     fn set_strk20_adapter(ref self: TContractState, new_adapter: ContractAddress);
+    fn set_bridge(ref self: TContractState, new_bridge: ContractAddress);
     fn set_oracle_adapter(ref self: TContractState, new_oracle: ContractAddress);
     fn set_groth16_verifiers(
         ref self: TContractState,
@@ -77,6 +91,7 @@ pub mod PELPerpsCore {
         admin: ContractAddress,
         oracle_adapter: ContractAddress,
         strk20_adapter: ContractAddress,
+        bridge: ContractAddress, // authorized PELPerpsSTRK20Bridge (STRK20-collateral path)
 
         // Dedicated Groth16 Verifiers per circuit
         open_verifier: ContractAddress,
@@ -102,6 +117,7 @@ pub mod PELPerpsCore {
     #[derive(Drop, starknet::Event)]
     pub enum Event {
         PositionOpened: PositionOpened,
+        PositionOpenedShielded: PositionOpenedShielded,
         PositionUpdated: PositionUpdated,
         PositionFunded: PositionFunded,
         PositionLiquidated: PositionLiquidated,
@@ -116,6 +132,15 @@ pub mod PELPerpsCore {
     #[derive(Drop, starknet::Event)]
     pub struct PositionOpened {
         pub collateral_owner: ContractAddress,
+        pub commitment: felt252,
+        pub market_id: felt252,
+        pub margin_amount: u128,
+        pub timestamp: u64,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct PositionOpenedShielded {
+        pub collateral_identity: felt252,
         pub commitment: felt252,
         pub market_id: felt252,
         pub margin_amount: u128,
@@ -309,6 +334,83 @@ pub mod PELPerpsCore {
             });
 
             self.emit(PositionOpened { collateral_owner, commitment: commitment_key, market_id, margin_amount: proof_margin, timestamp: now });
+        }
+
+        // ─── OPEN SHIELDED (STRK20 pool-collateral path via the authorized bridge) ──
+        //
+        // Canonical STRK20-collateral OPEN. The PELPerpsSTRK20Bridge calls this AFTER the
+        // privacy pool has spent the trader's shielded note inside the proven private
+        // transaction, so the collateral is pool-custodied (in-pool collateral recorded by
+        // the bridge) — no ERC20 transfer is pulled here. The Core STILL verifies the real
+        // Groth16 OPEN proof itself (dedicated OPEN verifier) before any state transition.
+        fn open_position_shielded(
+            ref self: ContractState,
+            collateral_identity: felt252,
+            market_id: felt252,
+            margin_amount: u128,
+            proof_calldata: Span<felt252>,
+        ) {
+            // Only the authorized STRK20 bridge may drive this path (it is itself restricted
+            // to the configured privacy pool).
+            assert(get_caller_address() == self.bridge.read(), 'UNAUTHORIZED_BRIDGE');
+
+            let market = self.markets.read(market_id);
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
+            assert(market.is_active, 'MARKET_NOT_ACTIVE');
+            assert(margin_amount > 0, 'INVALID_MARGIN_AMOUNT');
+
+            // 1. Verify Oracle Price Freshness (same as OPEN)
+            let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
+            let price = oracle.get_market_price(market_id);
+            assert(price.is_valid, 'ORACLE_PRICE_STALE_OR_INVALID');
+
+            // 2. Verify the REAL Groth16 OPEN proof with the dedicated OPEN verifier.
+            let verifier = IGroth16VerifierBN254Dispatcher { contract_address: self.open_verifier.read() };
+            let verification_result = verifier.verify_groth16_proof_bn254(proof_calldata);
+            let public_inputs = match verification_result {
+                Result::Ok(inputs) => inputs,
+                Result::Err(err) => core::panic_with_felt252(err),
+            };
+
+            // Public input layout: [ commitment, marginNullifier, marketId, margin, oraclePrice ]
+            assert(public_inputs.len() >= 5, 'MALFORMED_OPEN_PUBLIC_INPUTS');
+            let commitment_key = u256_to_storage_key(*public_inputs.at(0));
+            let margin_nullifier_key = u256_to_storage_key(*public_inputs.at(1));
+            let proof_market_id: felt252 = (*public_inputs.at(2)).low.into();
+            let proof_margin: u128 = (*public_inputs.at(3)).low;
+            let proof_oracle_price: u128 = (*public_inputs.at(4)).low;
+
+            assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(margin_amount == proof_margin, 'MARGIN_AMOUNT_MISMATCH');
+            assert(!self.used_nullifiers.read(margin_nullifier_key), 'NULLIFIER_ALREADY_SPENT');
+            assert(!self.positions.read(commitment_key).is_active, 'COMMITMENT_ALREADY_EXISTS');
+            assert(price.price == proof_oracle_price, 'ORACLE_PRICE_MISMATCH');
+
+            // 3. Checks-Effects: Mark Nullifier Consumed
+            self.used_nullifiers.write(margin_nullifier_key, true);
+
+            // 4. Store Active Position Record. The margin is pool-custodied (in-pool
+            //    collateral recorded by the bridge) — no ERC20 transfer is pulled here.
+            let now = get_block_timestamp();
+            self.positions.write(commitment_key, PositionRecord {
+                commitment: commitment_key,
+                margin_nullifier: margin_nullifier_key,
+                locked_margin: proof_margin,
+                market_id,
+                created_at: now,
+                updated_at: now,
+                last_funding_timestamp: now,
+                is_active: true,
+            });
+
+            // Pseudonymous STRK20 identity key (felt) that opened the position via the bridge.
+            self.emit(PositionOpenedShielded {
+                collateral_identity,
+                commitment: commitment_key,
+                market_id,
+                margin_amount: proof_margin,
+                timestamp: now,
+            });
         }
 
         // ─── UPDATE (Groth16 Proof Verification & State Rotation) ────────────
@@ -661,6 +763,14 @@ pub mod PELPerpsCore {
             assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.strk20_adapter.write(new_adapter);
             self.emit(AdapterUpdated { new_adapter });
+        }
+
+        fn set_bridge(ref self: ContractState, new_bridge: ContractAddress) {
+            assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
+            let f: felt252 = new_bridge.try_into().unwrap();
+            assert(f != 0, 'ZERO_BRIDGE_ADDRESS');
+            self.bridge.write(new_bridge);
+            self.emit(AdapterUpdated { new_adapter: new_bridge });
         }
 
         fn set_oracle_adapter(ref self: ContractState, new_oracle: ContractAddress) {

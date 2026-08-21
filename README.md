@@ -47,13 +47,22 @@ external-invocation interface:
 pool.computeAndInvoke(...)
   identity_key = compute_identity_key(sender, sk, bridge)
   bridge.privacy_compute(identity_key, [marketId, marginCents, ...openProofCalldata]) -> computed
-  bridge.privacy_invoke_with_computation(computed, [nonce])
+  bridge.privacy_invoke_with_computation(computed, [nonce, ...openProofCalldata])
+    -> PELPerpsCore.open_position_shielded(...)   (real Groth16 verification on-chain)
 ```
 
 The pool spends the trader's shielded note **inside the same proven transaction**, so the
 margin is a real private note; the bridge records the position keyed by the pseudonymous
-`identity_key`. On close, the payout is emitted back into the pool as a **shielded note**
-so the trader can unshield later.
+`identity_key` AND relays the proof to `PELPerpsCore.open_position_shielded`, which verifies
+the real Groth16 OPEN proof itself and records the on-chain position. On close, the payout is
+emitted by `PELPerpsCore.close_position` (authoritative `PositionClosed` event), read back
+from chain, and shielded into the pool as a **shielded note** so the trader can unshield later.
+
+> **Canonical user-facing OPEN:** the Perps terminal calls `strk20SdkService.openPerpPosition`
+> → STRK20 `PrivateTransfers` → `computeAndInvoke` → bridge → Core. The direct
+> `PELPerpsCore.open_position` (ERC20 `transfer_from`) path is NOT used by the UI; the
+> dispatcher's legacy branches are explicitly isolated for historical tests only.
+> The STRK20 viewing key is derived from the wallet signer (never fabricated — fail closed).
 
 ## 5. What data is private
 
@@ -133,11 +142,15 @@ cd contracts && scarb build                             # Cairo contracts
 ## 18. Deploy
 
 ```bash
-# Devnet: deploys five verifiers + core + adapter + oracle + bridge (scripts/deploy_perps_devnet.ts)
+# Devnet: deploys five verifiers + core + adapter + oracle + bridge + set_bridge wiring
 npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts
 # Sepolia / Mainnet: fill deployments/sepolia.json and deployments/mainnet.json, then run
 # the deployment scripts (see scripts/ and the Deployment checklist in docs/).
 ```
+
+Startup config validation (`validateDeploymentConfig`) fails closed when:
+- any of the five verifiers is unset/zero/duplicated, or
+- PEL collateral token != STRK20 Sepolia USDC (one canonical collateral everywhere).
 
 ## 19. Verify contracts
 
