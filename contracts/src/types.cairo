@@ -40,11 +40,12 @@ pub struct ProofFact {
 #[derive(Drop, Copy, Serde, starknet::Store)]
 pub struct PositionRecord {
     pub commitment: felt252,             // Active state commitment storage key
-    pub margin_nullifier: felt252,       // Consumed margin nullifier storage key
+    pub margin_nullifier: felt252,       // Nullifier storage key of current state
     pub locked_margin: u128,             // Locked margin amount in USD cents
     pub market_id: felt252,              // Market ID — verified on all transitions
     pub created_at: u64,
     pub updated_at: u64,
+    pub last_funding_timestamp: u64,     // Canonical on-chain funding anchor timestamp
     pub is_active: bool,
 }
 

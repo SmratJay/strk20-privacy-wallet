@@ -92,9 +92,6 @@ pub mod PELPerpsCore {
         // Active Position State Records (Keyed by storage hash of u256 commitment)
         positions: Map<felt252, PositionRecord>,
 
-        // Nullifier to Commitment mapping
-        commitment_by_nullifier: Map<felt252, felt252>,
-
         // Market Configurations
         markets: Map<felt252, MarketConfig>,
 
@@ -297,9 +294,9 @@ pub mod PELPerpsCore {
                 market_id,
                 created_at: now,
                 updated_at: now,
+                last_funding_timestamp: now,
                 is_active: true,
             });
-            self.commitment_by_nullifier.write(margin_nullifier_key, commitment_key);
 
             self.emit(PositionOpened { collateral_owner, commitment: commitment_key, market_id, margin_amount: proof_margin, timestamp: now });
         }
@@ -333,7 +330,6 @@ pub mod PELPerpsCore {
             let mut old_pos = self.positions.read(old_commitment_key);
             assert(old_pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(old_pos.market_id == market_id, 'MARKET_ID_MISMATCH');
-            assert(self.commitment_by_nullifier.read(old_nullifier_key) == old_commitment_key, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(old_nullifier_key), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment_key).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
 
@@ -344,15 +340,15 @@ pub mod PELPerpsCore {
             self.used_nullifiers.write(old_nullifier_key, true);
 
             self.positions.write(new_commitment_key, PositionRecord {
-                commitment:       new_commitment_key,
-                margin_nullifier: old_pos.margin_nullifier,
-                locked_margin:    old_pos.locked_margin,
+                commitment:             new_commitment_key,
+                margin_nullifier:       old_nullifier_key,
+                locked_margin:          old_pos.locked_margin,
                 market_id,
-                created_at:       old_pos.created_at,
-                updated_at:       now,
-                is_active:        true,
+                created_at:             old_pos.created_at,
+                updated_at:             now,
+                last_funding_timestamp: old_pos.last_funding_timestamp,
+                is_active:              true,
             });
-            self.commitment_by_nullifier.write(old_pos.margin_nullifier, new_commitment_key);
 
             self.emit(PositionUpdated { old_commitment: old_commitment_key, old_nullifier: old_nullifier_key, new_commitment: new_commitment_key, timestamp: now });
         }
@@ -385,6 +381,7 @@ pub mod PELPerpsCore {
             let proof_market_id: felt252 = (*public_inputs.at(3)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(4)).low;
             let proof_funding_rate_low: u128 = (*public_inputs.at(5)).low;
+            let proof_intervals_elapsed: u64 = (*public_inputs.at(6)).low.try_into().unwrap_or(0);
             let proof_funding_amount: u128 = (*public_inputs.at(7)).low;
             let proof_is_long_pays: bool = (*public_inputs.at(8)).low == 1_u128;
 
@@ -399,7 +396,9 @@ pub mod PELPerpsCore {
             };
             assert(proof_funding_rate_low == market_rate_abs, 'FUNDING_RATE_MISMATCH');
             assert(funding_amount == proof_funding_amount, 'FUNDING_AMOUNT_MISMATCH');
-            assert(is_long_pays == proof_is_long_pays, 'FUNDING_DIR_MISMATCH');
+            let expected_is_long_pays = market.funding_rate_bps_hr >= 0;
+            assert(proof_is_long_pays == expected_is_long_pays, 'FUNDING_DIR_MISMATCH');
+            assert(is_long_pays == proof_is_long_pays, 'FUNDING_DIR_ARG_MISMATCH');
 
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
@@ -409,9 +408,19 @@ pub mod PELPerpsCore {
             let mut pos = self.positions.read(old_commitment_key);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
-            assert(self.commitment_by_nullifier.read(old_nullifier_key) == old_commitment_key, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(old_nullifier_key), 'OLD_NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(new_commitment_key).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
+
+            // Canonical Funding Intervals Enforcement
+            assert(proof_intervals_elapsed > 0_u64, 'INTERVALS_MUST_BE_POSITIVE');
+            let now = get_block_timestamp();
+            let time_elapsed = if now >= pos.last_funding_timestamp {
+                now - pos.last_funding_timestamp
+            } else {
+                0_u64
+            };
+            let max_allowed_intervals = (time_elapsed / market.funding_interval_secs) + 1_u64;
+            assert(proof_intervals_elapsed <= max_allowed_intervals, 'EXAGGERATED_FUNDING_INTERVALS');
 
             if is_long_pays {
                 assert(funding_amount <= pos.locked_margin, 'FUNDING_EXCEEDS_MARGIN');
@@ -423,20 +432,22 @@ pub mod PELPerpsCore {
                 pos.locked_margin + funding_amount
             };
 
-            let now = get_block_timestamp();
             pos.is_active = false;
             pos.updated_at = now;
             self.positions.write(old_commitment_key, pos);
             self.used_nullifiers.write(old_nullifier_key, true);
 
+            let new_funding_timestamp = pos.last_funding_timestamp + (proof_intervals_elapsed * market.funding_interval_secs);
+
             self.positions.write(new_commitment_key, PositionRecord {
-                commitment:       new_commitment_key,
-                margin_nullifier: pos.margin_nullifier,
-                locked_margin:    new_locked_margin,
+                commitment:             new_commitment_key,
+                margin_nullifier:       old_nullifier_key,
+                locked_margin:          new_locked_margin,
                 market_id,
-                created_at:       pos.created_at,
-                updated_at:       now,
-                is_active:        true,
+                created_at:             pos.created_at,
+                updated_at:             now,
+                last_funding_timestamp: new_funding_timestamp,
+                is_active:              true,
             });
 
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
@@ -489,7 +500,6 @@ pub mod PELPerpsCore {
             let mut pos = self.positions.read(position_commitment_key);
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
-            assert(self.commitment_by_nullifier.read(position_nullifier_key) == position_commitment_key, 'NULLIFIER_COMMITMENT_MISMATCH');
             assert(!self.used_nullifiers.read(position_nullifier_key), 'NULLIFIER_ALREADY_SPENT');
 
             let now = get_block_timestamp();

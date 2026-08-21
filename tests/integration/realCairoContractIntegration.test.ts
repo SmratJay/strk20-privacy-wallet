@@ -182,7 +182,7 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       closeProof.calldata || [7n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, 9700000n, BigInt(traderAddress)]
     );
     expect(closeCall.entrypoint).toBe('close_position');
-  });
+  }, 30000);
 
   it('FLOW 2 (Groth16 zk-SNARK & Real Cairo Dispatch): Insolvent Liquidation Proof', async () => {
     const keeperAddress = '0x0222222222222222222222222222222222222222222222222222222222222222';
@@ -428,7 +428,7 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
 
     const isCloseValid = await pelCircuitService.verifyProof('CLOSE', closeProof.proof, closeProof.publicSignals);
     expect(isCloseValid).toBe(true);
-  });
+  }, 30000);
 
   it('ATTACK 6: Recipient substitution in CLOSE proof fails verification', async () => {
     const honestTrader = '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';

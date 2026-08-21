@@ -83,6 +83,20 @@ export const INITIAL_MARGIN_BPS = 200n; // 2.00%
 export const FUNDING_INTERVAL_SECONDS = 3600n; // 1 hour
 export const MAX_ORACLE_STALENESS_SECONDS = 60n; // 60s max staleness
 
+export const PROTOCOL_CONSTANTS = {
+  PROTOCOL_VERSION,
+  MARKET_ID,
+  MAX_LEVERAGE: 50,
+  INITIAL_MARGIN_BPS: Number(INITIAL_MARGIN_BPS),
+  MAINTENANCE_MARGIN_BPS: Number(MAINTENANCE_MARGIN_BPS),
+  TAKER_FEE_BPS: 7,
+  MAKER_FEE_BPS: 2,
+  FUNDING_RATE_BPS_HR: 120,
+  FUNDING_INTERVAL_SECS: Number(FUNDING_INTERVAL_SECONDS),
+  MAX_ORACLE_AGE_SECS: 180,
+  MAX_EXEC_DEVIATION_BPS: 100,
+};
+
 // ── Public input layouts (MUST match Circom `component main { public [...] }`) ──
 // These are the public signals produced by snarkjs and returned by the
 // Garaga verifier's `verify_groth16_proof_bn254` as `Span<u256>`.

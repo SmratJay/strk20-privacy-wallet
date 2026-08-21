@@ -118,26 +118,62 @@ function writeRaw(walletAddress: string, raw: string): void {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+export class WitnessCorruptionError extends Error {
+  constructor(message: string) {
+    super(`[WitnessStore Corruption] ${message}`);
+    this.name = 'WitnessCorruptionError';
+  }
+}
+
+export class WitnessMissingError extends Error {
+  constructor(commitment: string) {
+    super(`[WitnessStore Missing] No private witness found for commitment: ${commitment}`);
+    this.name = 'WitnessMissingError';
+  }
+}
+
+/** Validate witness integrity. */
+function validateWitness(witness: PrivatePositionState): void {
+  if (!witness.commitment || typeof witness.commitment !== 'string' || !witness.commitment.startsWith('0x')) {
+    throw new WitnessCorruptionError('Invalid commitment in witness');
+  }
+  if (!witness.ownerSecret || typeof witness.ownerSecret !== 'string' || !witness.ownerSecret.startsWith('0x')) {
+    throw new WitnessCorruptionError('Invalid ownerSecret in witness');
+  }
+  if (witness.quantitySats <= 0n) {
+    throw new WitnessCorruptionError('Quantity sats must be positive');
+  }
+  if (witness.entryPriceCents <= 0n) {
+    throw new WitnessCorruptionError('Entry price cents must be positive');
+  }
+  if (witness.marginCents <= 0n) {
+    throw new WitnessCorruptionError('Margin cents must be positive');
+  }
+}
+
 /** Load all witnesses for an address (plain read, no encryption). */
 function loadAllWitnesses(walletAddress: string): PrivatePositionState[] {
   try {
     const raw = readRaw(walletAddress);
     if (!raw) return [];
     return deserialise(raw);
-  } catch {
-    return [];
+  } catch (err: any) {
+    console.error('[witnessStore] Deserialisation failed. Failing closed to prevent corruption.', err);
+    throw new WitnessCorruptionError(`Failed to parse stored witnesses: ${err.message}`);
   }
 }
 
 /** Save a new witness. Idempotent: replaces existing witness with same commitment. */
 export function saveWitness(walletAddress: string, witness: PrivatePositionState): void {
+  validateWitness(witness);
   try {
     const existing  = loadAllWitnesses(walletAddress);
     const deduped   = existing.filter(w => w.commitment !== witness.commitment);
     const updated   = [witness, ...deduped];
     writeRaw(walletAddress, serialise(updated));
-  } catch (err) {
+  } catch (err: any) {
     console.warn('[witnessStore] Failed to save witness:', err);
+    throw err;
   }
 }
 
@@ -146,12 +182,17 @@ export function loadWitness(
   walletAddress: string,
   commitment: string,
 ): PrivatePositionState | null {
-  const all = loadAllWitnesses(walletAddress);
-  return all.find(w => w.commitment === commitment) ?? null;
+  try {
+    const all = loadAllWitnesses(walletAddress);
+    return all.find(w => w.commitment.toLowerCase() === commitment.toLowerCase()) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Search all namespaces for a witness matching the commitment. */
 export function findWitnessByCommitment(commitment: string): PrivatePositionState | null {
+  const target = commitment.toLowerCase();
   if (typeof localStorage !== 'undefined') {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -160,7 +201,7 @@ export function findWitnessByCommitment(commitment: string): PrivatePositionStat
         if (raw) {
           try {
             const list = deserialise(raw);
-            const found = list.find(w => w.commitment === commitment);
+            const found = list.find(w => w.commitment.toLowerCase() === target);
             if (found) return found;
           } catch {}
         }
@@ -171,7 +212,7 @@ export function findWitnessByCommitment(commitment: string): PrivatePositionStat
       if (key.startsWith(NAMESPACE)) {
         try {
           const list = deserialise(raw);
-          const found = list.find(w => w.commitment === commitment);
+          const found = list.find(w => w.commitment.toLowerCase() === target);
           if (found) return found;
         } catch {}
       }
@@ -189,26 +230,32 @@ export function listWitnesses(walletAddress: string): PrivatePositionState[] {
 export function deleteWitness(walletAddress: string, commitment: string): void {
   try {
     const existing = loadAllWitnesses(walletAddress);
-    const updated  = existing.filter(w => w.commitment !== commitment);
+    const updated  = existing.filter(w => w.commitment.toLowerCase() !== commitment.toLowerCase());
     writeRaw(walletAddress, serialise(updated));
   } catch (err) {
     console.warn('[witnessStore] Failed to delete witness:', err);
   }
 }
 
-/** Update a witness in-place (for UPDATE or FUND transitions). */
+/** Update a witness in-place (for UPDATE or FUND transitions). Strictly verifies ownerSecret immutability. */
 export function updateWitness(
   walletAddress: string,
   oldCommitment: string,
   newWitness: PrivatePositionState,
 ): void {
-  try {
-    const existing = loadAllWitnesses(walletAddress);
-    const removed  = existing.filter(w => w.commitment !== oldCommitment);
-    writeRaw(walletAddress, serialise([newWitness, ...removed]));
-  } catch (err) {
-    console.warn('[witnessStore] Failed to update witness:', err);
+  validateWitness(newWitness);
+  const existing = loadAllWitnesses(walletAddress);
+  const oldWitness = existing.find(w => w.commitment.toLowerCase() === oldCommitment.toLowerCase());
+  if (oldWitness) {
+    // Invariant: ownerSecret must never mutate across transitions
+    if (oldWitness.ownerSecret.toLowerCase() !== newWitness.ownerSecret.toLowerCase()) {
+      throw new Error(
+        `OWNER_SECRET_MUTATION_FORBIDDEN: ownerSecret must remain constant across position lifecycle (${oldWitness.ownerSecret} != ${newWitness.ownerSecret})`
+      );
+    }
   }
+  const removed = existing.filter(w => w.commitment.toLowerCase() !== oldCommitment.toLowerCase());
+  writeRaw(walletAddress, serialise([newWitness, ...removed]));
 }
 
 // ─── Export / Import (user-facing recovery) ───────────────────────────────────
@@ -249,11 +296,12 @@ export async function importWitnesses(
   }
   const incoming = deserialise(plain);
   const existing = loadAllWitnesses(walletAddress);
-  const existingCommitments = new Set(existing.map(w => w.commitment));
+  const existingCommitments = new Set(existing.map(w => w.commitment.toLowerCase()));
   let imported = 0;
   let skipped  = 0;
   for (const w of incoming) {
-    if (existingCommitments.has(w.commitment)) { skipped++; continue; }
+    validateWitness(w);
+    if (existingCommitments.has(w.commitment.toLowerCase())) { skipped++; continue; }
     existing.push(w);
     imported++;
   }

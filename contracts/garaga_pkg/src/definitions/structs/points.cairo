@@ -1,0 +1,115 @@
+use core::circuit::u384;
+use core::num::traits::Zero;
+use core::serde::Serde;
+use corelib_imports::circuit::conversions;
+use garaga::definitions::{deserialize_u384, serialize_u384};
+use starknet::storage_access::StorePacking;
+
+#[derive(Copy, Drop, Debug, PartialEq)]
+pub struct G1Point {
+    pub x: u384,
+    pub y: u384,
+}
+
+pub impl G1PointSerde of Serde<G1Point> {
+    fn serialize(self: @G1Point, ref output: Array<felt252>) {
+        serialize_u384(self.x, ref output);
+        serialize_u384(self.y, ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<G1Point> {
+        let x = deserialize_u384(ref serialized);
+        let y = deserialize_u384(ref serialized);
+        return Option::Some(G1Point { x: x, y: y });
+    }
+}
+
+pub impl G1PointStorePacking of StorePacking<G1Point, [felt252; 4]> {
+    fn pack(value: G1Point) -> [felt252; 4] {
+        let x0 = conversions::two_u96_into_felt252(value.x.limb0, value.x.limb1);
+        let x1 = conversions::two_u96_into_felt252(value.x.limb2, value.x.limb3);
+        let y0 = conversions::two_u96_into_felt252(value.y.limb0, value.y.limb1);
+        let y1 = conversions::two_u96_into_felt252(value.y.limb2, value.y.limb3);
+        [x0, x1, y0, y1]
+    }
+
+    fn unpack(value: [felt252; 4]) -> G1Point {
+        let [x0, x1, y0, y1] = value;
+        let x = {
+            let (limb0, limb1) = conversions::felt252_try_into_two_u96(x0).unwrap();
+            let (limb2, limb3) = conversions::felt252_try_into_two_u96(x1).unwrap();
+            u384 { limb0, limb1, limb2, limb3 }
+        };
+        let y = {
+            let (limb0, limb1) = conversions::felt252_try_into_two_u96(y0).unwrap();
+            let (limb2, limb3) = conversions::felt252_try_into_two_u96(y1).unwrap();
+            u384 { limb0, limb1, limb2, limb3 }
+        };
+        return G1Point { x: x, y: y };
+    }
+}
+
+
+#[derive(Copy, Drop, Debug, PartialEq)]
+pub struct G2Point {
+    pub x0: u384,
+    pub x1: u384,
+    pub y0: u384,
+    pub y1: u384,
+}
+pub impl G2PointSerde of Serde<G2Point> {
+    fn serialize(self: @G2Point, ref output: Array<felt252>) {
+        serialize_u384(self.x0, ref output);
+        serialize_u384(self.x1, ref output);
+        serialize_u384(self.y0, ref output);
+        serialize_u384(self.y1, ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<G2Point> {
+        let x0 = deserialize_u384(ref serialized);
+        let x1 = deserialize_u384(ref serialized);
+        let y0 = deserialize_u384(ref serialized);
+        let y1 = deserialize_u384(ref serialized);
+        return Option::Some(G2Point { x0: x0, x1: x1, y0: y0, y1: y1 });
+    }
+}
+
+
+#[derive(Copy, Drop, Debug, PartialEq)]
+pub struct G2Line<T> {
+    pub r0a0: T,
+    pub r0a1: T,
+    pub r1a0: T,
+    pub r1a1: T,
+}
+
+#[derive(Copy, Drop, Debug, PartialEq, Serde)]
+pub struct G1G2Pair {
+    pub p: G1Point,
+    pub q: G2Point,
+}
+
+
+// Represents the point at infinity
+pub impl G1PointZero of Zero<G1Point> {
+    fn zero() -> G1Point {
+        G1Point { x: Zero::zero(), y: Zero::zero() }
+    }
+    fn is_zero(self: @G1Point) -> bool {
+        *self == Self::zero()
+    }
+    fn is_non_zero(self: @G1Point) -> bool {
+        !self.is_zero()
+    }
+}
+
+// Represents the point at infinity
+pub impl G2PointZero of Zero<G2Point> {
+    fn zero() -> G2Point {
+        G2Point { x0: Zero::zero(), x1: Zero::zero(), y0: Zero::zero(), y1: Zero::zero() }
+    }
+    fn is_zero(self: @G2Point) -> bool {
+        *self == Self::zero()
+    }
+    fn is_non_zero(self: @G2Point) -> bool {
+        !self.is_zero()
+    }
+}
