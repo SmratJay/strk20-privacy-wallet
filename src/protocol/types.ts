@@ -28,7 +28,7 @@ export const BPS_SCALE     = 10_000n;       // 1.0 = 10000 bps
 // It MUST contain enough information to regenerate the commitment and all proofs.
 
 export interface PrivatePositionState {
-  readonly protocolVersion: 2;
+  readonly protocolVersion: 2 | 3;
   readonly marketId: 'BTC-PERP';           // V1: single market only
   readonly side: 'LONG' | 'SHORT';         // MUST be in commitment hash
   readonly quantitySats: bigint;           // 1e8 fixed-point: 0.1 BTC = 10_000_000n

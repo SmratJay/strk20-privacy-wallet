@@ -10,6 +10,8 @@ out/
 
 # Starknet Contract Build & Deployments (Security & Privacy)
 contracts/target/
+**/target/
+**/Scarb.lock
 deployments/
 *.keystore.json
 starknet_accounts.json
