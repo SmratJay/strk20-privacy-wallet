@@ -1,6 +1,10 @@
 /**
  * @file relayerSecurity.ts
- * @description Security validation, calldata schemas, rate limiting, and allowlist guards for the PEL Relayer Execution service
+ * @description ⚠️ LEGACY fact-based relayer security allowlist. ISOLATED: the canonical
+ * STRK20 user flows do not use this relayer, and the route is gated behind
+ * NEXT_PUBLIC_ENABLE_LEGACY_RELAYER=1 (fail-closed). The obsolete FactRegistry
+ * entrypoints (register_*_fact) have been removed — those selectors no longer exist in
+ * the canonical PELPerpsCore.
  */
 
 import { Call } from 'starknet';
@@ -8,28 +12,17 @@ import { PERPS_DEPLOYMENTS } from './starknetPerpsDispatcher';
 import { CALLDATA_SCHEMAS } from '../protocol/types';
 
 export const ALLOWED_ENTRYPOINTS = [
-  'open_position',
   'update_position',
   'fund_position',
   'close_position',
   'liquidate_position',
   'claim_keeper_bounty',
   'claim_payout',
-  'register_verified_fact',
-  'register_open_fact',
-  'register_update_fact',
-  'register_fund_fact',
-  'register_close_fact',
-  'register_liquidate_fact',
   'deposit_liquidity',
   'withdraw_liquidity_shares',
 ] as const;
 
 export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: number; fieldNames: string[] }> = {
-  open_position: {
-    expectedLength: 6,
-    fieldNames: ['collateral_owner', 'market_id', 'commitment', 'margin_nullifier', 'margin_amount', 'fact_hash'],
-  },
   update_position: {
     expectedLength: 5,
     fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'fact_hash'],
@@ -53,30 +46,6 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
   claim_payout: {
     expectedLength: 2,
     fieldNames: ['payout_nullifier', 'recipient_note_commitment'],
-  },
-  register_verified_fact: {
-    expectedLength: 8,
-    fieldNames: ['proof_type', 'market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'recipient', 'fact_hash'],
-  },
-  register_open_fact: {
-    expectedLength: 7,
-    fieldNames: ['market_id', 'commitment', 'nullifier', 'amount', 'oracle_price', 'owner', 'fact_hash'],
-  },
-  register_update_fact: {
-    expectedLength: 7,
-    fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'new_margin', 'oracle_price', 'fact_hash'],
-  },
-  register_fund_fact: {
-    expectedLength: 9,
-    fieldNames: ['market_id', 'old_commitment', 'old_nullifier', 'new_commitment', 'funding', 'new_margin', 'oracle_price', 'direction', 'fact_hash'],
-  },
-  register_close_fact: {
-    expectedLength: 8,
-    fieldNames: ['market_id', 'position_commitment', 'final_nullifier', 'payout_commitment', 'payout_amount', 'oracle_price', 'recipient', 'fact_hash'],
-  },
-  register_liquidate_fact: {
-    expectedLength: 7,
-    fieldNames: ['market_id', 'position_commitment', 'position_nullifier', 'liquidation_amount', 'oracle_price', 'keeper', 'fact_hash'],
   },
   deposit_liquidity: {
     expectedLength: 1,

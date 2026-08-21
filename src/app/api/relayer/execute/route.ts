@@ -1,7 +1,12 @@
 /**
  * @file route.ts
- * @description Secure Gasless Relayer Endpoint for PEL Private Perpetuals
- * Enforces strict destination contract and selector allowlists to prevent server account draining.
+ * @description ⚠️ LEGACY gasless-relayer endpoint (fact-based path). ISOLATED for
+ * migration/testing only. The canonical user-facing flows (STRK20 private invoke for
+ * OPEN; direct wallet-signed PEL CLOSE/UPDATE/FUND) do NOT use this endpoint.
+ *
+ * This endpoint is disabled unless the explicit opt-in flag
+ * `NEXT_PUBLIC_ENABLE_LEGACY_RELAYER=1` is set — it FAILS CLOSED by default so no legacy
+ * fact-based execution is reachable in production without explicit intent.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -14,6 +19,12 @@ const SEPOLIA_RPC = process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.car
 
 export async function POST(req: NextRequest) {
   try {
+    if (process.env.NEXT_PUBLIC_ENABLE_LEGACY_RELAYER !== '1') {
+      return NextResponse.json(
+        { error: 'LEGACY_RELAYER_DISABLED: the fact-based relayer is not enabled. Set NEXT_PUBLIC_ENABLE_LEGACY_RELAYER=1 to use it.' },
+        { status: 403 }
+      );
+    }
     const body = await req.json();
     const calls: Call[] = body.calls;
 

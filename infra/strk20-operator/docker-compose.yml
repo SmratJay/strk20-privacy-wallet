@@ -1,14 +1,21 @@
-# STRK20 operator infrastructure — discovery service (and notes for the proving service).
+# STRK20 operator infrastructure — deterministic local setup.
 #
 # Components (from the starknet-privacy compatibility matrix, tag PRIVACY-0.14.3-RC.2):
-#   1. A Starknet node (Pathfinder) providing RPC + WebSocket — REQUIRED by both services.
-#   2. Discovery service  — indexes encrypted pool storage so wallets can sync notes.
-#   3. Transaction prover — Stwo proving service (JSON-RPC starknet_proveTransaction).
-#   4. (Optional) Proof interceptor — deposit screening sidecar.
+#   1. Discovery service  — indexes encrypted pool storage so wallets can sync notes.
+#   2. Transaction prover — Stwo proving service (JSON-RPC starknet_proveTransaction).
+#      ⚠️ EXTERNAL HEAVY DEPENDENCY: runs StarkWare's sequencer transaction-prover image
+#      against a local Pathfinder node with PATHFINDER_STORAGE_STATE_TRIES=10000. It is
+#      intentionally not bundled here (needs a funded Sepolia node + significant resources).
 #
-# This compose file runs the discovery service against a node you provide.
-# The transaction prover is a separate, heavier service (see README.md) — it is not
-# bundled here because it needs its own config + a local node + significant resources.
+# Quick start (discovery service only):
+#   cd infra/strk20-operator
+#   cp .env.example .env   # set RPC_URL / WS_URL / ETHEREUM_API_URL
+#   docker compose up -d discovery-service
+#   curl http://localhost:8080/health
+#
+# Then point the app at:
+#   NEXT_PUBLIC_STRK20_DISCOVERY_URL=http://localhost:8080
+#   NEXT_PUBLIC_STRK20_PROVER_URL=<external prover URL>
 
 services:
   discovery-service:
@@ -21,18 +28,20 @@ services:
       WS_URL: ${WS_URL:-ws://pathfinder:9545}
       API_HOST: 0.0.0.0:8080
       RUST_LOG: ${RUST_LOG:-info}
-      # Optional compliance/privacy hardening: enable OHTTP (needs a 32-byte x25519 key).
-      # OHTTP_ENABLED: ${OHTTP_ENABLED:-false}
-      # OHTTP_KEY: ${OHTTP_KEY:-}
     ports:
       - "8080:8080"
-    # If you run your own Pathfinder, put it on the same network.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - strk20
 
   # ---------------------------------------------------------------------------
-  # Uncomment to run your own Pathfinder node (recommended for production WS).
-  # Requires a funded/configured node. See https://eqlabs.github.io/pathfinder/.
+  # Optional local Pathfinder node (recommended for production WS indexing). Requires
+  # PATHFINDER_ETHEREUM_API_URL (an L1 RPC). Uncomment and set .env.
   # ---------------------------------------------------------------------------
   # pathfinder:
   #   image: eqlabs/pathfinder:v0.22.7

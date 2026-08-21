@@ -32,6 +32,7 @@ import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
 import { strk20SdkService, getStrk20ViewingKey } from '@/services/strk20SdkService';
+import { checkStrk20OperatorStatus, operatorStatusLabel } from '@/services/strk20OperatorHealth';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
 import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, requestWitnessEncryptionSignature, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
@@ -60,6 +61,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [shieldedBalanceUsd, setShieldedBalanceUsd] = useState<number>(0);
   // True only when the balance came from REAL STRK20 discovery (operator services).
   const [shieldedBalanceIsReal, setShieldedBalanceIsReal] = useState(false);
+  const [operatorHealthy, setOperatorHealthy] = useState(false);
+  const [operatorStatusLabelText, setOperatorStatusLabelText] = useState('CHECKING');
   const [activeChartPanel, setActiveChartPanel] = useState<'CHART' | 'ORDERBOOK' | 'DUAL'>('DUAL');
   const [activeBottomTab, setActiveBottomTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY'>('POSITIONS');
 
@@ -83,6 +86,10 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   // explicitly label it as a cache (not a real shielded balance).
   const updateShieldedBalance = useCallback(async () => {
     if (typeof window !== 'undefined' && effectiveAddress) {
+      // Report honest STRK20 operator status (prover + discovery + SDK).
+      const status = await checkStrk20OperatorStatus();
+      setOperatorHealthy(status.healthy);
+      setOperatorStatusLabelText(operatorStatusLabel(status));
       const account = (window as any).starknet?.account;
       try {
         if (account?.address) {
@@ -241,19 +248,41 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       return;
     }
 
-    // Preflight Collateral Check (Workstream B & D)
+    // Preflight collateral check — AUTHORITATIVE ONLY via real STRK20 discovery.
+    // The local vault cache NEVER authorizes a transaction. If real discovery is
+    // unavailable we do NOT block on cache; the STRK20 open itself fails closed when the
+    // operator/prover is unavailable, and the pool enforces note coverage in-proof.
     const requiredMarginUnits = BigInt(Math.floor(marginNum * 1e6));
-    const unspentUsdc = vaultService.getUnspentShieldedBalance(effectiveAddress, SEPOLIA_USDC_ADDRESS, 'SN_SEPOLIA');
-    const allNotes = vaultService.getNotes(effectiveAddress, 'SN_SEPOLIA');
-    const totalUnspent = allNotes.filter((n) => !n.isSpent).reduce((acc, n) => acc + n.amount, 0n);
-
-    if (unspentUsdc < requiredMarginUnits && totalUnspent < requiredMarginUnits) {
+    const browserAccount = (window as any).starknet?.account;
+    try {
+      if (browserAccount?.address) {
+        const vk = await getStrk20ViewingKey(browserAccount);
+        const disc = await strk20SdkService.getShieldedBalance({
+          account: browserAccount,
+          address: browserAccount.address,
+          viewingKey: vk,
+        });
+        if (disc.total < requiredMarginUnits) {
+          showToast({
+            type: 'error',
+            title: 'Insufficient Shielded Collateral',
+            description: `Required: $${marginNum.toFixed(2)} USDC | Real STRK20 balance: $${(Number(disc.total) / 1e6).toFixed(2)}. Please shield USDC first.`,
+          });
+          return;
+        }
+      } else {
+        showToast({
+          type: 'info',
+          title: 'STRK20 balance unavailable',
+          description: 'Could not verify your STRK20 shielded balance. The privacy pool will enforce coverage on-chain.',
+        });
+      }
+    } catch {
       showToast({
-        type: 'error',
-        title: 'Insufficient Shielded Collateral',
-        description: `Required: $${marginNum.toFixed(2)} USDC | Available Shielded: $${(Number(totalUnspent) / 1e6).toFixed(2)}. Please shield USDC first in the Shield tab.`,
+        type: 'info',
+        title: 'STRK20 balance unavailable',
+        description: 'STRK20 discovery unavailable — proceeding; the privacy pool enforces collateral coverage on-chain.',
       });
-      return;
     }
 
     setIsSubmitting(true);
@@ -849,6 +878,14 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                     title={shieldedBalanceIsReal ? 'From real STRK20 note discovery' : 'Local UI cache only — operator discovery service not reachable'}
                   >
                     {shieldedBalanceIsReal ? '● REAL STRK20 discovery' : '● LOCAL CACHE (not authoritative)'}
+                  </span>
+                  <span
+                    className={`text-[9px] font-mono mt-0.5 ${
+                      operatorStatusLabelText === 'HEALTHY' ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                    title="STRK20 operator = prover + discovery service (infra/strk20-operator)"
+                  >
+                    STRK20 operator: {operatorStatusLabelText}
                   </span>
                 </div>
               </div>

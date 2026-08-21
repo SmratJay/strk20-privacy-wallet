@@ -214,6 +214,23 @@ All protocol math uses **bigint integers**; floats are display-only in the front
 documented sources of truth. Addresses may be overridden by env vars but the manifests are
 canonical. `strk20.json` tracks real contracts and transactions (never fabricated).
 
+## 25. STRK20 operator health
+
+`src/services/strk20OperatorHealth.ts` reports honest operator status (`HEALTHY` /
+`UNAVAILABLE` / `UNCONFIGURED`) by probing `NEXT_PUBLIC_STRK20_PROVER_URL` and
+`NEXT_PUBLIC_STRK20_DISCOVERY_URL` `/health` endpoints and checking the SDK loads. The Perps
+UI surfaces this; privacy operations fail closed (never fake privacy behavior) when the
+operator is missing. `infra/strk20-operator/` provides a deterministic docker-compose +
+`.env.example`.
+
+## 26. Legacy isolation
+
+The fact-based relayer (`src/app/api/relayer/execute/route.ts`) is **disabled by default** —
+it requires the explicit opt-in `NEXT_PUBLIC_ENABLE_LEGACY_RELAYER=1`. The canonical
+user-facing flows (STRK20 private invoke for OPEN; direct wallet-signed CLOSE/UPDATE/FUND)
+never use it. Legacy dispatcher branches are marked LEGACY-ONLY and are only reachable by
+historical tests.
+
 ## Real-network status
 
 - **Devnet**: verified — five distinct verifiers, real Groth16 OPEN proof verified on-chain,

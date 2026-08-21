@@ -350,7 +350,17 @@ export class Strk20SdkService {
         autoDiscover: { notes: 'refresh', channels: 'refresh' },
         autoSelectNotes: 'naive',
       })
-      .with(USDC_SEPOLIA, (t) => t.surplusTo(user.address))
+      // The margin MUST be a real shielded note: spend shielded USDC notes covering the
+      // margin and re-create them as the trader's own shielded note, keeping the value in
+      // the pool (pool-custodied collateral) while the bridge records the margin
+      // obligation. Without this spend there is no economic backing for the position.
+      .with(USDC_SEPOLIA, (t) => {
+        // Spend shielded notes covering the margin and re-create them as the trader's own
+        // shielded note (pool-custodied collateral). Any note-rounding surplus stays with
+        // the trader as shielded value.
+        t.transfer({ recipient: user.address, amount: marginCents * 10000n });
+        t.surplusTo(user.address);
+      })
       .computeAndInvoke(() => ({
         contractAddress: bridge,
         computeAdditionalData,
