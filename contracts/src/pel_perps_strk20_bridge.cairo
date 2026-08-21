@@ -198,6 +198,7 @@ pub mod PELPerpsSTRK20Bridge {
         //   [0] = commitmentStorageKey
         //   [1] = identity_key
         //   [2] = marginCents
+        //   [3] = marketId
         fn privacy_compute(
             ref self: ContractState,
             identity_key: felt252,
@@ -248,6 +249,7 @@ pub mod PELPerpsSTRK20Bridge {
             computed.append(commitment_key);
             computed.append(identity_key);
             computed.append(margin_cents.into());
+            computed.append(market_id);
             computed.span()
         }
 
@@ -261,10 +263,11 @@ pub mod PELPerpsSTRK20Bridge {
             invoke_additional_data: Span<felt252>,
         ) {
             assert(get_caller_address() == self.pool.read(), 'UNAUTHORIZED_POOL');
-            assert(computed.len() >= 3, 'MALFORMED_COMPUTED_PHASE');
+            assert(computed.len() >= 4, 'MALFORMED_COMPUTED_PHASE');
             let commitment_key = *computed.at(0);
             let identity_key = *computed.at(1);
             let margin_cents: u128 = (*computed.at(2)).try_into().unwrap_or(0);
+            let market_id = *computed.at(3);
 
             let nonce = if invoke_additional_data.len() >= 1 {
                 *invoke_additional_data.at(0)
@@ -273,8 +276,12 @@ pub mod PELPerpsSTRK20Bridge {
             };
             assert(nonce != 0, 'INVALID_NONCE');
 
+            // Replay protection: an identity can open at most one active position, the
+            // open nonce is single-use, and the position commitment must not already be
+            // registered (prevents a double-open from re-using a commitment).
             assert(!self.registered_identities.read(identity_key), 'IDENTITY_ALREADY_REGISTERED');
             assert(!self.used_close_nonces.read(nonce), 'NONCE_ALREADY_USED');
+            assert(self.position_commitments.read(identity_key) == 0, 'IDENTITY_HAS_ACTIVE_POSITION');
 
             self.registered_identities.write(identity_key, true);
             self.in_pool_collateral.write(identity_key, margin_cents);
@@ -285,7 +292,7 @@ pub mod PELPerpsSTRK20Bridge {
             let now = get_block_timestamp();
             self.emit(ShieldedPositionOpened {
                 identity_key,
-                market_id: 0,
+                market_id,
                 margin_cents,
                 commitment: commitment_key,
                 timestamp: now,

@@ -24,7 +24,7 @@ import { priceService } from '@/services/priceService';
 interface SwapTabProps {
   balances: ShieldedBalance[];
   wallet: any;
-  onSuccess: (txHash: string, fromToken: TokenInfo, toToken: TokenInfo, amount: string) => void;
+  onSuccess: (txHash: string, fromToken: TokenInfo, toToken: TokenInfo, amount: string, demo?: boolean) => void;
 }
 
 export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess }) => {
@@ -161,7 +161,13 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
         if (currentNetwork.id === 'mainnet') {
           throw new Error('No live on-chain DEX quote available on Mainnet for this pair/amount. Please adjust amount or try another pair.');
         }
-        // Sepolia testnet simulated execution
+        // NO fabricated transactions. A swap only reports success with a real on-chain tx
+        // hash. On Sepolia without a live AVNU quote we fail honestly — unless an explicit
+        // demo flag is set, in which case the UI clearly labels the result as DEMO.
+        const demoMode = process.env.NEXT_PUBLIC_DEMO_SWAPS === '1';
+        if (!demoMode) {
+          throw new Error('No live AVNU quote available for this pair/amount on Sepolia. Try another pair or amount.');
+        }
         await new Promise((r) => setTimeout(r, 800));
         const entropy = new Uint8Array(32);
         if (typeof window !== 'undefined' && window.crypto) {
@@ -170,7 +176,7 @@ export const SwapTab: React.FC<SwapTabProps> = ({ balances, wallet, onSuccess })
           for (let i = 0; i < 32; i++) entropy[i] = Math.floor(Math.random() * 256);
         }
         const simulatedTx = '0x0' + Array.from(entropy).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 63);
-        onSuccess(simulatedTx, fromToken, toToken, amount);
+        onSuccess(simulatedTx, fromToken, toToken, amount, true); // demo=true → UI labels DEMO
       }
 
       setAmount('');

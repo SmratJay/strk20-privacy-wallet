@@ -328,12 +328,16 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         prev[2],
       ]);
 
-      // Step 2: Build Real Call to PELPerpsCore.open_position with Groth16 calldata
+      // Step 2: Build Real Call to PELPerpsCore.open_position with Groth16 calldata.
+      // Fail closed: never fabricate proof calldata.
+      if (!openProof.calldata || openProof.calldata.length === 0) {
+        throw new Error('Open proof generation produced no calldata; aborting without broadcasting.');
+      }
       const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
         userAddress,
         selectedMarketId,
         marginNum,
-        openProof.calldata || [4n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n, marginCents]
+        openProof.calldata
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, openCall);
@@ -346,8 +350,15 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         { ...prev[2], status: 'LOADING' },
       ]);
 
-      // Step 3: Verify On-Chain Position Record from PELPerpsCore
+      // Step 3: NEVER treat submission as success. The transaction must be accepted AND
+      // the position must exist on-chain before any local state is mutated.
+      if (executionRes.status !== 'SUCCESS') {
+        throw new Error(`Position transaction did not succeed (status: ${executionRes.status}). Local state unchanged.`);
+      }
       const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(commitmentKey);
+      if (!onChainRecord.isOpen) {
+        throw new Error('Position is NOT active on-chain after accepted transaction. Local state unchanged.');
+      }
 
       setModalSteps((prev) => [
         prev[0],
@@ -499,11 +510,15 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         prev[2],
       ]);
 
-      // Build Real Call to PELPerpsCore.close_position with Groth16 calldata
+      // Build Real Call to PELPerpsCore.close_position with Groth16 calldata.
+      // Fail closed: never fabricate proof calldata.
+      if (!closeProof.calldata || closeProof.calldata.length === 0) {
+        throw new Error('Close proof generation produced no calldata; aborting without broadcasting.');
+      }
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
         userAddress,
         targetPos.marketId as 'BTC-PERP',
-        closeProof.calldata || [7n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents, recipientVal]
+        closeProof.calldata
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);
@@ -517,29 +532,56 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         { ...prev[2], status: 'LOADING' },
       ]);
 
+      // NEVER treat submission as success: the close transaction must be ACCEPTED before
+      // local state (witness delete, position close, payout note) is mutated.
+      if (executionRes.status !== 'SUCCESS') {
+        throw new Error(`Close transaction did not succeed (status: ${executionRes.status}). Local state unchanged.`);
+      }
       setModalSteps((prev) => [
         prev[0],
         prev[1],
-        { ...prev[2], status: 'SUCCESS', desc: 'Settlement confirmed on Starknet Sepolia! Payout Note Minted.' },
+        { ...prev[2], status: 'SUCCESS', desc: `Settlement confirmed on Starknet Sepolia! Tx: ${executionRes.transactionHash.slice(0, 16)}...` },
       ]);
 
-      // Mint fresh shielded payout note into STRK20 vault strictly post-confirmation
+      // Shield the realized payout into the REAL STRK20 privacy pool (authoritative).
+      // If the operator proving/discovery services are unavailable, the payout is only
+      // recorded in the local cache and clearly labeled as such — never claimed as real.
+      let payoutShielded = false;
+      let shieldTx = '';
+      try {
+        if (browserAccount?.address && payoutAmountUsd > 0) {
+          const viewingKey = (browserAccount as any).signer?.getPubKey?.()
+            ?? '0x' + '1'.padStart(64, '0');
+          const shieldRes = await strk20SdkService.shield(
+            { account: browserAccount, address: browserAccount.address, viewingKey },
+            payoutAmountUsd,
+          );
+          payoutShielded = true;
+          shieldTx = shieldRes.transactionHash;
+        }
+      } catch (err: any) {
+        payoutShielded = false;
+      }
+
+      // Local cache note is strictly a UI cache — authoritative state is STRK20 discovery.
       vaultService.addNote(
         effectiveAddress,
         'SN_SEPOLIA',
         SEPOLIA_USDC_ADDRESS,
         'USDC',
         BigInt(Math.floor(payoutAmountUsd * 1e6)),
-        executionRes.transactionHash
+        shieldTx || executionRes.transactionHash
       );
 
       await deleteWitness(effectiveAddress, targetPos.zkCommitment, witnessSignature);
       perpsService.closePosition(effectiveAddress, positionId);
       loadPositions();
       showToast({
-        type: 'success',
-        title: 'Position Settled On-Chain!',
-        description: `Tx: ${executionRes.transactionHash.slice(0, 10)}... | Shielded Payout Credited`,
+        type: payoutShielded ? 'success' : 'info',
+        title: payoutShielded ? 'Position Settled + Payout Shielded' : 'Position Settled On-Chain',
+        description: payoutShielded
+          ? `Payout shielded into STRK20 pool. Tx: ${shieldTx.slice(0, 10)}...`
+          : `Tx: ${executionRes.transactionHash.slice(0, 10)}... | Payout in local cache — re-shield to STRK20 when operator services are available`,
       });
       if (inspectedPosition?.id === positionId) {
         setInspectedPosition(null);

@@ -211,6 +211,11 @@ pub mod PELPerpsCore {
         self.markets.write('BTC-PERP', MarketConfig {
             market_id:              'BTC-PERP',
             base_asset_id:          'BTC',
+            // NOMINAL max leverage = 50x. The OPEN circuit enforces the leverage bound
+            // with a bounded 0.05x tolerance (500500 bps, see circuits/pel_open.circom and
+            // src/protocol/canonical.ts) to accommodate the 1% execution-price deviation
+            // between oracle and entry. Nominal 50x is the single canonical figure; the
+            // circuit tolerance is the documented safety margin for that deviation.
             max_leverage:           50_u16,
             initial_margin_bps:     200_u16,
             maintenance_margin_bps: 200_u16,
