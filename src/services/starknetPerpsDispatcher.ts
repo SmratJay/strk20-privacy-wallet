@@ -26,21 +26,55 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
     pelCoreAddress: process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA || '0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b',
     strk20AdapterAddress: process.env.NEXT_PUBLIC_STRK20_ADAPTER_SEPOLIA || '0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897',
     oracleAdapterAddress: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_SEPOLIA || '0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f',
-    openVerifierAddress: process.env.NEXT_PUBLIC_OPEN_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
-    updateVerifierAddress: process.env.NEXT_PUBLIC_UPDATE_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
-    fundVerifierAddress: process.env.NEXT_PUBLIC_FUND_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
-    closeVerifierAddress: process.env.NEXT_PUBLIC_CLOSE_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
-    liquidateVerifierAddress: process.env.NEXT_PUBLIC_LIQUIDATE_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
+    // The five circuit-specific Groth16 verifiers MUST be distinct contracts.
+    // Fail-closed: no shared fallback address (previously all five silently resolved
+    // to the StwoVerifier fact-registry address).
+    openVerifierAddress: process.env.NEXT_PUBLIC_OPEN_VERIFIER_SEPOLIA || '',
+    updateVerifierAddress: process.env.NEXT_PUBLIC_UPDATE_VERIFIER_SEPOLIA || '',
+    fundVerifierAddress: process.env.NEXT_PUBLIC_FUND_VERIFIER_SEPOLIA || '',
+    closeVerifierAddress: process.env.NEXT_PUBLIC_CLOSE_VERIFIER_SEPOLIA || '',
+    liquidateVerifierAddress: process.env.NEXT_PUBLIC_LIQUIDATE_VERIFIER_SEPOLIA || '',
     stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
     collateralTokenAddress: process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA || '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8',
   },
 };
 
+const ZERO_ADDRESS = '0x0';
+
+/**
+ * Validate a deployment config's five Groth16 verifier addresses.
+ * Returns a list of human-readable problems (empty array == valid).
+ * Enforces: every address present, nonzero, and pairwise distinct.
+ */
+export function validateVerifierAddresses(config: DeploymentConfig): string[] {
+  const problems: string[] = [];
+  const addrs: Array<[string, string]> = [
+    ['open', config.openVerifierAddress],
+    ['update', config.updateVerifierAddress],
+    ['fund', config.fundVerifierAddress],
+    ['close', config.closeVerifierAddress],
+    ['liquidate', config.liquidateVerifierAddress],
+  ];
+  const seen = new Set<string>();
+  for (const [name, addr] of addrs) {
+    const normalized = addr?.toLowerCase() ?? '';
+    if (!normalized || normalized === ZERO_ADDRESS) {
+      problems.push(`${name}VerifierAddress is unset or zero`);
+      continue;
+    }
+    if (seen.has(normalized)) {
+      problems.push(`${name}VerifierAddress duplicates another verifier address (${normalized})`);
+    }
+    seen.add(normalized);
+  }
+  return problems;
+}
+
 export interface ExecutionResult {
   transactionHash: string;
   explorerUrl: string;
   blockNumber?: number;
-  status: 'PENDING' | 'CONFIRMED' | 'SUCCESS';
+  status: 'PENDING' | 'SUCCESS' | 'REVERTED' | 'REJECTED';
 }
 
 export class StarknetPerpsDispatcher {
@@ -378,8 +412,11 @@ export class StarknetPerpsDispatcher {
         calldata: [commitmentKey],
       });
 
-      if (res && res.length >= 6) {
-        const isActive = res[5] === '0x1' || res[5] === '1';
+      // PositionRecord (Cairo) field order:
+      // [0] commitment [1] margin_nullifier [2] locked_margin [3] market_id
+      // [4] created_at [5] updated_at [6] last_funding_timestamp [7] is_active
+      if (res && res.length >= 8) {
+        const isActive = res[7] === '0x1' || res[7] === '1';
         return {
           isOpen: isActive,
           status: isActive ? 'OPEN' : 'CLOSED',
@@ -394,23 +431,36 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
-   * Execute real transaction on Starknet via browser account
+   * Execute real transaction on Starknet via browser account and wait for finality.
+   * Returns SUCCESS / REVERTED / REJECTED — never treats `execute()` submission as
+   * proof of a successful state transition.
    */
   async executeOnChain(browserAccount: any, call: Call, _network: 'sepolia' = 'sepolia'): Promise<ExecutionResult> {
     if (!browserAccount) {
       throw new Error('No Starknet account connected. Please connect Argent X or Braavos.');
     }
 
+    const explorerUrl = (txHash: string) => `https://sepolia.voyager.online/tx/${txHash}`;
+
     try {
       const response = await browserAccount.execute(call);
       const txHash = response.transaction_hash;
-      const explorerUrl = `https://sepolia.voyager.online/tx/${txHash}`;
+      if (!txHash) {
+        return { transactionHash: '', explorerUrl: '', status: 'REJECTED' };
+      }
 
-      return {
-        transactionHash: txHash,
-        explorerUrl,
-        status: 'PENDING',
-      };
+      // Wait for acceptance (or revert) using the RPC provider.
+      const receipt: any = await this.provider.waitForTransaction(txHash, { retryInterval: 2000 });
+      const executionStatus = receipt?.execution_status ?? receipt?.status ?? 'UNKNOWN';
+      const blockNumber = receipt?.block_number;
+
+      if (executionStatus === 'REVERTED' || executionStatus === 'REJECTED') {
+        return { transactionHash: txHash, explorerUrl: explorerUrl(txHash), blockNumber, status: 'REVERTED' };
+      }
+      if (executionStatus === 'SUCCEEDED' || executionStatus === 'ACCEPTED_ON_L2' || executionStatus === 'ACCEPTED_ON_L1') {
+        return { transactionHash: txHash, explorerUrl: explorerUrl(txHash), blockNumber, status: 'SUCCESS' };
+      }
+      return { transactionHash: txHash, explorerUrl: explorerUrl(txHash), blockNumber, status: 'PENDING' };
     } catch (err: any) {
       console.error('[StarknetPerpsDispatcher] Transaction execution failed:', err);
       throw new Error(`Starknet Execution Error: ${err.message || 'Unknown transaction failure'}`);

@@ -19,7 +19,7 @@ import {
   usdToCents,
 } from '../protocol/fixedPoint';
 import { BTC_PERP_CONFIG } from '../protocol/types';
-import { findWitnessByCommitment } from '../protocol/witnessStore';
+import { loadWitness } from '../protocol/witnessStore';
 
 export interface LiquidationCandidate {
   marketId: string;
@@ -60,6 +60,19 @@ export class KeeperService {
   private lastOraclePriceCents: bigint = 9642050n;
   private lastOracleTimestamp: number = Date.now();
   private lastOracleIsFresh: boolean = true;
+
+  // The keeper is a USER-AUTHORIZED, client-side liquidator. It can only construct
+  // liquidation proofs for positions whose private witness it is explicitly given.
+  // It is NOT permissionless: it requires the owner's wallet signature to decrypt
+  // the witness at rest (see src/protocol/witnessStore.ts).
+  private walletAddress?: string;
+  private witnessSignature?: string;
+
+  /** Configure which wallet's witnesses this keeper may decrypt and liquidate. */
+  configure(walletAddress: string, witnessSignature: string): void {
+    this.walletAddress = walletAddress;
+    this.witnessSignature = witnessSignature;
+  }
 
   /**
    * Scan active on-chain positions from the Indexer & contract state.
@@ -115,8 +128,12 @@ export class KeeperService {
         const marginCents = BigInt(pos.marginAmountCents || onChain.lockedMargin);
         if (marginCents <= 0n) continue;
 
-        // 2. Load position witness for mathematical solvency evaluation
-        const witness = findWitnessByCommitment(pos.currentCommitment);
+        // 2. Load the owner's private witness (requires explicit wallet authorization).
+        //    Without it, this keeper cannot construct a valid liquidation proof.
+        if (!this.walletAddress || !this.witnessSignature) {
+          continue;
+        }
+        const witness = await loadWitness(this.walletAddress, pos.currentCommitment, this.witnessSignature);
         if (!witness) {
           continue;
         }
@@ -237,6 +254,10 @@ export class KeeperService {
 
   start(intervalMs: number = 10000, signerAccount?: any) {
     if (this.isRunning) return;
+    if (!this.walletAddress || !this.witnessSignature) {
+      this.lastError = 'Keeper not configured: call configure(walletAddress, witnessSignature) first.';
+      return;
+    }
     this.isRunning = true;
     const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
 

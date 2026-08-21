@@ -7,7 +7,6 @@
 import { zkProverService, STARKProofResult, PositionWitness } from './zkProverService';
 import { pragmaOracleService } from './pragmaOracleService';
 import { tokensToSats, usdToCents } from '../protocol/fixedPoint';
-import { saveWitness, loadWitness, deleteWitness } from '../protocol/witnessStore';
 import { PrivatePositionState } from '../protocol/types';
 
 export interface PerpMarket {

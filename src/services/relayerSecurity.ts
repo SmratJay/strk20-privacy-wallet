@@ -23,7 +23,6 @@ export const ALLOWED_ENTRYPOINTS = [
   'register_liquidate_fact',
   'deposit_liquidity',
   'withdraw_liquidity_shares',
-  'approve',
 ] as const;
 
 export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: number; fieldNames: string[] }> = {
@@ -87,10 +86,6 @@ export const ENTRYPOINT_CALLDATA_SCHEMAS: Record<string, { expectedLength: numbe
     expectedLength: 1,
     fieldNames: ['shares'],
   },
-  approve: {
-    expectedLength: 3, // spender, amount_low, amount_high
-    fieldNames: ['spender', 'amount_low', 'amount_high'],
-  },
 };
 
 // In-memory sliding window rate limiter (max 20 requests per 60 seconds per identifier)
@@ -106,7 +101,9 @@ export function getAllowlistedContracts(): Set<string> {
   if (sepoliaConfig.strk20AdapterAddress) allowed.add(sepoliaConfig.strk20AdapterAddress.toLowerCase());
   if (sepoliaConfig.stwoVerifierAddress) allowed.add(sepoliaConfig.stwoVerifierAddress.toLowerCase());
   if (sepoliaConfig.oracleAdapterAddress) allowed.add(sepoliaConfig.oracleAdapterAddress.toLowerCase());
-  if (sepoliaConfig.collateralTokenAddress) allowed.add(sepoliaConfig.collateralTokenAddress.toLowerCase());
+  // NOTE: the collateral token is intentionally NOT allowlisted — the relayer must
+  // never sign arbitrary ERC20 `approve` / `transfer` / `transferFrom` on behalf of
+  // the server key (the adapter performs token custody internally).
 
   if (process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA) {
     allowed.add(process.env.NEXT_PUBLIC_PEL_CORE_SEPOLIA.toLowerCase());
@@ -116,9 +113,6 @@ export function getAllowlistedContracts(): Set<string> {
   }
   if (process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA) {
     allowed.add(process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA.toLowerCase());
-  }
-  if (process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA) {
-    allowed.add(process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA.toLowerCase());
   }
 
   return allowed;

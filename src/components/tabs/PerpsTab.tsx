@@ -32,7 +32,7 @@ import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
-import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, findWitnessByCommitment, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
+import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, requestWitnessEncryptionSignature, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
 import { InteractivePerpChart } from '../terminal/InteractivePerpChart';
 import { LiveOrderBook } from '../terminal/LiveOrderBook';
@@ -240,6 +240,13 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       const entryPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
       const marginCents = BigInt(Math.floor(marginNum * 100));
 
+      // Fetch the canonical on-chain oracle price — the proof binds |entry - oracle| <= 1%.
+      const oracleFeed = await pragmaOracleService.getMarketPrice('BTC/USD', 'sepolia');
+      if (!oracleFeed.isFresh) {
+        throw new Error('Oracle price is stale — cannot open position.');
+      }
+      const oraclePriceCents = oracleFeed.priceCents;
+
       const openProof = await pelCircuitService.generateOpenProof({
         side: side === 'LONG' ? 0n : 1n,
         quantitySats,
@@ -247,27 +254,18 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         marginCents,
         nonce,
         ownerSecret,
+        oraclePriceCents,
       });
 
       const commitmentKey = '0x' + openProof.commitment.toString(16);
       const nullifierKey = '0x' + openProof.nullifier.toString(16);
 
-      // Persist private witness securely
-      saveWitness(effectiveAddress, {
-        protocolVersion: 2,
-        marketId: 'BTC-PERP',
-        side,
-        quantitySats,
-        entryPriceCents,
-        marginCents,
-        fundingCents: 0n,
-        feesCents: 0n,
-        nonce: nonceHex,
-        ownerSecret: ownerSecretHex,
-        commitment: commitmentKey,
-        nullifier: nullifierKey,
-        openedAtMs: Date.now(),
-      });
+      // Derive the wallet-authenticated encryption key (do NOT persist witness yet —
+      // persistence happens only after on-chain confirmation).
+      const witnessSignature = await requestWitnessEncryptionSignature(
+        (window as any).starknet,
+        '0x534e5f5345504f4c4941',
+      );
 
       setModalSteps((prev) => [
         { ...prev[0], status: 'SUCCESS', desc: `Commitment: ${commitmentKey.slice(0, 14)}...` },
@@ -315,6 +313,23 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         SEPOLIA_USDC_ADDRESS
       );
       setShieldedBalanceUsd((prev) => Math.max(0, prev - marginNum));
+
+      // Persist the private witness (encrypted) ONLY after on-chain confirmation.
+      await saveWitness(effectiveAddress, {
+        protocolVersion: 3,
+        marketId: 'BTC-PERP',
+        side,
+        quantitySats,
+        entryPriceCents,
+        marginCents,
+        fundingCents: 0n,
+        feesCents: 0n,
+        nonce: nonceHex,
+        ownerSecret: ownerSecretHex,
+        commitment: commitmentKey,
+        nullifier: nullifierKey,
+        openedAtMs: Date.now(),
+      }, witnessSignature);
 
       // Persist in local frontend cache ONLY after on-chain confirmation
       const newPos: PerpPosition = {
@@ -391,7 +406,11 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         throw new Error('Please connect your Starknet wallet first.');
       }
 
-      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment) || findWitnessByCommitment(targetPos.zkCommitment);
+      const witnessSignature = await requestWitnessEncryptionSignature(
+        (window as any).starknet,
+        '0x534e5f5345504f4c4941',
+      );
+      const witness = await loadWitness(effectiveAddress, targetPos.zkCommitment, witnessSignature);
       const ownerSecret = witness ? BigInt(witness.ownerSecret) : BigInt(generateOwnerSecret());
       const nonce = witness ? BigInt(witness.nonce) : BigInt(targetPos.openedAt);
       const quantitySats = witness?.quantitySats ?? BigInt(Math.floor(targetPos.sizeTokens * 1e8));
@@ -459,7 +478,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         executionRes.transactionHash
       );
 
-      deleteWitness(effectiveAddress, targetPos.zkCommitment);
+      await deleteWitness(effectiveAddress, targetPos.zkCommitment, witnessSignature);
       perpsService.closePosition(effectiveAddress, positionId);
       loadPositions();
       showToast({

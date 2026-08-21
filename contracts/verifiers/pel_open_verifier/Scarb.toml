@@ -14,4 +14,4 @@ inlining-strategy = 2
 
 [[target.starknet-contract]]
 sierra = true
-casm = false
+casm = true

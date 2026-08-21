@@ -3,7 +3,7 @@
 use garaga::definitions::{E12D, G1Point, G2Line, G2Point, u288, u384};
 use garaga::groth16::Groth16VerifyingKey;
 
-pub const N_PUBLIC_INPUTS: usize = 4;
+pub const N_PUBLIC_INPUTS: usize = 5;
 
 pub const vk: Groth16VerifyingKey<u288> = Groth16VerifyingKey {
     alpha_beta_miller_loop_result: E12D {
@@ -122,74 +122,88 @@ pub const vk: Groth16VerifyingKey<u288> = Groth16VerifyingKey {
     },
 };
 
-pub const ic: [G1Point; 5] = [
+pub const ic: [G1Point; 6] = [
     G1Point {
         x: u384 {
-            limb0: 0xf7ab4fd91bb03be0b907401,
-            limb1: 0xb97fe4ac7174aba4a80dbc46,
-            limb2: 0x17efbbb0828e2f9f,
+            limb0: 0xbf10cb1c96175aeecbc3786b,
+            limb1: 0xe9379651b4296906ff3482b8,
+            limb2: 0x29c03a5f7e8b7d13,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xf3d23643ab3636abbc4dc931,
-            limb1: 0x513d152e3dc9ab0ef51586d7,
-            limb2: 0x260449c30750075e,
+            limb0: 0x64ddefd12f6c419cd6ca480b,
+            limb1: 0x1acb386c41467447c0a557cf,
+            limb2: 0x32a63098e27f055,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0x9e2b64737acc05afdeab030c,
-            limb1: 0xb12619122908903eeef6f717,
-            limb2: 0xc891c7c70667bc9,
+            limb0: 0x90b8e6e3bfc1e3a1b7d21c76,
+            limb1: 0x8d140c738bae8a69f7bfa011,
+            limb2: 0x25cdcff34aa40bc9,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0x5b79e1660a51b407668924ab,
-            limb1: 0xfd1df78c3f8e36b7d81ab18f,
-            limb2: 0x99bffd12071e018,
+            limb0: 0x1dd23577fb3f38fb594f5164,
+            limb1: 0x512d77266c9a28f6f018117c,
+            limb2: 0xdd7bc57850d5ba0,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0xcb76cb5d0b04df3168b4042c,
-            limb1: 0x497112c7428e6c4faeb27a6e,
-            limb2: 0x27d6bc4db91c694b,
+            limb0: 0x78680194e57ce8ba2603e73d,
+            limb1: 0xd0af27485cd7f6ba8a820a40,
+            limb2: 0x1bd92fa029ac763b,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0x6e3d91078d798329502ac15e,
-            limb1: 0xccdf853fea56117b7d5adf8,
-            limb2: 0x138e7b78d24e24e9,
+            limb0: 0x7a00d5103240ac2a64901ca7,
+            limb1: 0x7c3bf557f69ebb52265e758c,
+            limb2: 0x19264779ff50b82b,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0xe34c31d1c297bfb45cd74fc5,
-            limb1: 0x3fccd485477daa63ecdf4056,
-            limb2: 0x9da282213bf0dc5,
+            limb0: 0x7016441637bf11d1c86a52e3,
+            limb1: 0x6f64672bc4ce28bcca30c332,
+            limb2: 0x1db68255f9bb6977,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xf1706759ea8839bbdd20fda5,
-            limb1: 0x892d73b0c916ff782d4851ab,
-            limb2: 0x45e011bd0ad9745,
+            limb0: 0xab215cac862234f5c3166686,
+            limb1: 0x996af2c5e8730eb96230d5e2,
+            limb2: 0x81e2b43f071c9ac,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0x4e3cfff1b9e7af875a1112c7,
-            limb1: 0x4d266ba24343d712b6ac8bd,
-            limb2: 0x173a5cac23b5e4ec,
+            limb0: 0xabf902412eca2ffb0dafa6da,
+            limb1: 0x55232a2fcbc948a1155fce4f,
+            limb2: 0x2afe97dfb8af041,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0x3c618ac65ec497e503db0edd,
-            limb1: 0x72e571de8e04ae4ef90ea640,
-            limb2: 0x4a6feabb399f1b8,
+            limb0: 0x950312312f24c770a53f40c7,
+            limb1: 0xe3b53ae021b8704d215ff51,
+            limb2: 0xbfac3d81d8c4b07,
+            limb3: 0x0,
+        },
+    },
+    G1Point {
+        x: u384 {
+            limb0: 0x7fde16b185a9ca30f0f36e2d,
+            limb1: 0xee57484dac97b285b36a21c5,
+            limb2: 0x27a90d435ff11215,
+            limb3: 0x0,
+        },
+        y: u384 {
+            limb0: 0xac56404783d3e15b7a4308fb,
+            limb1: 0x732bc9970b4d4e6e059a3e52,
+            limb2: 0x3cb0372f6b44a28,
             limb3: 0x0,
         },
     },

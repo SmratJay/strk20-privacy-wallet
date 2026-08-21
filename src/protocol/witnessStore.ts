@@ -1,23 +1,23 @@
 /**
  * @file src/protocol/witnessStore.ts
- * @description Private Position Witness Persistence
+ * @description Private Position Witness Persistence (encrypted at rest)
  *
- * Stores the PrivatePositionState encrypted in localStorage.
- * Key derivation: SHA-256(walletAddress + WITNESS_STORE_SALT) → used as a fingerprint
- * for namespace isolation. True encryption uses AES-GCM with a key derived from
- * a deterministic wallet signature (Sign("PEL_WITNESS_ENCRYPTION_V2")).
+ * All witnesses (ownerSecret, nonce, quantity, entry price, margin, funding, fees) are
+ * stored AES-GCM encrypted. The encryption key is derived from a wallet SIGNATURE of a
+ * fixed challenge (PEL_WITNESS_ENCRYPTION_V2) — never from the public wallet address.
  *
- * If Web Crypto is unavailable (SSR), falls back to serialized JSON (unencrypted).
- * The fallback is safe because witnesses are private-key protected in practice.
+ *   key = AES-GCM(SHA-256(signature))
+ *   stored payload = { version, encrypted: true, iv: b64, ciphertext: b64 }
  *
- * Recovery: Users can export witnesses as encrypted JSON and import them.
+ * There is NO plaintext fallback: if a signature/WebCrypto is unavailable, the caller
+ * cannot persist or read witnesses (fail closed).
  */
 
 import { PrivatePositionState } from './types';
 
-const STORE_VERSION   = 2;
-const NAMESPACE       = 'pel_witness_v2';
-const ENCRYPTION_MSG  = 'PEL_WITNESS_ENCRYPTION_V2'; // signed by wallet to derive key
+const STORE_VERSION = 3;
+const NAMESPACE = 'pel_witness_v3';
+const ENCRYPTION_MSG = 'PEL_WITNESS_ENCRYPTION_V2'; // signed by the wallet to derive the key
 
 // ─── CSPRNG Key Generation ───────────────────────────────────────────────────
 
@@ -27,13 +27,11 @@ export function generateOwnerSecret(): string {
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     crypto.getRandomValues(bytes);
   } else {
-    // Node.js environment
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const nodeCrypto = require('crypto');
-    const nodeBytes = nodeCrypto.randomBytes(32);
-    bytes.set(nodeBytes);
+    bytes.set(nodeCrypto.randomBytes(32));
   }
-  return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  return '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Generate a true 256-bit CSPRNG nonce. */
@@ -41,42 +39,72 @@ export function generateNonce(): string {
   return generateOwnerSecret();
 }
 
-// ─── In-Memory Fallback (SSR / non-browser) ────────────────────────────────
+// ─── In-Memory Fallback (Node SSR / tests) ────────────────────────────────────
 
 const memStore = new Map<string, string>();
 
-// ─── Key Helpers ─────────────────────────────────────────────────────────────
+function storageAvailable(): boolean {
+  return typeof localStorage !== 'undefined';
+}
+
+function readRaw(walletAddress: string): string | null {
+  if (storageAvailable()) return localStorage.getItem(storeKey(walletAddress));
+  return memStore.get(storeKey(walletAddress)) ?? null;
+}
+
+function writeRaw(walletAddress: string, raw: string): void {
+  if (storageAvailable()) localStorage.setItem(storeKey(walletAddress), raw);
+  else memStore.set(storeKey(walletAddress), raw);
+}
+
+function removeRaw(walletAddress: string): void {
+  if (storageAvailable()) localStorage.removeItem(storeKey(walletAddress));
+  else memStore.delete(storeKey(walletAddress));
+}
 
 function storeKey(walletAddress: string): string {
   return `${NAMESPACE}_${walletAddress.toLowerCase()}`;
 }
 
-// ─── Optional AES-GCM Encryption ─────────────────────────────────────────────
+// ─── AES-GCM (Web Crypto) ─────────────────────────────────────────────────────
 
-/** Derive AES-GCM key from a wallet signature (deterministic). */
-async function deriveEncryptionKey(signature: string): Promise<CryptoKey> {
+function subtle(): SubtleCrypto {
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new Error('WITNESS_STORE: Web Crypto (crypto.subtle) is unavailable; cannot encrypt witnesses');
+  }
+  return crypto.subtle;
+}
+
+/** Derive the AES-GCM key from a wallet signature (deterministic for a fixed message). */
+export async function deriveWitnessKey(signature: string): Promise<CryptoKey> {
   const enc = new TextEncoder();
-  const raw = await crypto.subtle.digest('SHA-256', enc.encode(signature));
-  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  const digest = await subtle().digest('SHA-256', enc.encode(signature));
+  return subtle().importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
-async function encryptWitnesses(data: string, signature: string): Promise<string> {
-  const key   = await deriveEncryptionKey(signature);
-  const iv    = crypto.getRandomValues(new Uint8Array(12));
-  const enc   = new TextEncoder();
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(data));
-  // Pack as base64(iv) + ':' + base64(ciphertext)
-  const toB64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return toB64(iv.buffer) + ':' + toB64(ciphertext);
+function toB64(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
 }
 
-async function decryptWitnesses(packed: string, signature: string): Promise<string> {
-  const key       = await deriveEncryptionKey(signature);
-  const [ivB64, ctB64] = packed.split(':');
-  const fromB64   = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-  const iv        = fromB64(ivB64);
-  const ciphertext = fromB64(ctB64);
-  const plain     = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+function fromB64(s: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(s);
+  const bytes = new Uint8Array(new ArrayBuffer(bin.length));
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function encrypt(data: string, key: CryptoKey): Promise<{ iv: string; ciphertext: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const ciphertext = await subtle().encrypt({ name: 'AES-GCM', iv }, key, enc.encode(data));
+  return { iv: toB64(iv), ciphertext: toB64(ciphertext) };
+}
+
+async function decrypt(ivB64: string, ctB64: string, key: CryptoKey): Promise<string> {
+  const plain = await subtle().decrypt({ name: 'AES-GCM', iv: fromB64(ivB64) }, key, fromB64(ctB64));
   return new TextDecoder().decode(plain);
 }
 
@@ -90,33 +118,14 @@ function serialise(witnesses: PrivatePositionState[]): string {
 
 function deserialise(raw: string): PrivatePositionState[] {
   const parsed = JSON.parse(raw, (_, v) => {
-    if (typeof v === 'string' && v.startsWith('__bigint__')) {
-      return BigInt(v.slice(10));
-    }
+    if (typeof v === 'string' && v.startsWith('__bigint__')) return BigInt(v.slice(10));
     return v;
   });
   if (!parsed?.witnesses || !Array.isArray(parsed.witnesses)) return [];
   return parsed.witnesses as PrivatePositionState[];
 }
 
-// ─── Storage I/O ─────────────────────────────────────────────────────────────
-
-function readRaw(walletAddress: string): string | null {
-  if (typeof localStorage !== 'undefined') {
-    return localStorage.getItem(storeKey(walletAddress));
-  }
-  return memStore.get(storeKey(walletAddress)) ?? null;
-}
-
-function writeRaw(walletAddress: string, raw: string): void {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(storeKey(walletAddress), raw);
-  } else {
-    memStore.set(storeKey(walletAddress), raw);
-  }
-}
-
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Errors ────────────────────────────────────────────────────────────────────
 
 export class WitnessCorruptionError extends Error {
   constructor(message: string) {
@@ -132,7 +141,36 @@ export class WitnessMissingError extends Error {
   }
 }
 
-/** Validate witness integrity. */
+// ─── Core read/write (encrypted) ──────────────────────────────────────────────
+
+async function loadAllWitnesses(walletAddress: string, signature: string): Promise<PrivatePositionState[]> {
+  const raw = readRaw(walletAddress);
+  if (!raw) return [];
+  try {
+    const outer = JSON.parse(raw);
+    if (!outer?.encrypted) {
+      // Legacy/plaintext records are not trusted — fail closed rather than read plaintext.
+      throw new WitnessCorruptionError('Refusing to read plaintext witness storage');
+    }
+    const key = await deriveWitnessKey(signature);
+    const plain = await decrypt(outer.iv, outer.ciphertext, key);
+    return deserialise(plain);
+  } catch (err: any) {
+    // Wrong signature / tampered ciphertext / corrupt payload all surface here.
+    if (err instanceof WitnessCorruptionError) throw err;
+    throw new WitnessCorruptionError(`Failed to decrypt stored witnesses: ${err?.message ?? err}`);
+  }
+}
+
+async function persistAllWitnesses(walletAddress: string, witnesses: PrivatePositionState[], signature: string): Promise<void> {
+  const key = await deriveWitnessKey(signature);
+  const { iv, ciphertext } = await encrypt(serialise(witnesses), key);
+  const payload = JSON.stringify({ version: STORE_VERSION, encrypted: true, iv, ciphertext });
+  writeRaw(walletAddress, payload);
+}
+
+// ─── Validation ────────────────────────────────────────────────────────────────
+
 function validateWitness(witness: PrivatePositionState): void {
   if (!witness.commitment || typeof witness.commitment !== 'string' || !witness.commitment.startsWith('0x')) {
     throw new WitnessCorruptionError('Invalid commitment in witness');
@@ -140,171 +178,135 @@ function validateWitness(witness: PrivatePositionState): void {
   if (!witness.ownerSecret || typeof witness.ownerSecret !== 'string' || !witness.ownerSecret.startsWith('0x')) {
     throw new WitnessCorruptionError('Invalid ownerSecret in witness');
   }
-  if (witness.quantitySats <= 0n) {
-    throw new WitnessCorruptionError('Quantity sats must be positive');
-  }
-  if (witness.entryPriceCents <= 0n) {
-    throw new WitnessCorruptionError('Entry price cents must be positive');
-  }
-  if (witness.marginCents <= 0n) {
-    throw new WitnessCorruptionError('Margin cents must be positive');
-  }
+  if (witness.quantitySats <= 0n) throw new WitnessCorruptionError('Quantity sats must be positive');
+  if (witness.entryPriceCents <= 0n) throw new WitnessCorruptionError('Entry price cents must be positive');
+  if (witness.marginCents <= 0n) throw new WitnessCorruptionError('Margin cents must be positive');
 }
 
-/** Load all witnesses for an address (plain read, no encryption). */
-function loadAllWitnesses(walletAddress: string): PrivatePositionState[] {
-  try {
-    const raw = readRaw(walletAddress);
-    if (!raw) return [];
-    return deserialise(raw);
-  } catch (err: any) {
-    console.error('[witnessStore] Deserialisation failed. Failing closed to prevent corruption.', err);
-    throw new WitnessCorruptionError(`Failed to parse stored witnesses: ${err.message}`);
-  }
-}
+// ─── Public API ────────────────────────────────────────────────────────────────
 
-/** Save a new witness. Idempotent: replaces existing witness with same commitment. */
-export function saveWitness(walletAddress: string, witness: PrivatePositionState): void {
+/** Save a witness (encrypted). Idempotent per commitment. */
+export async function saveWitness(walletAddress: string, witness: PrivatePositionState, signature: string): Promise<void> {
   validateWitness(witness);
-  try {
-    const existing  = loadAllWitnesses(walletAddress);
-    const deduped   = existing.filter(w => w.commitment !== witness.commitment);
-    const updated   = [witness, ...deduped];
-    writeRaw(walletAddress, serialise(updated));
-  } catch (err: any) {
-    console.warn('[witnessStore] Failed to save witness:', err);
-    throw err;
-  }
+  const existing = await loadAllWitnesses(walletAddress, signature);
+  const deduped = existing.filter((w) => w.commitment !== witness.commitment);
+  await persistAllWitnesses(walletAddress, [witness, ...deduped], signature);
 }
 
-/** Load a single witness by commitment hash. */
-export function loadWitness(
+/** Load a single witness by commitment (encrypted). */
+export async function loadWitness(
   walletAddress: string,
   commitment: string,
-): PrivatePositionState | null {
+  signature: string,
+): Promise<PrivatePositionState | null> {
   try {
-    const all = loadAllWitnesses(walletAddress);
-    return all.find(w => w.commitment.toLowerCase() === commitment.toLowerCase()) ?? null;
+    const all = await loadAllWitnesses(walletAddress, signature);
+    return all.find((w) => w.commitment.toLowerCase() === commitment.toLowerCase()) ?? null;
   } catch {
     return null;
   }
 }
 
-/** Search all namespaces for a witness matching the commitment. */
-export function findWitnessByCommitment(commitment: string): PrivatePositionState | null {
-  const target = commitment.toLowerCase();
-  if (typeof localStorage !== 'undefined') {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(NAMESPACE)) {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          try {
-            const list = deserialise(raw);
-            const found = list.find(w => w.commitment.toLowerCase() === target);
-            if (found) return found;
-          } catch {}
-        }
-      }
-    }
-  } else {
-    for (const [key, raw] of memStore.entries()) {
-      if (key.startsWith(NAMESPACE)) {
-        try {
-          const list = deserialise(raw);
-          const found = list.find(w => w.commitment.toLowerCase() === target);
-          if (found) return found;
-        } catch {}
-      }
-    }
-  }
-  return null;
+/** List all witnesses for an address (encrypted). */
+export async function listWitnesses(walletAddress: string, signature: string): Promise<PrivatePositionState[]> {
+  return loadAllWitnesses(walletAddress, signature);
 }
 
-/** List all witnesses for an address. */
-export function listWitnesses(walletAddress: string): PrivatePositionState[] {
-  return loadAllWitnesses(walletAddress);
+/** Delete a witness after it has been consumed (encrypted). */
+export async function deleteWitness(walletAddress: string, commitment: string, signature: string): Promise<void> {
+  const existing = await loadAllWitnesses(walletAddress, signature);
+  const updated = existing.filter((w) => w.commitment.toLowerCase() !== commitment.toLowerCase());
+  await persistAllWitnesses(walletAddress, updated, signature);
 }
 
-/** Delete a witness after it has been consumed (position closed or liquidated). */
-export function deleteWitness(walletAddress: string, commitment: string): void {
-  try {
-    const existing = loadAllWitnesses(walletAddress);
-    const updated  = existing.filter(w => w.commitment.toLowerCase() !== commitment.toLowerCase());
-    writeRaw(walletAddress, serialise(updated));
-  } catch (err) {
-    console.warn('[witnessStore] Failed to delete witness:', err);
-  }
-}
-
-/** Update a witness in-place (for UPDATE or FUND transitions). Strictly verifies ownerSecret immutability. */
-export function updateWitness(
+/** Update a witness in-place (UPDATE/FUND). Enforces ownerSecret immutability. */
+export async function updateWitness(
   walletAddress: string,
   oldCommitment: string,
   newWitness: PrivatePositionState,
-): void {
+  signature: string,
+): Promise<void> {
   validateWitness(newWitness);
-  const existing = loadAllWitnesses(walletAddress);
-  const oldWitness = existing.find(w => w.commitment.toLowerCase() === oldCommitment.toLowerCase());
-  if (oldWitness) {
-    // Invariant: ownerSecret must never mutate across transitions
-    if (oldWitness.ownerSecret.toLowerCase() !== newWitness.ownerSecret.toLowerCase()) {
-      throw new Error(
-        `OWNER_SECRET_MUTATION_FORBIDDEN: ownerSecret must remain constant across position lifecycle (${oldWitness.ownerSecret} != ${newWitness.ownerSecret})`
-      );
-    }
+  const existing = await loadAllWitnesses(walletAddress, signature);
+  const oldWitness = existing.find((w) => w.commitment.toLowerCase() === oldCommitment.toLowerCase());
+  if (oldWitness && oldWitness.ownerSecret.toLowerCase() !== newWitness.ownerSecret.toLowerCase()) {
+    throw new Error('OWNER_SECRET_MUTATION_FORBIDDEN: ownerSecret must remain constant across the position lifecycle');
   }
-  const removed = existing.filter(w => w.commitment.toLowerCase() !== oldCommitment.toLowerCase());
-  writeRaw(walletAddress, serialise([newWitness, ...removed]));
+  const removed = existing.filter((w) => w.commitment.toLowerCase() !== oldCommitment.toLowerCase());
+  await persistAllWitnesses(walletAddress, [newWitness, ...removed], signature);
 }
 
 // ─── Export / Import (user-facing recovery) ───────────────────────────────────
 
-/**
- * Export all witnesses as a portable JSON string.
- * If signature is provided, encrypts with AES-GCM.
- */
-export async function exportWitnesses(
-  walletAddress: string,
-  signature?: string,
-): Promise<string> {
-  const witnesses = loadAllWitnesses(walletAddress);
-  const plain = serialise(witnesses);
-  if (signature) {
-    const enc = await encryptWitnesses(plain, signature);
-    return JSON.stringify({ encrypted: true, version: STORE_VERSION, payload: enc });
-  }
-  return JSON.stringify({ encrypted: false, version: STORE_VERSION, payload: plain });
+export async function exportWitnesses(walletAddress: string, signature: string): Promise<string> {
+  const witnesses = await loadAllWitnesses(walletAddress, signature);
+  const key = await deriveWitnessKey(signature);
+  const { iv, ciphertext } = await encrypt(serialise(witnesses), key);
+  return JSON.stringify({ encrypted: true, version: STORE_VERSION, iv, ciphertext });
 }
 
-/**
- * Import witnesses from an exported JSON string.
- * Merges with existing witnesses (commitment deduplication).
- */
 export async function importWitnesses(
   walletAddress: string,
   exportJson: string,
-  signature?: string,
+  signature: string,
 ): Promise<{ imported: number; skipped: number }> {
   const outer = JSON.parse(exportJson);
   let plain: string;
   if (outer.encrypted) {
-    if (!signature) throw new Error('WITNESS_STORE: encrypted export requires signature');
-    plain = await decryptWitnesses(outer.payload, signature);
+    const key = await deriveWitnessKey(signature);
+    plain = await decrypt(outer.iv, outer.ciphertext, key);
   } else {
-    plain = outer.payload;
+    throw new Error('WITNESS_STORE: refusing to import a plaintext export');
   }
   const incoming = deserialise(plain);
-  const existing = loadAllWitnesses(walletAddress);
-  const existingCommitments = new Set(existing.map(w => w.commitment.toLowerCase()));
+  const existing = await loadAllWitnesses(walletAddress, signature);
+  const existingCommitments = new Set(existing.map((w) => w.commitment.toLowerCase()));
   let imported = 0;
-  let skipped  = 0;
+  let skipped = 0;
   for (const w of incoming) {
     validateWitness(w);
     if (existingCommitments.has(w.commitment.toLowerCase())) { skipped++; continue; }
     existing.push(w);
     imported++;
   }
-  writeRaw(walletAddress, serialise(existing));
+  await persistAllWitnesses(walletAddress, existing, signature);
   return { imported, skipped };
+}
+
+export { ENCRYPTION_MSG };
+
+/**
+ * Request the wallet to sign the fixed encryption challenge, returning a stable
+ * string used as key material for witness encryption/decryption.
+ *
+ * Deterministic for a fixed message + wallet (RFC6979), so re-derivation across
+ * sessions yields the same key.
+ */
+export async function requestWitnessEncryptionSignature(provider: any, chainId: string): Promise<string> {
+  if (!provider?.request) {
+    throw new Error('WITNESS_STORE: no wallet provider available to derive the encryption key');
+  }
+  const res = await provider.request({
+    type: 'wallet_signTypedData',
+    params: {
+      message: {
+        types: {
+          StarkNetDomain: [
+            { name: 'name', type: 'felt' },
+            { name: 'version', type: 'felt' },
+            { name: 'chainId', type: 'felt' },
+          ],
+          Message: [{ name: 'challenge', type: 'felt' }],
+        },
+        primaryType: 'Message',
+        domain: { name: 'PEL Privacy Wallet', version: '2', chainId },
+        message: { challenge: ENCRYPTION_MSG },
+      },
+    },
+  });
+  const sig = Array.isArray(res) ? res : [res];
+  if (!sig || sig.length < 1 || !sig[0]) {
+    throw new Error('WITNESS_STORE: wallet signature required to derive the encryption key');
+  }
+  return sig.join('|');
 }

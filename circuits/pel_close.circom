@@ -49,6 +49,11 @@ template PelClose() {
     signal input equityIsNeg;
     signal input equityMag;
 
+    // notional + fee decomposition witnesses (fees is derived, not chosen)
+    signal input notional;
+    signal input notionalRem;
+    signal input feeRem;
+
     side * (side - 1) === 0;
 
     // 1. commitment binding
@@ -122,6 +127,23 @@ template PelClose() {
     omux.s <== equityIsNeg;
     payout <== omux.out;
     payoutAmount === payout;
+
+    // 9. canonical taker fee (not arbitrarily chosen):
+    //    notional = floor(q * oraclePrice / 1e8)
+    //    fees     = floor(notional * TAKER_FEE_BPS / 1e4), TAKER_FEE_BPS = 7 (0.07%)
+    signal notionalProd;
+    notionalProd <== quantity * oraclePrice;
+    component nd = FloorDivBy(100000000);
+    nd.prod <== notionalProd;
+    nd.quot <== notional;
+    nd.rem <== notionalRem;
+
+    signal feeProd;
+    feeProd <== notional * 7;
+    component fd = FloorDivBy(10000);
+    fd.prod <== feeProd;
+    fd.quot <== fees;
+    fd.rem <== feeRem;
 
     // 9. payout commitment binding
     component pc = PelPayoutCommitment();

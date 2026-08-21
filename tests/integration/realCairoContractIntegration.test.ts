@@ -104,7 +104,7 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       ownerSecret,
     });
 
-    expect(openProof.publicSignals.length).toBe(4);
+    expect(openProof.publicSignals.length).toBe(5);
     const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
       traderAddress,
       marketId,
@@ -335,7 +335,7 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       nonce: currentNonce,
       ownerSecret,
     });
-    expect(openProof.publicSignals.length).toBe(4);
+    expect(openProof.publicSignals.length).toBe(5);
     let activeCommitment = openProof.commitment;
     let currentMargin = marginCents;
     let currentFunding = 0n;

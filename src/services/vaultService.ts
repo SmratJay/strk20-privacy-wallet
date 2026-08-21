@@ -1,5 +1,4 @@
 import { strk20Crypto, UTXONote } from './strk20Crypto';
-import { viewingKeyService } from './viewingKeyService';
 import { normalizeNetworkId } from '../config/networks';
 import { num } from 'starknet';
 
@@ -9,6 +8,12 @@ const VAULT_STORAGE_PREFIX = 'strk20_vault';
 const memoryStorage = new Map<string, string>();
 
 export class VaultService {
+  // NOTE: This vault is a LOCAL PROTOTYPE. It stores unspent-note bookkeeping in
+  // browser storage for the UI only — it is NOT a real STRK20 shielded note store and
+  // provides NO on-chain privacy. The authoritative shielded-note state lives on-chain
+  // via the STRK20 privacy SDK (src/services/strk20SdkService.ts). Do not present this
+  // local vault as a real privacy layer.
+
   public getStorageKey(address: string, networkId: string): string {
     const normalizedAddress = address.toLowerCase();
     const canonicalNetwork = normalizeNetworkId(networkId);
@@ -92,14 +97,19 @@ export class VaultService {
     const notes = this.getNotes(address, networkId);
     const nextIndex = notes.length;
 
-    // Use derived viewing key if available, otherwise derive from address
+    // A local-prototype note. The viewing key must be provided by the caller (derived
+    // from a wallet signature, NOT the public address). If absent, use a fresh random
+    // channel key so the note is never keyed by public address.
     let privKey = viewingPrivateKey;
     let pubKey = viewingPublicKey;
 
     if (!privKey || !pubKey) {
-      const derived = viewingKeyService.deriveViewingKeyFromSignature(address);
-      privKey = derived.privateViewingKey;
-      pubKey = derived.publicViewingKey;
+      const bytes = new Uint8Array(32);
+      if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
+      else require('crypto').randomBytes(bytes.length).forEach((b: number, i: number) => (bytes[i] = b));
+      const randomKey = '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+      privKey = randomKey;
+      pubKey = randomKey;
     }
 
     const pool = poolAddress || '0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a';
@@ -125,7 +135,7 @@ export class VaultService {
       amount: amountBigInt,
       nullifier,
       isSpent: false,
-      blockNumber: 13540000 + nextIndex,
+      blockNumber: 0, // local prototype: block number is not authoritative
       timestamp: Date.now(),
       txHash,
     };

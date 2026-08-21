@@ -5,16 +5,20 @@
  * Never duplicate these definitions elsewhere.
  */
 
-// ─── Domain Separators (must match Cairo stwo_verifier.cairo) ─────────────────
+// ─── Domain Separators ─────────────────────────────────────────────────────────
+// Canonical values live in src/protocol/canonical.ts (DOMAIN_SEP, NULLIFIER_TAG,
+// MARGIN_NULLIFIER_TAG, PAYOUT_TAG) and MUST match the Circom circuits. These
+// legacy constants are kept for backwards-compatibility only — do not use them for
+// commitment/nullifier computation.
 
-export const DOMAIN_SEPARATOR = '0x50454c5f504f534954494f4e5f56323a424243' as const; // "PEL_POSITION_V2:BTC"
-export const NULLIFIER_TAG    = '0x4e554c4c49464945525f5441473a5631' as const;        // "NULLIFIER_TAG:V1"
+export const DOMAIN_SEPARATOR = '0x50454c5f504f534954494f4e5f5632' as const;      // "PEL_POSITION_V2"
+export const NULLIFIER_TAG    = '0x50454c5f4e554c4c49464945525f5632' as const;      // "PEL_NULLIFIER_V2"
 export const STWO_FACT_TAG    = '0x5354574f5f534e495033365f50524f4f465f5632' as const; // "STWO_SNIP36_PROOF_V2"
 export const FUNDING_TAG      = '0x46554e44494e475f5441473a5631' as const;            // "FUNDING_TAG:V1"
 
-// ─── Protocol Version ─────────────────────────────────────────────────────────
+// ─── Protocol Version (canonical: 3 — matches Cairo config_version) ────────────
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 // ─── Fixed-Point Scales ───────────────────────────────────────────────────────
 
@@ -59,7 +63,7 @@ export interface MarketConfig {
   readonly fundingIntervalSecs: number;     // 3600
   readonly maxOracleAgeSecs: number;        // 180
   readonly maxExecDeviationBps: number;     // 100 (1.0%)
-  readonly configVersion: number;           // 2
+  readonly configVersion: number;           // 3
 }
 
 export const BTC_PERP_CONFIG: MarketConfig = {
@@ -73,7 +77,7 @@ export const BTC_PERP_CONFIG: MarketConfig = {
   fundingIntervalSecs: 3600,
   maxOracleAgeSecs:    180,
   maxExecDeviationBps: 100,
-  configVersion:       2,
+  configVersion:       3,
 } as const;
 
 // ─── On-Chain Oracle Price ────────────────────────────────────────────────────

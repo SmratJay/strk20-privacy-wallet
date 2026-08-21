@@ -72,6 +72,7 @@ export const PROTOCOL_VERSION = 3;
 export const MARKET_ID = BigInt('0x' + Buffer.from('BTC-PERP').toString('hex'));
 export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString('hex'));
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
+export const MARGIN_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_MARGIN_NULLIFIER_V2').toString('hex'));
 export const PAYOUT_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_V2').toString('hex'));
 
 export const PRICE_SCALE = 100n; // Cents ($1.00 = 100)
@@ -81,7 +82,7 @@ export const MAX_LEVERAGE_BPS = 500_500n; // 50x (with 0.05x tolerance)
 export const MAINTENANCE_MARGIN_BPS = 200n; // 2.00%
 export const INITIAL_MARGIN_BPS = 200n; // 2.00%
 export const FUNDING_INTERVAL_SECONDS = 3600n; // 1 hour
-export const MAX_ORACLE_STALENESS_SECONDS = 60n; // 60s max staleness
+export const MAX_ORACLE_STALENESS_SECONDS = 180n; // 180s max staleness (matches Cairo OracleAdapter + market config)
 
 export const PROTOCOL_CONSTANTS = {
   PROTOCOL_VERSION,
@@ -106,6 +107,7 @@ export const PUBLIC_INPUT_LAYOUTS = {
     ['marginNullifier', 'u256'],
     ['marketId', 'felt'],
     ['margin', 'felt'],
+    ['oraclePrice', 'felt'],
   ],
   UPDATE: [
     ['oldCommitment', 'u256'],

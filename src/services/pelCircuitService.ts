@@ -17,6 +17,7 @@ import * as path from 'path';
 
 export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString('hex'));
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
+export const MARGIN_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_MARGIN_NULLIFIER_V2').toString('hex'));
 export const PAYOUT_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_V2').toString('hex'));
 export const MARKET_ID = BigInt('0x' + Buffer.from('BTC-PERP').toString('hex'));
 export const QTY_SCALE = 100000000n; // sats per BTC
@@ -59,6 +60,7 @@ export interface OpenWitness {
   marginCents: bigint;
   nonce: bigint;
   ownerSecret: bigint;
+  oraclePriceCents?: bigint; // must match the on-chain canonical oracle at execution (defaults to entryPriceCents)
 }
 
 export interface CloseWitness {
@@ -67,7 +69,7 @@ export interface CloseWitness {
   entryPriceCents: bigint;
   marginCents: bigint;
   fundingCents: bigint;
-  feesCents: bigint;
+  feesCents?: bigint; // DEPRECATED: ignored — the close fee is derived from the canonical taker fee
   nonce: bigint;
   ownerSecret: bigint;
   payoutNonce: bigint;
@@ -137,6 +139,10 @@ export async function computeNullifier(ownerSecret: bigint, commitment: bigint):
   return poseidonHash([NULLIFIER_TAG, ownerSecret, commitment]);
 }
 
+export async function computeMarginNullifier(ownerSecret: bigint, commitment: bigint): Promise<bigint> {
+  return poseidonHash([MARGIN_NULLIFIER_TAG, ownerSecret, commitment]);
+}
+
 export async function computePayoutCommitment(payoutAmount: bigint, payoutNonce: bigint): Promise<bigint> {
   return poseidonHash([PAYOUT_TAG, payoutAmount, payoutNonce]);
 }
@@ -152,11 +158,11 @@ export function computeCloseSettlement(
   entryPriceCents: bigint,
   marginCents: bigint,
   fundingCents: bigint,
-  feesCents: bigint,
   oraclePriceCents: bigint,
 ): {
   diffIsNeg: bigint; diffMag: bigint; pnlMag: bigint; pnlRem: bigint;
   equityIsNeg: bigint; equityMag: bigint; payout: bigint;
+  notional: bigint; notionalRem: bigint; fees: bigint; feeRem: bigint;
 } {
   const delta = side === 0n ? oraclePriceCents - entryPriceCents : entryPriceCents - oraclePriceCents;
   const [diffIsNeg, diffMag] = decomposeSigned(delta);
@@ -164,10 +170,19 @@ export function computeCloseSettlement(
   const pnlMag = prod / QTY_SCALE;
   const pnlRem = prod % QTY_SCALE;
   const pnl = diffIsNeg ? -pnlMag : pnlMag;
-  const equity = marginCents + pnl - fundingCents - feesCents;
+
+  // Canonical taker fee (7 bps on close notional) — NOT a free input.
+  const notionalProd = quantitySats * oraclePriceCents;
+  const notional = notionalProd / QTY_SCALE;
+  const notionalRem = notionalProd % QTY_SCALE;
+  const feeProd = notional * 7n;
+  const fees = feeProd / 10000n;
+  const feeRem = feeProd % 10000n;
+
+  const equity = marginCents + pnl - fundingCents - fees;
   const [equityIsNeg, equityMag] = decomposeSigned(equity);
   const payout = equityIsNeg ? 0n : equityMag;
-  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, payout };
+  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, payout, notional, notionalRem, fees, feeRem };
 }
 
 export function computeFundingSettlement(
@@ -225,53 +240,42 @@ export function computeLiquidationSettlement(
 
 const WASM_DIR = path.join(process.cwd(), 'circuits', 'build');
 
-export function encodeMockGroth16Calldata(
-  publicSignals: string[],
-  proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE',
-): bigint[] {
-  const result: bigint[] = [BigInt(publicSignals.length)];
-  for (let i = 0; i < publicSignals.length; i++) {
-    const val = BigInt(publicSignals[i]);
-    const low = val & ((1n << 128n) - 1n);
-    const high = val >> 128n;
-    result.push(low);
-    result.push(high);
-  }
-  return result;
-}
-
 export async function generateGaragaCalldata(
   proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE',
   proof: any,
   publicSignals: string[],
 ): Promise<bigint[]> {
-  try {
-    const g = await getGaraga();
-    const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
-    const vkeyJson = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
-    const vk = g.parseGroth16VerifyingKeyFromObject(vkeyJson);
-    const parsedProof = g.parseGroth16ProofFromObject(proof, publicSignals.map((s) => BigInt(s)));
-    const calldata: bigint[] = g.getGroth16CallData(parsedProof, vk, g.CurveId.BN254);
-    return calldata;
-  } catch {
-    return encodeMockGroth16Calldata(publicSignals, proofType);
-  }
+  // No mock fallback. A real Groth16 proof must produce real Garaga calldata.
+  // If this fails, the caller must fail loudly rather than submit a non-verifying proof.
+  const g = await getGaraga();
+  const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
+  const vkeyJson = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
+  const vk = g.parseGroth16VerifyingKeyFromObject(vkeyJson);
+  const parsedProof = g.parseGroth16ProofFromObject(proof, publicSignals.map((s) => BigInt(s)));
+  const calldata: bigint[] = g.getGroth16CallData(parsedProof, vk, g.CurveId.BN254);
+  return calldata;
 }
 
 export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransition> {
   const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, 0n, w.nonce, w.ownerSecret);
-  const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
+  const nullifier_ = await computeMarginNullifier(w.ownerSecret, commitment);
+
+  const oraclePrice = w.oraclePriceCents !== undefined ? BigInt(w.oraclePriceCents) : w.entryPriceCents;
+  const [diffIsNeg, diffMag] = decomposeSigned(w.entryPriceCents - oraclePrice);
 
   const input = {
     commitment: commitment.toString(),
     marginNullifier: nullifier_.toString(),
     marketId: MARKET_ID.toString(),
     margin: w.marginCents.toString(),
+    oraclePrice: oraclePrice.toString(),
     side: w.side.toString(),
     quantity: w.quantitySats.toString(),
     entryPrice: w.entryPriceCents.toString(),
     nonce: w.nonce.toString(),
     ownerSecret: w.ownerSecret.toString(),
+    diffIsNeg: diffIsNeg.toString(),
+    diffMag: diffMag.toString(),
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -287,7 +291,7 @@ export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransitio
 export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransition & { payout: bigint; payoutCommitment: bigint }> {
   const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
   const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
-  const s = computeCloseSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.feesCents, w.oraclePriceCents);
+  const s = computeCloseSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.oraclePriceCents);
   const payoutCommitment = await computePayoutCommitment(s.payout, w.payoutNonce);
 
   const input = {
@@ -303,7 +307,7 @@ export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransit
     entryPrice: w.entryPriceCents.toString(),
     margin: w.marginCents.toString(),
     funding: w.fundingCents.toString(),
-    fees: w.feesCents.toString(),
+    fees: s.fees.toString(),
     nonce: w.nonce.toString(),
     ownerSecret: w.ownerSecret.toString(),
     payoutNonce: w.payoutNonce.toString(),
@@ -313,6 +317,9 @@ export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransit
     pnlRem: s.pnlRem.toString(),
     equityIsNeg: s.equityIsNeg.toString(),
     equityMag: s.equityMag.toString(),
+    notional: s.notional.toString(),
+    notionalRem: s.notionalRem.toString(),
+    feeRem: s.feeRem.toString(),
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -403,10 +410,7 @@ export async function generateLiquidateProof(w: LiquidateWitness): Promise<Prove
     path.join(WASM_DIR, 'pel_liquidate.zkey')
   );
 
-  let calldata: bigint[] | undefined;
-  try {
-    calldata = await generateGaragaCalldata('LIQUIDATE', proof, publicSignals);
-  } catch {}
+  const calldata = await generateGaragaCalldata('LIQUIDATE', proof, publicSignals);
 
   return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, calldata };
 }

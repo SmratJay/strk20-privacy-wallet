@@ -23,7 +23,7 @@ describe('Authoritative Real OPEN E2E On-Chain Pipeline', () => {
   }, 120000);
 
   it('STEP 1: Generates real Groth16 proof with valid public signals layout', () => {
-    expect(executionResult.proof.signals.length).toBe(4);
+    expect(executionResult.proof.signals.length).toBe(5);
     expect(executionResult.proof.signals[2]).toBe(BigInt('0x4254432d50455250').toString());
     expect(executionResult.proof.signals[3]).toBe('500000');
   });

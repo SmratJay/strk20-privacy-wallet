@@ -66,8 +66,7 @@ pub mod PELPerpsCore {
     use super::super::oracle_adapter::{IOracleAdapterDispatcher, IOracleAdapterDispatcherTrait};
     use super::super::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
-    use super::super::types::u256_to_storage_key;
-    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
+    use super::super::types::{u256_to_storage_key, u256_to_felt252};    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{
         StoragePointerReadAccess, StoragePointerWriteAccess,
         StorageMapReadAccess, StorageMapWriteAccess, Map
@@ -261,12 +260,13 @@ pub mod PELPerpsCore {
                 },
             };
 
-            // Public input layout: [ commitment (u256), marginNullifier (u256), marketId (felt), margin (felt) ]
-            assert(public_inputs.len() >= 4, 'MALFORMED_OPEN_PUBLIC_INPUTS');
+            // Public input layout: [ commitment (u256), marginNullifier (u256), marketId (felt), margin (felt), oraclePrice (felt) ]
+            assert(public_inputs.len() >= 5, 'MALFORMED_OPEN_PUBLIC_INPUTS');
             let commitment_u256 = *public_inputs.at(0);
             let margin_nullifier_u256 = *public_inputs.at(1);
             let proof_market_id_u256 = *public_inputs.at(2);
             let proof_margin_u256 = *public_inputs.at(3);
+            let proof_oracle_price: u128 = (*public_inputs.at(4)).low;
 
             let commitment_key = u256_to_storage_key(commitment_u256);
             let margin_nullifier_key = u256_to_storage_key(margin_nullifier_u256);
@@ -277,6 +277,11 @@ pub mod PELPerpsCore {
             assert(margin_amount == proof_margin, 'MARGIN_AMOUNT_MISMATCH');
             assert(!self.used_nullifiers.read(margin_nullifier_key), 'NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(commitment_key).is_active, 'COMMITMENT_ALREADY_EXISTS');
+
+            // Bind the proof's oracle price to the canonical on-chain oracle state.
+            // The circuit additionally proves |entry - oracle| <= maxDeviation, so this
+            // pins execution to the canonical price and rejects stale/manipulated prices.
+            assert(price.price == proof_oracle_price, 'ORACLE_PRICE_MISMATCH');
 
             // 3. Checks-Effects: Mark Nullifier Consumed
             self.used_nullifiers.write(margin_nullifier_key, true);
@@ -412,6 +417,8 @@ pub mod PELPerpsCore {
             assert(!self.positions.read(new_commitment_key).is_active, 'NEW_COMMITMENT_ALREADY_EXISTS');
 
             // Canonical Funding Intervals Enforcement
+            // Rule (shared by circuit / Cairo / TS): intervalsElapsed == floor(elapsed / interval).
+            // No "+1": a user cannot accrue an extra interval immediately after the anchor.
             assert(proof_intervals_elapsed > 0_u64, 'INTERVALS_MUST_BE_POSITIVE');
             let now = get_block_timestamp();
             let time_elapsed = if now >= pos.last_funding_timestamp {
@@ -419,8 +426,8 @@ pub mod PELPerpsCore {
             } else {
                 0_u64
             };
-            let max_allowed_intervals = (time_elapsed / market.funding_interval_secs) + 1_u64;
-            assert(proof_intervals_elapsed <= max_allowed_intervals, 'EXAGGERATED_FUNDING_INTERVALS');
+            let elapsed_intervals = time_elapsed / market.funding_interval_secs;
+            assert(proof_intervals_elapsed <= elapsed_intervals, 'EXAGGERATED_FUNDING_INTERVALS');
 
             if is_long_pays {
                 assert(funding_amount <= pos.locked_margin, 'FUNDING_EXCEEDS_MARGIN');
@@ -464,7 +471,22 @@ pub mod PELPerpsCore {
         }
 
         // ─── LIQUIDATE (Groth16 Proof Verification & Liquidation Waterfall) ──
-
+        //
+        // Liquidation economics (documented, integer arithmetic only):
+        //   - equity        = margin + pnl - funding - fees   (proved privately by the circuit)
+        //   - maintenance   = notional * maintenance_margin_bps / 10000
+        //   - The LIQUIDATE circuit enforces  equity <= maintenance  before this function
+        //     can succeed (liquidation is cryptographically gated on the predicate).
+        //   - keeper bounty = locked_margin * 200 / 10000       (2%, fixed)
+        //   - insurance     = locked_margin - keeper_bounty     (98% -> insurance fund)
+        //
+        // Bad debt: when a position is liquidated deeply underwater (equity < 0), the
+        // locked margin no longer covers the counterparty loss. The insurance fund is the
+        // bad-debt buffer: trader profits are paid insurance-first (see
+        // STRK20Adapter.release_shielded_payout), and liquidation tops the insurance fund
+        // back up. If the insurance fund is exhausted, profitable closes revert with
+        // INSUFFICIENT_POOL_NAV rather than minting tokens. No value is created from
+        // nowhere; every transition conserves token balance.
         fn liquidate_position(
             ref self: ContractState,
             market_id: felt252,
@@ -486,9 +508,7 @@ pub mod PELPerpsCore {
             let position_nullifier_key = u256_to_storage_key(*public_inputs.at(1));
             let proof_market_id: felt252 = (*public_inputs.at(2)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(3)).low;
-            let proof_keeper_felt: felt252 = (*public_inputs.at(4)).low.into();
-            let proof_keeper: ContractAddress = proof_keeper_felt.try_into().unwrap();
-
+            let proof_keeper: ContractAddress = u256_to_felt252(*public_inputs.at(4)).try_into().unwrap();
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
             assert(keeper_recipient == proof_keeper, 'KEEPER_RECIPIENT_MISMATCH');
 
@@ -553,8 +573,7 @@ pub mod PELPerpsCore {
             let payout_amount: u128 = (*public_inputs.at(3)).low;
             let proof_market_id: felt252 = (*public_inputs.at(4)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(5)).low;
-            let proof_recipient_felt: felt252 = (*public_inputs.at(6)).low.into();
-            let proof_recipient: ContractAddress = proof_recipient_felt.try_into().unwrap();
+            let proof_recipient: ContractAddress = u256_to_felt252(*public_inputs.at(6)).try_into().unwrap();
 
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
             assert(recipient == proof_recipient, 'RECIPIENT_MISMATCH');
@@ -582,13 +601,31 @@ pub mod PELPerpsCore {
                 0_u128
             };
 
+            // Trader loss (locked_margin - payout) is routed to the LP counterparty NAV.
+            let loss_amount: u128 = if pos.locked_margin > payout_amount {
+                pos.locked_margin - payout_amount
+            } else {
+                0_u128
+            };
+
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.release_shielded_payout(
-                payout_note_commitment_key,
-                recipient,
-                payout_amount,
-                profit_amount,
-            );
+
+            // Release the trader payout. Skipped when payout == 0: a fully-lost position
+            // has no claimable payout; its entire margin is a loss to the counterparty.
+            if payout_amount > 0 {
+                strk20.release_shielded_payout(
+                    payout_note_commitment_key,
+                    recipient,
+                    payout_amount,
+                    profit_amount,
+                );
+            }
+
+            // Route residual locked margin (trader loss) to the LP counterparty NAV so no
+            // margin is ever stranded inside total_locked_collateral.
+            if loss_amount > 0 {
+                strk20.collect_insurance_contribution(final_nullifier_key, loss_amount);
+            }
 
             self.emit(PositionClosed {
                 commitment: position_commitment_key,

@@ -241,7 +241,7 @@ export class DaemonIndexerService {
 
     switch (type) {
       case 'PositionOpened': {
-        const { commitment, marginNullifier, marginAmount, marketId, timestamp } = parsedFields;
+        const { commitment, marginAmount, marketId, timestamp } = parsedFields;
         const node: PositionGraphNode = {
           initialCommitment: commitment,
           currentCommitment: commitment,
@@ -253,10 +253,8 @@ export class DaemonIndexerService {
           history: [commitment],
         };
         this.positions.set(commitment, node);
-        if (marginNullifier) {
-          this.spentNullifiers.add(marginNullifier);
-          this.nullifiersToCommitment.set(marginNullifier, commitment);
-        }
+        // NOTE: PositionOpened carries no nullifier; the position's nullifier is only
+        // spent on UPDATE/FUND/CLOSE/LIQUIDATE.
         break;
       }
 
@@ -385,6 +383,24 @@ export class DaemonIndexerService {
       this.latestChainBlock = latestBlock.block_number;
       const latestBlockHash = latestBlock.block_hash;
 
+      // Reorg detection: if we have an indexed checkpoint, verify the chain still has
+      // the same block hash at that height. If not, the chain reorganized and we must
+      // roll back blocks/events above the last common ancestor before continuing.
+      if (this.lastIndexedBlock > 0 && this.lastBlockHash && this.lastBlockHash !== '0x0') {
+        try {
+          const checkHeader: any = await this.provider.getBlock(this.lastIndexedBlock);
+          if (checkHeader && checkHeader.block_hash && checkHeader.block_hash !== this.lastBlockHash) {
+            let ancestor = this.lastIndexedBlock;
+            while (ancestor > 0) {
+              const h: any = await this.provider.getBlock(ancestor);
+              if (h && h.block_hash === this.lastBlockHash) break;
+              ancestor--;
+            }
+            this.handleReorg(ancestor);
+          }
+        } catch {}
+      }
+
       if (this.lastIndexedBlock === 0) {
         const envStart = process.env.PEL_INDEXER_START_BLOCK ? parseInt(process.env.PEL_INDEXER_START_BLOCK, 10) : 0;
         this.lastIndexedBlock = envStart > 0 ? envStart : Math.max(0, this.latestChainBlock - 50);
@@ -437,39 +453,52 @@ export class DaemonIndexerService {
     let parsedFields: Record<string, any> = {};
 
     if (selector === this.selectors.PositionOpened) {
+      // Cairo: [collateral_owner, commitment, market_id, margin_amount, timestamp]
       type = 'PositionOpened';
       parsedFields = {
         commitment: rawEv.data?.[1],
-        marginNullifier: rawEv.data?.[2],
+        marketId: 'BTC-PERP', // data[2] is the market_id felt
         marginAmount: BigInt(rawEv.data?.[3] || '0'),
-        marketId: 'BTC-PERP',
+        timestamp: rawEv.data?.[4] ? Number(BigInt(rawEv.data[4])) : Date.now(),
       };
     } else if (selector === this.selectors.PositionUpdated) {
+      // Cairo: [old_commitment, old_nullifier, new_commitment, timestamp]
       type = 'PositionUpdated';
       parsedFields = {
         oldCommitment: rawEv.data?.[0],
         oldNullifier: rawEv.data?.[1],
         newCommitment: rawEv.data?.[2],
+        timestamp: rawEv.data?.[3] ? Number(BigInt(rawEv.data[3])) : Date.now(),
       };
     } else if (selector === this.selectors.PositionFunded) {
+      // Cairo: [commitment, old_nullifier, new_commitment, funding_amount, is_long_pays, timestamp]
       type = 'PositionFunded';
       parsedFields = {
         commitment: rawEv.data?.[0],
         oldNullifier: rawEv.data?.[1],
         newCommitment: rawEv.data?.[2],
+        fundingAmountCents: BigInt(rawEv.data?.[3] || '0'),
+        isLongPays: rawEv.data?.[4] === '0x1' || rawEv.data?.[4] === '1',
+        timestamp: rawEv.data?.[5] ? Number(BigInt(rawEv.data[5])) : Date.now(),
       };
     } else if (selector === this.selectors.PositionClosed) {
+      // Cairo: [commitment, nullifier, payout_amount, recipient, timestamp]
       type = 'PositionClosed';
       parsedFields = {
         commitment: rawEv.data?.[0],
         finalNullifier: rawEv.data?.[1],
+        payoutAmountCents: BigInt(rawEv.data?.[2] || '0'),
+        recipient: rawEv.data?.[3],
+        timestamp: rawEv.data?.[4] ? Number(BigInt(rawEv.data[4])) : Date.now(),
       };
     } else if (selector === this.selectors.PositionLiquidated) {
+      // Cairo: [commitment, nullifier, keeper, timestamp]
       type = 'PositionLiquidated';
       parsedFields = {
         commitment: rawEv.data?.[0],
         nullifier: rawEv.data?.[1],
-        keeper: rawEv.data?.[3],
+        keeper: rawEv.data?.[2],
+        timestamp: rawEv.data?.[3] ? Number(BigInt(rawEv.data[3])) : Date.now(),
       };
     }
 

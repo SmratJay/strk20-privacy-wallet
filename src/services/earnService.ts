@@ -1,7 +1,10 @@
 /**
  * @file earnService.ts
- * @description PEL Shielded Earn & Lending Vaults Engine (Sections 3.2 & 13.1)
- * Integrates private yield generation without unshielding assets into public view.
+ * @description PEL Shielded Earn & Lending Vaults
+ *
+ * ⚠️ SIMULATED / LOCAL PROTOTYPE — vaults, APY, TVL, and utilization are HARDCODED, and
+ * deposits/yield are simulated in localStorage. There is NO on-chain vault or yield.
+ * MUST NOT be presented as live/real yield.
  */
 
 export interface EarnVault {

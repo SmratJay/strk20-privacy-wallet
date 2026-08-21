@@ -1,8 +1,11 @@
 /**
  * @file routerService.ts
  * @description PEL Intent-Based Privacy-Aware Execution Router
- * Implements the route cost optimizer and privacy leakage scoring from PEL White Paper v0.2
- * Formula: C(r) = P(r) + F(r) + G(r) + S(r) + L(r) + lambda * Lambda(r)
+ *
+ * ⚠️ SIMULATED / LOCAL PROTOTYPE — the route cost optimizer uses HARDCODED route hops,
+ * fees, gas, and privacy-leakage scores. It performs NO real DEX/aggregator quotes and
+ * MUST NOT be presented as live routing data. Real swap execution goes through
+ * avnuService.ts (AVNU SDK).
  */
 
 import { TokenInfo } from '@/config/tokens';

@@ -54,3 +54,13 @@ pub fn u256_to_storage_key(x: u256) -> felt252 {
         array![x.low.into(), x.high.into()].span()
     )
 }
+
+// Reconstruct a felt252 (e.g. a ContractAddress, < 2^251 < p) from its u256
+// representation. Verifier public inputs are returned as Span<u256> (low/high),
+// so a full-width felt252 public signal MUST be reconstructed from both limbs —
+// reading only `.low` silently truncates any value >= 2^128.
+pub fn u256_to_felt252(x: u256) -> felt252 {
+    let low: felt252 = x.low.into();
+    let high: felt252 = x.high.into();
+    low + high * 340282366920938463463374607431768211456_felt252
+}
