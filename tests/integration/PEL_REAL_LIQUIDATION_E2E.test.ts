@@ -96,7 +96,7 @@ describe('Authoritative Real Liquidation E2E (Audit Section 17 & 8)', () => {
     expect(expectedRemainingCents).toBe(196000n);
 
     // Clean up witness after liquidation
-    deleteWitness(traderAddress, commitment);
-    expect(loadWitness(traderAddress, commitment)).toBeNull();
+    await deleteWitness(traderAddress, commitment, '');
+    expect(await loadWitness(traderAddress, commitment, '')).toBeNull();
   }, 30000);
 });

@@ -29,13 +29,13 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
       ownerSecret,
     });
 
-    expect(openProof.publicSignals.length).toBe(4);
+    expect(openProof.publicSignals.length).toBe(5);
     const commitment0 = '0x' + openProof.commitment.toString(16);
     const nullifier0 = '0x' + openProof.nullifier.toString(16);
     const storageKey0 = bn254ToStorageKey(openProof.commitment);
 
     // Save witness in encrypted store
-    saveWitness(traderAddress, {
+    await saveWitness(traderAddress, {
       protocolVersion: 3,
       marketId,
       side: 'LONG',
@@ -49,7 +49,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
       commitment: commitment0,
       nullifier: nullifier0,
       openedAtMs: Date.now(),
-    });
+    }, '');
 
     const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
       traderAddress,
@@ -84,7 +84,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
     const nullifier1 = '0x' + updateProof1.nullifier.toString(16);
 
     // Update witness in client store with ownerSecret preservation
-    updateWitness(traderAddress, commitment0, {
+    await updateWitness(traderAddress, commitment0, {
       protocolVersion: 3,
       marketId,
       side: 'LONG',
@@ -98,7 +98,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
       commitment: commitment1,
       nullifier: nullifier1,
       openedAtMs: Date.now(),
-    });
+    }, '');
 
     const updateCall1 = starknetPerpsDispatcher.buildUpdatePositionCall(
       marketId,
@@ -134,7 +134,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
     const commitment2 = '0x' + fundProof.newCommitment.toString(16);
     const nullifier2 = '0x' + fundProof.nullifier.toString(16);
 
-    updateWitness(traderAddress, commitment1, {
+    await updateWitness(traderAddress, commitment1, {
       protocolVersion: 3,
       marketId,
       side: 'LONG',
@@ -148,7 +148,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
       commitment: commitment2,
       nullifier: nullifier2,
       openedAtMs: Date.now(),
-    });
+    }, '');
 
     const fundCall = starknetPerpsDispatcher.buildFundPositionCall(
       marketId,
@@ -180,7 +180,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
     const commitment3 = '0x' + updateProof2.newCommitment.toString(16);
     const nullifier3 = '0x' + updateProof2.nullifier.toString(16);
 
-    updateWitness(traderAddress, commitment2, {
+    await updateWitness(traderAddress, commitment2, {
       protocolVersion: 3,
       marketId,
       side: 'LONG',
@@ -194,7 +194,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
       commitment: commitment3,
       nullifier: nullifier3,
       openedAtMs: Date.now(),
-    });
+    }, '');
 
     const isUpdate2Valid = await pelCircuitService.verifyProof('UPDATE', updateProof2.proof, updateProof2.publicSignals);
     expect(isUpdate2Valid).toBe(true);
@@ -231,7 +231,7 @@ describe('Authoritative Real E2E State Machine Lifecycle (Audit Section 17)', ()
     expect(isCloseValid).toBe(true);
 
     // Clean up witness post-settlement
-    deleteWitness(traderAddress, commitment3);
-    expect(loadWitness(traderAddress, commitment3)).toBeNull();
+    await await deleteWitness(traderAddress, commitment3, '');
+    expect(await await loadWitness(traderAddress, commitment3, '')).toBeNull();
   }, 30000);
 });

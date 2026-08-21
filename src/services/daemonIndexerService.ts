@@ -253,8 +253,9 @@ export class DaemonIndexerService {
           history: [commitment],
         };
         this.positions.set(commitment, node);
-        // NOTE: PositionOpened carries no nullifier; the position's nullifier is only
-        // spent on UPDATE/FUND/CLOSE/LIQUIDATE.
+        if (parsedFields.marginNullifier) {
+          this.spentNullifiers.add(parsedFields.marginNullifier);
+        }
         break;
       }
 

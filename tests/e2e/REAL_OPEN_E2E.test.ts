@@ -28,8 +28,8 @@ describe('Authoritative Real OPEN E2E On-Chain Pipeline', () => {
     expect(executionResult.proof.signals[3]).toBe('500000');
   });
 
-  it('STEP 2: Generates real 1978-felt Garaga BN254 calldata for on-chain verifier', () => {
-    expect(executionResult.proof.calldataLength).toBe(1978);
+  it('STEP 2: Generates real 1992-felt Garaga BN254 calldata for on-chain verifier', () => {
+    expect(executionResult.proof.calldataLength).toBe(1992);
   });
 
   it('STEP 3: Submits and confirms real Starknet transaction with status SUCCEEDED', () => {
@@ -37,7 +37,7 @@ describe('Authoritative Real OPEN E2E On-Chain Pipeline', () => {
     expect(['SUCCEEDED', 'ACCEPTED_ON_L2']).toContain(executionResult.transaction.status);
   });
 
-  it('STEP 4: Verifies real collateral movement on-chain (,000.00 USDC locked)', () => {
+  it('STEP 4: Verifies real collateral movement on-chain ($5,000.00 USDC locked)', () => {
     expect(BigInt(executionResult.collateral.collateralMovedUnits)).toBe(5000000000n);
     expect(BigInt(executionResult.collateral.balanceBefore) - BigInt(executionResult.collateral.balanceAfter)).toBe(5000000000n);
   });
@@ -60,8 +60,8 @@ describe('Authoritative Real OPEN E2E On-Chain Pipeline', () => {
     expect(executionResult.attacks.tamperedMarginReverted).toBe(true);
   });
 
-  it('STEP 9: Verifies encrypted client witness storage persistence', () => {
-    const loaded = loadWitness(executionResult.accounts.trader, executionResult.proof.commitment);
+  it('STEP 9: Verifies encrypted client witness storage persistence', async () => {
+    const loaded = await loadWitness(executionResult.accounts.trader, executionResult.proof.commitment, '');
     expect(loaded).not.toBeNull();
     expect(loaded?.marketId).toBe('BTC-PERP');
     expect(loaded?.marginCents).toBe(500000n);

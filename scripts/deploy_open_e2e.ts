@@ -322,7 +322,7 @@ export async function executeRealOpenPipeline(): Promise<RealOpenExecutionResult
     throw new Error('ON_CHAIN_POSITION_STATE_CORRUPTED');
   }
 
-  saveWitness(traderAddress, {
+  await saveWitness(traderAddress, {
     protocolVersion: 3,
     marketId: 'BTC-PERP',
     side: 'LONG',
@@ -336,7 +336,7 @@ export async function executeRealOpenPipeline(): Promise<RealOpenExecutionResult
     commitment: '0x' + openProof.commitment.toString(16),
     nullifier: '0x' + openProof.nullifier.toString(16),
     openedAtMs: Date.now(),
-  });
+  }, '');
 
   let replayReverted = false;
   try {

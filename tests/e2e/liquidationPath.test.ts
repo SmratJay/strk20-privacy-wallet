@@ -42,7 +42,7 @@ describe('PEL BTC-PERP Liquidation Path E2E', () => {
 
   let positionCommitment: string;
 
-  it('Step 1: Open Leveraged Position', () => {
+  it('Step 1: Open Position with  Margin at 20x Leverage', async () => {
     const { fact, commitment, witness } = zkProverService.generateOpenFact(
       OWNER_SECRET,
       NONCE,
@@ -58,17 +58,17 @@ describe('PEL BTC-PERP Liquidation Path E2E', () => {
     positionCommitment = commitment;
     const nullifier = zkProverService.computeNullifier(OWNER_SECRET, commitment);
 
-    saveWitness(WALLET_ADDRESS, {
+    await saveWitness(WALLET_ADDRESS, {
       ...witness,
       commitment,
       nullifier,
     });
 
-    expect(loadWitness(WALLET_ADDRESS, commitment)).not.toBeNull();
+    expect(await loadWitness(WALLET_ADDRESS, commitment, '')).not.toBeNull();
   });
 
-  it('Step 2: Price Drops & Position Becomes Liquidatable', () => {
-    const loaded = loadWitness(WALLET_ADDRESS, positionCommitment);
+  it('Step 2: Price Drops & Position Becomes Liquidatable', async () => {
+    const loaded = await loadWitness(WALLET_ADDRESS, positionCommitment, '');
     expect(loaded).not.toBeNull();
 
     // Price crashes 5% to $90,250.00
@@ -93,8 +93,8 @@ describe('PEL BTC-PERP Liquidation Path E2E', () => {
     expect(equityCents).toBeLessThanOrEqual(maintMarginCents);
   });
 
-  it('Step 3: Keeper Generates Valid LIQUIDATE Fact', () => {
-    const loaded = loadWitness(WALLET_ADDRESS, positionCommitment);
+  it('Step 3: Keeper Generates Valid LIQUIDATE Fact', async () => {
+    const loaded = await loadWitness(WALLET_ADDRESS, positionCommitment, '');
     expect(loaded).not.toBeNull();
 
     const crashPriceCents = 9_025_000n;
@@ -106,10 +106,10 @@ describe('PEL BTC-PERP Liquidation Path E2E', () => {
 
     expect(fact.proofType).toBe('LIQUIDATE');
     expect(fact.factHash.startsWith('0x')).toBe(true);
-    expect(fact.commitment).toBe(positionCommitment);
+    expect(fact.commitment).toBe(positionCommitment, '');
   });
 
-  it('Step 4: Collateral Split (2% Keeper Bounty + 98% Insurance Allocation)', () => {
+  it('Step 4: Collateral Split (2% Keeper Bounty + 98% Insurance Allocation)', async () => {
     const lockedMargin = MARGIN_CENTS;
     const bountyAmount = (lockedMargin * 200n) / 10000n; // 2% = $10.00
     const insuranceAmount = lockedMargin - bountyAmount;  // 98% = $490.00
@@ -119,7 +119,7 @@ describe('PEL BTC-PERP Liquidation Path E2E', () => {
     expect(bountyAmount + insuranceAmount).toBe(lockedMargin);
 
     // Clean up consumed witness
-    deleteWitness(WALLET_ADDRESS, positionCommitment);
-    expect(loadWitness(WALLET_ADDRESS, positionCommitment)).toBeNull();
+    await deleteWitness(WALLET_ADDRESS, positionCommitment, '');
+    expect(await loadWitness(WALLET_ADDRESS, positionCommitment, '')).toBeNull();
   });
 });

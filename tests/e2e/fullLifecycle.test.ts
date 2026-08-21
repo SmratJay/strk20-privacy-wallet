@@ -41,7 +41,7 @@ describe('PEL BTC-PERP End-to-End State Machine Lifecycle', () => {
   let activeCommitment: string;
   let activeNullifier: string;
 
-  it('Step 1: OPEN Position (Generates Canonical Commitment & SNIP-36 Open Fact)', () => {
+  it('Step 1: OPEN Position (Generates Canonical Commitment & SNIP-36 Open Fact)', async () => {
     const { fact, commitment, witness } = zkProverService.generateOpenFact(
       OWNER_SECRET,
       NONCE,
@@ -67,18 +67,18 @@ describe('PEL BTC-PERP End-to-End State Machine Lifecycle', () => {
       commitment: activeCommitment,
       nullifier: activeNullifier,
     };
-    saveWitness(WALLET_ADDRESS, fullWitness);
+    await saveWitness(WALLET_ADDRESS, fullWitness, '');
 
     // Verify stored
-    const loaded = loadWitness(WALLET_ADDRESS, activeCommitment);
+    const loaded = await loadWitness(WALLET_ADDRESS, activeCommitment, '');
     expect(loaded).not.toBeNull();
     expect(loaded?.side).toBe('LONG');
     expect(loaded?.quantitySats).toBe(QTY_SATS);
     expect(loaded?.marginCents).toBe(MARGIN_CENTS);
   });
 
-  it('Step 2: UPDATE Position (State Rollover on Oracle Price Tick)', () => {
-    const loaded = loadWitness(WALLET_ADDRESS, activeCommitment);
+  it('Step 2: UPDATE Position (State Rollover on Oracle Price Tick)', async () => {
+    const loaded = await loadWitness(WALLET_ADDRESS, activeCommitment, '');
     expect(loaded).not.toBeNull();
 
     const newOraclePriceCents = 9_600_000n; // $96,000.00
@@ -97,17 +97,17 @@ describe('PEL BTC-PERP End-to-End State Machine Lifecycle', () => {
       commitment: newCommitment,
       nullifier: newNullifier,
     };
-    updateWitness(WALLET_ADDRESS, activeCommitment, updatedWitness);
+    await updateWitness(WALLET_ADDRESS, activeCommitment, updatedWitness, '');
 
     activeCommitment = newCommitment;
     activeNullifier = newNullifier;
 
     // Verify state transitioned
-    expect(loadWitness(WALLET_ADDRESS, newCommitment)).not.toBeNull();
+    expect(await loadWitness(WALLET_ADDRESS, newCommitment, '')).not.toBeNull();
   });
 
-  it('Step 3: FUND Position (Funding Rate Accrual for 1 Hour)', () => {
-    const loaded = loadWitness(WALLET_ADDRESS, activeCommitment);
+  it('Step 3: FUND Position (Funding Rate Accrual for 1 Hour)', async () => {
+    const loaded = await loadWitness(WALLET_ADDRESS, activeCommitment, '');
     expect(loaded).not.toBeNull();
 
     const markPriceCents = 9_600_000n;
@@ -132,13 +132,13 @@ describe('PEL BTC-PERP End-to-End State Machine Lifecycle', () => {
       commitment: newCommitment,
       nullifier: zkProverService.computeNullifier(OWNER_SECRET, newCommitment),
     };
-    updateWitness(WALLET_ADDRESS, activeCommitment, fundedWitness);
+    await updateWitness(WALLET_ADDRESS, activeCommitment, fundedWitness, '');
 
     activeCommitment = newCommitment;
   });
 
-  it('Step 4: CLOSE Position (Profitable Exit with Exact Shielded Settlement)', () => {
-    const loaded = loadWitness(WALLET_ADDRESS, activeCommitment);
+  it('Step 4: CLOSE Position (Profitable Exit with Exact Shielded Settlement)', async () => {
+    const loaded = await loadWitness(WALLET_ADDRESS, activeCommitment, '');
     expect(loaded).not.toBeNull();
 
     // Price rises to $100,000.00 (+5.26%)
@@ -157,7 +157,7 @@ describe('PEL BTC-PERP End-to-End State Machine Lifecycle', () => {
     expect(payoutCents).toBeGreaterThan(MARGIN_CENTS);
 
     // Delete witness post-close
-    deleteWitness(WALLET_ADDRESS, activeCommitment);
-    expect(loadWitness(WALLET_ADDRESS, activeCommitment)).toBeNull();
+    await deleteWitness(WALLET_ADDRESS, activeCommitment);
+    expect(await loadWitness(WALLET_ADDRESS, activeCommitment, '')).toBeNull();
   });
 });

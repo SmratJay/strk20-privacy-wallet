@@ -1,13 +1,13 @@
 {
   "network": "local-devnet",
   "chainId": "0x534e5f5345504f4c4941",
-  "blockNumber": 62,
+  "blockNumber": 166,
   "contracts": {
-    "usdc": "0x420e6664a5ae24012dff2998301d48a50e36696e9142e65afb3c2253b27b47f",
-    "oracleAdapter": "0x7c49fb0137c5dc7a7fb139b822d53fd3755c55fc6bf2a0dc521e312a35830d9",
-    "openVerifier": "0x417b055de3c74ee347398ca5756272d9b102c2b3a33d2dff240cd861895d682",
-    "strk20Adapter": "0x17ccee88000ecfcd7c9d26451a72b89675b8eed799ec4c02d91e3824133e6c",
-    "pelCore": "0x45a3466ddb59505cbdb1e4efd50e8a9e8d8c80fad91d358e716c259c9bc362b"
+    "usdc": "0xc95198aef66c4ca8ca360d81f5b22da0361f017b57ef6e894aa4df5d0c0f32",
+    "oracleAdapter": "0x592ce62018fd26382781afc345478df2086379348b3514a1388b32353b509dc",
+    "openVerifier": "0x212437d002aeb0a07c35a88dda5d420070ad686f3d46b1281ba211ca4f3271a",
+    "strk20Adapter": "0x6c72114e50c5e85f88fdf84699e6884923162a23e6ed35eb7cc14e2c68dc1c4",
+    "pelCore": "0x6e822927408df483860c58e04cd4f116175c0278b86c72c9f5711c099c72301"
   },
   "accounts": {
     "admin": "0x64b48806902a367c8598f4f95c305e8c1a1acba5f082d294a43793113115691",
@@ -15,18 +15,19 @@
   },
   "proof": {
     "signals": [
-      "12132523108912108857891205740202724038628654329944677135162656678562234040399",
-      "16317431486818179074566196657688002310952812310634994782750182734819248633126",
+      "15795032400422536499860346266021663287413901011140007954022397097940569793071",
+      "6024437089086586029987271527675912001576220839831524317350358789843133339210",
       "4779518966446248528",
-      "500000"
+      "500000",
+      "9500000"
     ],
-    "commitment": "0x1ad2c3c563abd4fe557979e3f7bf9ec8427ee3444e24f70ba1287f8f2a3b004f",
-    "nullifier": "0x241356c457e04554b698cda9ff8b23ba8e7cfbb25e7d38b5d6cc7a7f3b20f526",
+    "commitment": "0x22ebabe94caee6b4b897e5e7e6c0984b1446e041fdbb1afef1779eaa228ba22f",
+    "nullifier": "0xd51b5e70d7d58e35312fb8adb1b54e064937dd38924dd04dda8b30407d3164a",
     "marginCents": "500000",
-    "calldataLength": 1978
+    "calldataLength": 1992
   },
   "transaction": {
-    "transactionHash": "0x4c3c5e19e1f0cd2770ddc1e4c9fa5a62b55a7d0d757027d2dd17b17644a69d7",
+    "transactionHash": "0x5a531de26a680c3a49e3832a9dbd4c413ebdce0d79fc824e8f9d53a650ae760",
     "status": "SUCCEEDED",
     "executionStatus": "SUCCEEDED"
   },
@@ -37,8 +38,8 @@
     "lockedMarginCents": "500000"
   },
   "position": {
-    "commitmentKey": "0x77c145a69da192f090f722d5fa062e808daddd2ad3fc7b16360b2006c4286bf",
-    "nullifierKey": "0x22c60aaf66ec82832da85e3c5d0330fc870a5d1a42dd3b6ec59b8d9644b8973",
+    "commitmentKey": "0x396465e49bb1edac5c151ab41d97c3e2c134096fbe10756c9b69fbc66db91db",
+    "nullifierKey": "0x299b78bc33203e83276dc19fb0edcf9dd55afdf3b3a3abe4671d8813535e93f",
     "lockedMargin": "500000",
     "marketId": "BTC-PERP",
     "isActive": true
