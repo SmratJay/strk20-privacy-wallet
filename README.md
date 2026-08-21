@@ -1,157 +1,211 @@
-# 🍊 ORRANGE: Confidential DeFi & Privacy-Native Perpetuals on Starknet
+# ORRANGE — STRK20 Privacy Wallet × PEL Private Perpetuals
 
-> **The complete privacy execution stack on Starknet — combining Umbra-grade Stealth Payments (STRK20) with Zero-Knowledge Shielded Perpetual Futures (PEL BTC-PERP).**
+> **Private perpetual futures on Starknet, composed with the real STRK20 privacy pool.**
+> Shield USDC → open a private BTC-PERP → realize private PnL/funding/fees → close into a
+> shielded payout → unshield later. Positions are proven by Groth16 zk-SNARKs and verified
+> by five dedicated on-chain verifiers.
 
 Built by **Jai Bhati** ([@SmratJay](https://github.com/SmratJay)) — Founder of [orrange.xyz](https://orrange.xyz).
 
-[![Cairo Scarb](https://img.shields.io/badge/Cairo%20Scarb-v2.16.0%20PASS-emerald)](https://github.com/SmratJay/strk20-privacy-wallet)
-[![Tests](https://img.shields.io/badge/tests-175%2F175%20passing-emerald)](https://github.com/SmratJay/strk20-privacy-wallet)
+[![Cairo Scarb](https://img.shields.io/badge/Cairo%20Scarb-v2.16.1-emerald)](https://scarb.dev)
 [![Starknet](https://img.shields.io/badge/starknet-v10.4.0-blue)](https://starknetjs.com)
-[![Next.js](https://img.shields.io/badge/Next.js-v15.5.23-black)](https://nextjs.org)
-[![AVNU](https://img.shields.io/badge/AVNU%20SDK-v4.2.0-purple)](https://docs.avnu.fi)
-[![License](https://img.shields.io/badge/license-MIT-zinc)](./LICENSE)
+[![Next.js](https://img.shields.io/badge/Next.js-v15-black)](https://nextjs.org)
 
 ---
 
-## 🎯 What is ORRANGE?
+## 1. What is PEL?
 
-**ORRANGE** is a privacy-first decentralized financial platform built on Starknet. It bridges consumer-grade stealth payment UX with institutional-grade zero-knowledge derivatives trading.
+**PEL (Private Execution Layer)** is a zero-knowledge perpetual-futures protocol on Starknet.
+Traders deposit **shielded collateral** and open leveraged positions whose **size, entry
+price, direction, margin, funding, fees, PnL, and payout** are never publicly disclosed.
+Each state transition is a **Groth16 zk-SNARK** whose proof is verified on-chain; only a
+**commitment** and a **nullifier** are posted to L2.
 
-### 🌟 Core Capabilities:
-1. **🔒 STRK20 Privacy Wallet (Umbra Mode):** Shield, send, unshield, and transfer tokens privately using Starknet's native note-based privacy pool with single-key stealth invoices.
-2. **⚡ PEL Private Perpetuals (`BTC-PERP`):** Shielded perpetual futures with $1\times$ to $50\times$ leverage. Position size, entry price, leverage, and liquidation points are hidden off-chain in encrypted Poseidon witnesses; only SNIP-36 STARK transition facts are verified on-chain.
-3. **💧 Pooled LP Counterparty Vault (`STRK20Adapter`):** GMX-style pooled liquidity with proportional NAV share pricing, fee attribution, and automated withdrawable reserve floor protection.
-4. **🤖 Autonomous Keeper & Indexer Subsystem:** Proof-based solvency evaluations ($\text{equity} \le \text{maintenanceMargin}$), fail-closed oracle freshness guards, and real-time Starknet RPC event polling with reorg recovery.
-5. **🔄 AVNU DEX Aggregator:** Live best-execution swaps across Ekubo and JediSwap with paymaster gasless routing.
+## 2. Why do perpetuals need privacy?
 
----
+Institutional and sophisticated traders face an information asymmetry problem on public
+perpetuals venues: their position size, entry, leverage, and liquidation points are visible
+to everyone. This lets counterparties, MEV searchers, and market makers front-run or
+liquidate them. Privacy prevents this by hiding the position while keeping **solvency and
+liquidation cryptographically enforceable**.
 
-## 🏛️ Platform Architecture
+## 3. Why STRK20?
 
-```
-                                    ┌──────────────────────────────────────────────────┐
-                                    │               ORRANGE PLATFORM                   │
-                                    └─────────────────────────┬────────────────────────┘
-                                                              │
-                    ┌─────────────────────────────────────────┴─────────────────────────────────────────┐
-                    │                                                                                   │
-                    ▼                                                                                   ▼
-    ┌───────────────────────────────┐                                                   ┌───────────────────────────────┐
-    │     STRK20 PRIVACY WALLET     │                                                   │      PEL SHIELDED PERPS       │
-    ├───────────────────────────────┤                                                   ├───────────────────────────────┤
-    │ • Umbra Stealth Invoices      │                                                   │ • BTC-PERP (1x - 50x)         │
-    │ • Encrypted UTXO Notes        │                                                   │ • Shielded Poseidon Witnesses │
-    │ • Subchannel Scanner          │                                                   │ • STARK SNIP-36 Fact Registry │
-    │ • Selective Auditor Escrow    │                                                   │ • Pooled LP Counterparty NAV  │
-    │ • AVNU Live DEX Swaps         │                                                   │ • Zero-Fallback Keeper Bot    │
-    └───────────────┬───────────────┘                                                   └───────────────┬───────────────┘
-                    │                                                                                   │
-                    └─────────────────────────────────┬─────────────────────────────────────────────────┘
-                                                      │
-                                                      ▼
-                       ┌─────────────────────────────────────────────────────────────┐
-                       │                 STARKNET CAIRO SMART CONTRACTS              │
-                       │  - PELPerpsCore (State Machine & Nullifier Lineage)         │
-                       │  - StwoVerifier (Prover-Only Domain-Separated Fact Verifier)│
-                       │  - STRK20Adapter (ERC20 Custody, Payout Notes, LP Pool)     │
-                       │  - OracleAdapter (Canonical Mark Price & Circuit Breaker)   │
-                       │  - TestUSDC (6-decimal Collateral Token)                    │
-                       └─────────────────────────────────────────────────────────────┘
-```
+**STRK20** is Starknet's native privacy pool (Umbra-style note-based shielded transfers).
+It is the authoritative custody + proof layer for shielded USDC on Starknet. PEL composes
+with STRK20 so that the **collateral** a trader puts into a perp is a **real shielded note**
+spent inside the privacy pool — not a public ERC20 transfer.
 
----
+## 4. How STRK20 interacts with PEL
 
-## ⚡ PEL Private Perpetuals (`BTC-PERP`)
-
-Unlike standard public perpetual DEXs (dYdX, GMX) where trading positions, stop losses, and liquidation prices are visible to all observers, **PEL encrypts all trade parameters off-chain**:
+The official `@starkware-libs/starknet-privacy-sdk` (vendored at `vendor/`) drives all
+shield/unshield/private-transfer against the real pool. PEL composes with the pool through a
+canonical **`PELPerpsSTRK20Bridge`** contract that implements the pool's real
+external-invocation interface:
 
 ```
-[Trader Shielded Note] ──► [Encrypted Witness Store] ──► [Poseidon Commitment C] ──► [StwoVerifier]
-                                  (q, P_entry, Margin, Secret)                              │
-                                                                                            ▼
-[STRK20 Payout Note] ◄── [Claim Note] ◄── [Core.close_position] ◄── [SNIP-36 CLOSE Fact] ◄──┘
+pool.computeAndInvoke(...)
+  identity_key = compute_identity_key(sender, sk, bridge)
+  bridge.privacy_compute(identity_key, [marketId, marginCents, ...openProofCalldata]) -> computed
+  bridge.privacy_invoke_with_computation(computed, [nonce])
 ```
 
-### Trading Specs:
-- **Active Market:** `BTC-PERP` (TestUSDC collateral, 6 decimals, $1\text{ cent} = 10,000\text{ token units}$)
-- **Max Leverage:** $50\times$
-- **Maintenance Margin:** $2.00\%$ ($200\text{ bps}$)
-- **Taker Fee:** $0.05\%$ ($5\text{ bps}$)
-- **Oracle Freshness:** Max price age $180\text{s}$ with $20\%$ price deviation circuit breaker
+The pool spends the trader's shielded note **inside the same proven transaction**, so the
+margin is a real private note; the bridge records the position keyed by the pseudonymous
+`identity_key`. On close, the payout is emitted back into the pool as a **shielded note**
+so the trader can unshield later.
 
----
+## 5. What data is private
 
-## 🧪 Comprehensive Verification & Release Evidence
+- Trader identity (pseudonymous identity key, not wallet address)
+- Position size, entry price, direction
+- Margin, funding, fees, PnL, payout
+- Any linkage between position ↔ entry ↔ recipient
 
-ORRANGE enforces a strict quality gate where all Cairo contracts, unit tests, integration tests, adversarial attack vectors, and Next.js builds must pass before release.
+## 6. What data remains public
+
+- The position **commitment** and **nullifier** (state on L2)
+- Market, oracle price, protocol parameters
+- Accounting bucket totals (locked collateral, LP NAV, insurance, unclaimed payouts/bounties)
+- Whether a position exists and is active (but not its economics)
+
+## 7–11. How OPEN / UPDATE / FUND / CLOSE / LIQUIDATE work
+
+All five operations follow one canonical pattern: **generate a Groth16 proof → verify it
+on-chain with the dedicated verifier → apply the Cairo state transition (commitment +
+nullifier rotation) → settle accounting**. Replay is prevented by the nullifier registry.
+
+| Op | Proof | Public inputs (bound) | State transition |
+|----|-------|-----------------------|------------------|
+| **OPEN** | `pel_open.circom` | commitment, marginNullifier, marketId, margin, oraclePrice | lock margin, store position |
+| **UPDATE** | `pel_update.circom` | oldCommitment, newCommitment, oldNullifier, marketId | rotate commitment |
+| **FUND** | `pel_fund.circom` | oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRate, intervals, fundingPayment, isLongPays | clear funding |
+| **CLOSE** | `pel_close.circom` | commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient | settle PnL, shielded payout |
+| **LIQUIDATE** | `pel_liquidate.circom` | positionCommitment, positionNullifier, marketId, oraclePrice, keeper | seize collateral, bounty + insurance |
+
+The **LIQUIDATE** circuit proves `equity <= maintenance` without revealing the operands.
+
+## 12. How keepers work
+
+The keeper is an **escrowed-witness liquidator** (`keeperWitnessStore.ts`). At open, the
+position witness is escrowed to the keeper (encrypted at rest). The keeper polls the oracle,
+detects `equity <= maintenance`, builds the liquidation proof, and submits it — **without the
+trader's browser or wallet being online**. It uses an async polling loop with exponential
+backoff, bounded concurrency, idempotency, and graceful shutdown (not a bare `setInterval`).
+
+> **Honest trust note:** the LIQUIDATE circuit proves the predicate over private inputs, so a
+> keeper must hold the escrowed witness. This makes the keeper **semi-trusted** (it can read
+> the witnesses it escrows, though the position stays private on-chain and to all others).
+> A fully trustless keeper requires a circuit redesign (e.g. encrypted-liquidity or
+> dealer/insurance-mediated liquidation). See `docs/` for the analysis.
+
+## 13. How LPs work
+
+The `STRK20Adapter` is a proportional LP pool. LPs deposit USDC and receive shares at a NAV
+share price. LP value is the counterparty to trader PnL. Withdrawals are **reserve-aware**:
+LPs cannot withdraw value required to cover open interest (50% reserve floor).
+
+## 14. How insurance works
+
+Liquidation seizes collateral: 2% goes to the keeper bounty, 98% to the insurance fund. The
+insurance fund backs trader profits when LP NAV is insufficient. No value is ever created
+from nothing — every transition conserves token custody against accounting buckets.
+
+## 15. How proofs work
+
+Circuits are written in **Circom** (`circuits/*.circom`) and compiled to R1CS + zkey with
+**snarkjs**; witnesses + Groth16 proofs are generated client-side (`pelCircuitService.ts`);
+calldata is produced by **Garaga** and verified on-chain by five **distinct** Garaga
+`Groth16VerifierBN254` contracts (one per circuit). Verifiers are nonzero and pairwise
+distinct (fail-closed validation).
+
+## 16–17. Run locally / tests
 
 ```bash
-./scripts/local_quality_gate.sh
-```
-
-### Verification Matrix:
-- **Cairo Scarb Build:** Passes with **0 errors and 0 warnings**.
-- **Automated Vitest Suite:** **175 / 175 tests passing** across 16 test files (100% pass rate).
-  - `tests/integration/realCairoContractIntegration.test.ts` (10 tests: compiled Sierra ABIs, Flow 1 golden path, Flow 2 liquidation, and 6 runtime adversarial attacks).
-  - `tests/adversarial/attackVectors.test.ts` (52 tests: nullifier forgery, fact mutation, payout inflation, stale oracle rejection, double bounty rejection).
-  - `tests/invariants/assetConservation.test.ts` (23 tests: zero-sum balance conservation, fee tracking, 150-iteration fuzzing simulation).
-  - `tests/indexerAndKeeper.test.ts` (7 tests: reorg rollbacks, process restart persistence, indexer lag).
-- **Next.js Production Build:** Compiles **6/6 static & dynamic routes with 0 errors**.
-- **Codebase Hygiene:** 0 hardcoded test keys or fallback addresses.
-
----
-
-## 📄 On-Chain Smart Contract Deployments (Sepolia Testnet)
-
-| Contract | Address | Purpose |
-| :--- | :--- | :--- |
-| **`PELPerpsCore`** | [`0x07dc4ec...e62b09a`](https://sepolia.voyager.online/contract/0x07dc4ecd80209424c5387ad6e2d1487f5979ad2cf584a275463695cebe62b09a) | Core perp state machine & commitment graph |
-| **`StwoVerifier`** | [`0x0757f5c...ae350d7`](https://sepolia.voyager.online/contract/0x0757f5c9e2b17a02241cfb1c1d0cfae60f7e1b78fcad85e33dff603a1ae350d7) | Typed SNIP-36 transition fact registry |
-| **`STRK20Adapter`** | [`0x00fba68...8adceca`](https://sepolia.voyager.online/contract/0x00fba68c5b9f71c42247b9736c478a531e21b72e519c72a818c3924f38adceca) | Collateral custody, LP pool NAV, and payout notes |
-| **`OracleAdapter`** | [`0x0283c7c...cf2bc08`](https://sepolia.voyager.online/contract/0x0283c7cbcc9e8dc9da04c86fe34807481baef80bf485e94bbfb1d83cecf2bc08) | Canonical on-chain mark price feed |
-| **`TestUSDC`** | [`0x053c912...ecf368a8`](https://sepolia.voyager.online/contract/0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8) | 6-decimal standard ERC20 collateral token |
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- **Node.js** $\ge 20.0.0$
-- **Scarb** $\ge 2.16.0$ (for Cairo contract compilation)
-- **Starknet Browser Wallet** (Argent X, Braavos, or Cartridge Controller)
-
-### Quick Start:
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/SmratJay/strk20-privacy-wallet.git
-cd strk20-privacy-wallet
-
-# 2. Install dependencies
 npm install
-
-# 3. Compile Cairo smart contracts
-cd contracts && scarb build && cd ..
-
-# 4. Run local quality gate (Scarb + Vitest + Next.js build)
-./scripts/local_quality_gate.sh
-
-# 5. Start development server
-npm run dev
+# Start a Starknet devnet (e.g. starknet-devnet on :5050)
+npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts   # real Groth16 OPEN on devnet
+npx vitest run                                          # full suite
+npm run typecheck
+cd contracts && scarb build                             # Cairo contracts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+## 18. Deploy
+
+```bash
+# Devnet: deploys five verifiers + core + adapter + oracle + bridge (scripts/deploy_perps_devnet.ts)
+npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts
+# Sepolia / Mainnet: fill deployments/sepolia.json and deployments/mainnet.json, then run
+# the deployment scripts (see scripts/ and the Deployment checklist in docs/).
+```
+
+## 19. Verify contracts
+
+Verify each class on the explorer. Confirm the five verifiers are distinct, the Core points
+to the correct verifier per circuit, and the bridge is wired to the pool + Core.
+
+## 20. Reproduce the demo
+
+1. Shield USDC into the STRK20 pool (requires the operator proving + discovery services —
+   `infra/strk20-operator/README.md`).
+2. Open a private BTC-PERP via the bridge (real shielded collateral).
+3. Watch the on-chain position confirm, move price, then close into a shielded payout.
+4. Unshield later.
 
 ---
 
-## 👨‍💻 Builder
+## Architecture diagram
 
-**Jai Bhati** — Founder of [orrange.xyz](https://orrange.xyz)  
-- **GitHub:** [@SmratJay](https://github.com/SmratJay)  
-- **Telegram:** [@popexenon](https://t.me/popexenon)
+```
+                          REAL STRK20 PRIVACY POOL (custody + proof)
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  shielded USDC notes  →  shield / private-transfer / unshield       │
+   │  computeAndInvoke → PELPerpsSTRK20Bridge (privacy_compute /         │
+   │                       privacy_invoke_with_computation)              │
+   └───────────────┬─────────────────────────────────────────────────────┘
+                   │ identity_key (pseudonymous) + shielded note spent
+                   ▼
+   PELPerpsSTRK20Bridge ── verifies OPEN/CLOSE Groth16 proofs ──► 5 × Groth16VerifierBN254
+                   │ records in-pool collateral, emits shielded payout notes
+                   ▼
+   PELPerpsCore (state machine: OPEN/UPDATE/FUND/CLOSE/LIQUIDATE)
+                   │   ▲
+                   ▼   │ oracle price (freshness + proof-bound)
+   STRK20Adapter ─ LP NAV / insurance / bounties / payouts  ◄── OracleAdapter (Pragma)
+                   ▲
+                   │
+   Autonomous Keeper (escrowed-witness liquidator) + Position Indexer
+```
 
----
+## Accounting model (deterministic integers)
 
-## 📜 License
+- **USDC base units**: 6 decimals, `1 USDC = 1_000_000 units`
+- **Internal accounting**: USD cents, `1 USDC = 100 cents`
+- **Conversion**: `1 cent = 10_000 USDC base units`
+- **BTC quantity**: sats, `1 BTC = 100_000_000 sats`
+- **Price**: USD cents
+- **Invariant**: `token.balanceOf(adapter) >= (locked + LP_NAV + insurance + unclaimed_payouts + unclaimed_bounties) * 10_000`
 
-MIT License — see [LICENSE](./LICENSE) for details.
+All protocol math uses **bigint integers**; floats are display-only in the frontend.
+
+## Security notes (trust assumptions)
+
+- **Admin** can update: oracle adapter, STRK20 adapter, the five verifiers, pool, Core
+  reference. These are documented single-role (`admin`) functions. No hidden backdoors.
+- **The keeper is semi-trusted** (see §12). Real STRK20 execution requires the operator
+  proving + discovery services.
+
+## Deployment manifests
+
+`deployments/sepolia.json` and `deployments/mainnet.json` are the authoritative,
+documented sources of truth. Addresses may be overridden by env vars but the manifests are
+canonical. `strk20.json` tracks real contracts and transactions (never fabricated).
+
+## Real-network status
+
+- **Devnet**: verified — five distinct verifiers, real Groth16 OPEN proof verified on-chain,
+  bridge `privacy_compute`/`privacy_invoke_with_computation` verified on-chain with a real
+  proof.
+- **Sepolia / Mainnet STRK20 shield/perp execution**: **PENDING** — requires the operator
+  proving + discovery services (external infrastructure) and funded accounts. See
+  `infra/strk20-operator/README.md` and the final engineering report for the exact steps.

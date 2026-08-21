@@ -1,6 +1,75 @@
 {
-  "transactions": [],
-  "contracts": [],
+  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Mainnet/Sepolia STRK20 on-chain transactions require the operator proving + discovery services (infra/strk20-operator/README.md) and funded accounts; they are marked PENDING and are NEVER fabricated.",
+  "contracts": [
+    {
+      "name": "PELPerpsSTRK20Bridge",
+      "network": "devnet",
+      "address": "0x15235e8b34aa38baed771bf74ca966f63bbbd0509844098ff63f5adef2a4a96",
+      "status": "DEPLOYED_AND_VERIFIED",
+      "txHash": "0x5b0b192637823fd3dbcb38f17ce091aff3ba5d7b4fc7af1eb99dc25275e7934"
+    },
+    {
+      "name": "PELPerpsCore",
+      "network": "sepolia",
+      "address": "0x658e68d9a311bcdd56d98d3ebbcebff2ddd43463547bab859d4d12092444c2b",
+      "status": "CONFIRMED"
+    },
+    {
+      "name": "STRK20Adapter",
+      "network": "sepolia",
+      "address": "0xb0eefeb3c52b062ab63736e93355034058688cbfb8ccba7b7f75261b3f4897",
+      "status": "CONFIRMED"
+    },
+    {
+      "name": "OracleAdapter",
+      "network": "sepolia",
+      "address": "0x29e641f5fa56d527a08b22a65bbc27d9cb27694fa983fa150329ade094e1f",
+      "status": "CONFIRMED"
+    },
+    {
+      "name": "STRK20PrivacyPool",
+      "network": "sepolia",
+      "address": "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91",
+      "status": "CONFIRMED"
+    },
+    {
+      "name": "STRK20PrivacyPool",
+      "network": "mainnet",
+      "address": "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
+      "status": "CONFIRMED"
+    },
+    {
+      "name": "USDC",
+      "network": "mainnet",
+      "address": "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8",
+      "status": "CONFIRMED"
+    }
+  ],
+  "transactions": [
+    {
+      "network": "devnet",
+      "type": "BRIDGE_DEPLOY",
+      "txHash": "0x5b0b192637823fd3dbcb38f17ce091aff3ba5d7b4fc7af1eb99dc25275e7934",
+      "status": "SUCCEEDED"
+    },
+    {
+      "network": "devnet",
+      "type": "BRIDGE_OPEN_REAL_GROTH16_PROOF_VERIFIED_ONCHAIN",
+      "note": "PELPerpsSTRK20Bridge.privacy_compute verified a REAL Circom+Groth16 OPEN proof on-chain and recorded in-pool collateral (see standalone bridge verification).",
+      "status": "SUCCEEDED"
+    }
+  ],
+  "pending": {
+    "shieldSepolia": "PENDING_OPERATOR_SERVICES",
+    "openPerpSepolia": "PENDING_OPERATOR_SERVICES",
+    "closePerpSepolia": "PENDING_OPERATOR_SERVICES",
+    "unshieldSepolia": "PENDING_OPERATOR_SERVICES",
+    "shieldMainnet": "PENDING_OPERATOR_SERVICES",
+    "openPerpMainnet": "PENDING_OPERATOR_SERVICES",
+    "closePerpMainnet": "PENDING_OPERATOR_SERVICES",
+    "unshieldMainnet": "PENDING_OPERATOR_SERVICES"
+  },
   "demo_video": "",
-  "demo_url": ""
+  "demo_url": "",
+  "demo_note": "Demo video/URL to be published at submission; a locally-verifiable live devnet demo is runnable via `npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts`."
 }

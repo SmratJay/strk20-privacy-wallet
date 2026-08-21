@@ -31,6 +31,7 @@ import { pelCircuitService } from '@/services/pelCircuitService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
+import { strk20SdkService } from '@/services/strk20SdkService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
 import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, requestWitnessEncryptionSignature, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
@@ -57,6 +58,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [inspectedPosition, setInspectedPosition] = useState<PerpPosition | null>(null);
   const [sharingPosition, setSharingPosition] = useState<PerpPosition | null>(null);
   const [shieldedBalanceUsd, setShieldedBalanceUsd] = useState<number>(0);
+  // True only when the balance came from REAL STRK20 discovery (operator services).
+  const [shieldedBalanceIsReal, setShieldedBalanceIsReal] = useState(false);
   const [activeChartPanel, setActiveChartPanel] = useState<'CHART' | 'ORDERBOOK' | 'DUAL'>('DUAL');
   const [activeBottomTab, setActiveBottomTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY'>('POSITIONS');
 
@@ -73,19 +76,40 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
   const effectiveAddress = walletAddress || '';
 
-  // Fetch and update user's live STRK20 Shielded Balance
-  const updateShieldedBalance = useCallback(() => {
+  // Fetch and update the user's live STRK20 Shielded Balance.
+  // Authoritative source = REAL STRK20 note discovery (strk20SdkService + operator
+  // discovery service). The local vaultService is ONLY a UI cache and is never treated
+  // as authoritative — when real discovery is unavailable we show the cached value but
+  // explicitly label it as a cache (not a real shielded balance).
+  const updateShieldedBalance = useCallback(async () => {
     if (typeof window !== 'undefined' && effectiveAddress) {
+      const account = (window as any).starknet?.account;
+      try {
+        if (account?.address) {
+          const viewingKey = (account as any).signer?.getPubKey?.()
+            ?? '0x' + '1'.padStart(64, '0');
+          const discovery = await strk20SdkService.getShieldedBalance({
+            account,
+            address: account.address,
+            viewingKey,
+          });
+          setShieldedBalanceUsd(Number(discovery.total) / 1e6);
+          setShieldedBalanceIsReal(true);
+          return;
+        }
+      } catch (err) {
+        // Real discovery unavailable (operator services not reachable). Fall through to cache.
+        setShieldedBalanceIsReal(false);
+      }
       try {
         const notes = vaultService.getNotes(effectiveAddress, 'SN_SEPOLIA');
-        if (notes.length > 0) {
-          const totalRaw = notes.filter(n => !n.isSpent).reduce((acc, n) => acc + n.amount, 0n);
-          const bal = Number(totalRaw) / 1e6; // USDC decimals
-          setShieldedBalanceUsd(bal);
-        } else {
-          setShieldedBalanceUsd(0);
-        }
-      } catch {}
+        const totalRaw = notes.filter(n => !n.isSpent).reduce((acc, n) => acc + n.amount, 0n);
+        setShieldedBalanceUsd(Number(totalRaw) / 1e6);
+        setShieldedBalanceIsReal(false);
+      } catch {
+        setShieldedBalanceUsd(0);
+        setShieldedBalanceIsReal(false);
+      }
     }
   }, [effectiveAddress]);
 
@@ -145,6 +169,37 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     const interval = setInterval(loadPositions, 2000);
     return () => clearInterval(interval);
   }, [loadPositions]);
+
+  // Reconcile displayed position status against AUTHORITATIVE on-chain state.
+  // A position is only labelled OPEN after it is confirmed on-chain; a local-cache
+  // 'OPEN' that is not found (or inactive) on-chain is never shown as active.
+  useEffect(() => {
+    let cancelled = false;
+    const reconcile = async () => {
+      const cached = perpsService.getPositions(effectiveAddress);
+      if (cached.length === 0) return;
+      const verified = await Promise.all(
+        cached.map(async (p) => {
+          if (!p.zkCommitment) return p;
+          try {
+            const onChain = await starknetPerpsDispatcher.getPositionOnChain(p.zkCommitment);
+            if (onChain.status === 'UNKNOWN') return p; // treat as unknown until queried
+            const onChainOpen = onChain.isOpen;
+            if (p.status === 'OPEN' && !onChainOpen) {
+              return { ...p, status: (onChain.status === 'OPEN' ? 'OPEN' : 'CLOSED') as PerpPosition['status'] };
+            }
+            return p;
+          } catch {
+            return p;
+          }
+        }),
+      );
+      if (!cancelled) setPositions(verified);
+    };
+    reconcile();
+    const t = setInterval(reconcile, 8000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [effectiveAddress]);
 
   const marginNum = parseFloat(marginUsd) || 0;
   const notionalNum = marginNum * leverage;
@@ -746,7 +801,15 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
                   <Wallet className="w-3.5 h-3.5 text-[#a855f7]" />
                   <span>Shielded Collateral:</span>
                 </div>
-                <span className="font-bold text-white font-mono">${shieldedBalanceUsd.toFixed(2)} USDC</span>
+                <div className="flex flex-col items-end">
+                  <span className="font-bold text-white font-mono">${shieldedBalanceUsd.toFixed(2)} USDC</span>
+                  <span
+                    className={`text-[9px] font-medium ${shieldedBalanceIsReal ? 'text-emerald-400' : 'text-amber-400'}`}
+                    title={shieldedBalanceIsReal ? 'From real STRK20 note discovery' : 'Local UI cache only — operator discovery service not reachable'}
+                  >
+                    {shieldedBalanceIsReal ? '● REAL STRK20 discovery' : '● LOCAL CACHE (not authoritative)'}
+                  </span>
+                </div>
               </div>
 
               {/* Quick Percentage Presets */}

@@ -36,6 +36,7 @@ export interface PerpsDevnetManifest {
   pelCore: string;
   oracleAdapter: string;
   strk20Adapter: string;
+  pelStrk20Bridge: string;
   collateralToken: string;
   ecipClassHash: string;
   openVerifier: string;
@@ -211,6 +212,30 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
   const coreAddress = coreDep.contract_address;
   txHashes.pelCore = coreDep.transaction_hash;
 
+  // 6b. PELPerpsSTRK20Bridge wired to the five DISTINCT verifiers + STRK20Adapter.
+  //     On devnet there is no real privacy pool, so we point the bridge at the admin
+  //     address as a placeholder for the pool caller (the pool is the only authorized
+  //     caller of privacy_compute / privacy_invoke_with_computation).
+  const bridge = readSierraCasm('pel_perpetuals_core', 'PELPerpsSTRK20Bridge', CORE_TARGET);
+  const bridgeClassHash = await declareIfNotExists(admin, provider, bridge.sierra, bridge.casm);
+  const bridgeDep = await admin.deployContract({
+    classHash: bridgeClassHash,
+    constructorCalldata: [
+      adminAddress,                 // admin
+      adminAddress,                 // pool (devnet placeholder — real pool on Sepolia/Mainnet)
+      coreAddress,                  // pel_core
+      strk20Address,                // strk20_adapter (protocol-side LP/insurance value)
+      verifiers.open,
+      verifiers.update,
+      verifiers.fund,
+      verifiers.close,
+      verifiers.liquidate,
+    ],
+  });
+  await provider.waitForTransaction(bridgeDep.transaction_hash);
+  const bridgeAddress = bridgeDep.contract_address;
+  txHashes.pelStrk20Bridge = bridgeDep.transaction_hash;
+
   // 7. Wire + fund
   const setCore = await admin.execute({ contractAddress: strk20Address, entrypoint: 'set_pel_core_address', calldata: [coreAddress] });
   await provider.waitForTransaction(setCore.transaction_hash);
@@ -255,6 +280,7 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
     pelCore: coreAddress,
     oracleAdapter: oracleAddress,
     strk20Adapter: strk20Address,
+    pelStrk20Bridge: bridgeAddress,
     collateralToken: usdcAddress,
     ecipClassHash,
     openVerifier: verifiers.open,

@@ -6,14 +6,15 @@
  *   `npx tsx keeper/keeperBot.ts`
  */
 
-import { keeperService, LiquidationCandidate } from '../src/services/keeperService';
+import { keeperService } from '../src/services/keeperService';
 import { positionIndexerService } from '../src/services/positionIndexerService';
 import { pragmaOracleService } from '../src/services/pragmaOracleService';
+import { keeperWitnessStore } from '../src/services/keeperWitnessStore';
 
 async function main() {
   console.log('===========================================================');
-  console.log('  PEL DECENTRALIZED KEEPER WATCHDOG DAEMON (STARKNET L2)');
-  console.log('  Monitoring active on-chain commitments & solvency risk');
+  console.log('  PEL AUTONOMOUS KEEPER SERVICE (STARKNET L2)');
+  console.log('  Escrowed-witness liquidation daemon — runs without the trader online');
   console.log('===========================================================');
 
   const KEEPER_BENEFICIARY = process.env.KEEPER_RECIPIENT_ADDRESS || process.env.KEEPER_ADDRESS;
@@ -21,35 +22,40 @@ async function main() {
     console.error('FATAL: KEEPER_RECIPIENT_ADDRESS or KEEPER_ADDRESS environment variable must be set.');
     process.exit(1);
   }
+  const NETWORK = process.env.KEEPER_NETWORK || 'sepolia';
   console.log(`Keeper Beneficiary Address: ${KEEPER_BENEFICIARY}`);
+  console.log(`Escrowed witnesses on ${NETWORK}: ${keeperWitnessStore.count(NETWORK)}`);
 
-  setInterval(async () => {
-    try {
-      const btcPrice = await pragmaOracleService.getMarketPrice('BTC/USD', 'sepolia');
-      const activeCommitments = positionIndexerService.getActiveCommitments();
+  // Start the production polling loop (retry/backoff/idempotency/graceful-shutdown).
+  const intervalMs = Number(process.env.KEEPER_POLL_MS || 10000);
+  keeperService.start(intervalMs).catch((err) => {
+    console.error('Keeper service fatal error:', err);
+    process.exit(1);
+  });
 
-      console.log(
-        `[${new Date().toISOString()}] Pragma BTC Mark: $${btcPrice.priceUsd.toFixed(2)} | Active Commitments: ${activeCommitments.length}`
-      );
+  // Graceful shutdown on SIGINT/SIGTERM — never abandon an in-flight liquidation.
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('\n[Keeper] Shutting down gracefully...');
+    await keeperService.stop();
+    console.log('[Keeper] Stopped.');
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
-      const candidates = await keeperService.scanActivePositions();
-
-      if (candidates.length > 0) {
-        console.warn(`🚨 FOUND ${candidates.length} LIQUIDATION CANDIDATE(S)!`);
-        for (const c of candidates) {
-          console.log(`  -> Liquidating Commitment: ${c.commitment.slice(0, 16)}...`);
-          console.log(`     Market: ${c.marketId}`);
-          console.log(`     Locked Margin: $${(Number(c.marginCents) / 100).toFixed(2)}`);
-          console.log(`     Nullifier: ${c.nullifier}`);
-          console.log(`     Claimable Bounty: $${(Number(c.bountyEstimatedCents) / 100).toFixed(2)} USDC`);
-        }
-      } else {
-        console.log(`  ✓ All indexed commitments solvent. Zero invariant violations.`);
-      }
-    } catch (err: any) {
-      console.error('Keeper watchdog polling error:', err.message);
-    }
-  }, 10000);
+  // A lightweight status tick so operators see liveness + metrics.
+  setInterval(() => {
+    const health = keeperService.getHealthStatus();
+    const stats = keeperService.getRuntimeStats();
+    console.log(
+      `[${new Date().toISOString()}] ${NETWORK} | cycles=${stats.totalCycles} liq=${stats.totalLiquidations} ` +
+        `retries=${stats.totalRetries} | oracleFresh=${health.oracleIsFresh} ` +
+        `oracle=${(Number(health.oraclePriceCents) / 100).toFixed(2)} | activeIdx=${positionIndexerService.getActiveCommitments().length}`,
+    );
+  }, 30000);
 }
 
 main();

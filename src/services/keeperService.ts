@@ -11,6 +11,7 @@ import { pelCircuitService } from './pelCircuitService';
 import { pragmaOracleService } from './pragmaOracleService';
 import { positionIndexerService } from './positionIndexerService';
 import { starknetPerpsDispatcher } from './starknetPerpsDispatcher';
+import { keeperWitnessStore } from './keeperWitnessStore';
 import {
   calcPnlCents,
   calcEquityCents,
@@ -50,9 +51,18 @@ export interface KeeperHealthStatus {
   oracleIsFresh: boolean;
 }
 
+export interface KeeperRuntimeStats {
+  totalCycles: number;
+  totalLiquidations: number;
+  totalRetries: number;
+  activeBackoff: number;
+}
+
 export class KeeperService {
   private isRunning: boolean = false;
+  private shutdownRequested: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
+  private loopPromise: Promise<void> | null = null;
   private processedLiquidations: Set<string> = new Set();
   private inFlightTransactions: Set<string> = new Set();
   private lastSuccessTimestamp?: number;
@@ -61,17 +71,43 @@ export class KeeperService {
   private lastOracleTimestamp: number = Date.now();
   private lastOracleIsFresh: boolean = true;
 
-  // The keeper is a USER-AUTHORIZED, client-side liquidator. It can only construct
-  // liquidation proofs for positions whose private witness it is explicitly given.
-  // It is NOT permissionless: it requires the owner's wallet signature to decrypt
-  // the witness at rest (see src/protocol/witnessStore.ts).
+  private networkId: string = process.env.KEEPER_NETWORK || 'sepolia';
+
+  // Keeper runtime metrics.
+  private totalCycles = 0;
+  private totalLiquidations = 0;
+  private totalRetries = 0;
+
+  // Retry policy: exponential backoff with a max attempt cap per candidate.
+  private readonly maxAttempts = 5;
+  private readonly baseBackoffMs = 2000;
+  private readonly maxBackoffMs = 120_000;
+  private readonly maxConcurrency = 3;
+
+  // The keeper is an ESCROWED-WITNESS liquidator (see keeperWitnessStore.ts). It can
+  // construct liquidation proofs for positions whose private witness has been escrowed
+  // to it at open time — it does NOT require the owner's browser, wallet signature, or
+  // online presence. This is a documented semi-trusted trust model.
   private walletAddress?: string;
   private witnessSignature?: string;
 
-  /** Configure which wallet's witnesses this keeper may decrypt and liquidate. */
+  /**
+   * Configure an additional wallet whose witnesses this keeper may decrypt and liquidate
+   * (used only when witnesses are NOT escrowed server-side, e.g. development mode).
+   */
   configure(walletAddress: string, witnessSignature: string): void {
     this.walletAddress = walletAddress;
     this.witnessSignature = witnessSignature;
+  }
+
+  /** Backoff delay (ms) for the current retry attempt of a candidate. */
+  private backoffFor(attempt: number): number {
+    const exp = Math.min(this.baseBackoffMs * 2 ** Math.max(0, attempt - 1), this.maxBackoffMs);
+    return exp + Math.floor(Math.random() * 500);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -128,12 +164,13 @@ export class KeeperService {
         const marginCents = BigInt(pos.marginAmountCents || onChain.lockedMargin);
         if (marginCents <= 0n) continue;
 
-        // 2. Load the owner's private witness (requires explicit wallet authorization).
-        //    Without it, this keeper cannot construct a valid liquidation proof.
-        if (!this.walletAddress || !this.witnessSignature) {
-          continue;
+        // 2. Load the position witness. Preferred source: the server-side escrow store
+        //    (autonomous, no user online). Fallback: a locally-authorized witness.
+        const escrowed = keeperWitnessStore.find(this.networkId, pos.currentCommitment);
+        let witness = escrowed?.witness ?? null;
+        if (!witness && this.walletAddress && this.witnessSignature) {
+          witness = await loadWitness(this.walletAddress, pos.currentCommitment, this.witnessSignature);
         }
-        const witness = await loadWitness(this.walletAddress, pos.currentCommitment, this.witnessSignature);
         if (!witness) {
           continue;
         }
@@ -252,33 +289,98 @@ export class KeeperService {
     }
   }
 
-  start(intervalMs: number = 10000, signerAccount?: any) {
-    if (this.isRunning) return;
-    if (!this.walletAddress || !this.witnessSignature) {
-      this.lastError = 'Keeper not configured: call configure(walletAddress, witnessSignature) first.';
-      return;
-    }
+  /**
+   * Start the autonomous keeper loop. Unlike a bare setInterval, this uses a single
+   * sequential async polling loop with:
+   *   - graceful shutdown (a running cycle completes; no in-flight tx is abandoned)
+   *   - per-candidate retry with exponential backoff
+   *   - bounded concurrency (liquidation transactions are serialized to protect nonces)
+   *   - idempotency (never re-liquidate a processed/in-flight position)
+   *
+   * When escrowed witnesses exist server-side (see keeperWitnessStore.ts), the keeper
+   * runs fully autonomously without any user being online.
+   */
+  start(intervalMs: number = 10000, signerAccount?: any): Promise<void> {
+    if (this.isRunning) return Promise.resolve();
     this.isRunning = true;
+    this.shutdownRequested = false;
     const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
 
-    this.intervalId = setInterval(async () => {
-      try {
-        const candidates = await this.scanActivePositions();
-        for (const candidate of candidates) {
-          await this.executeLiquidation(candidate, keeperRecipient, signerAccount);
+    this.loopPromise = (async () => {
+      while (this.isRunning && !this.shutdownRequested) {
+        this.totalCycles++;
+        try {
+          const candidates = await this.scanActivePositions();
+          // Serialize liquidation submissions (bounded concurrency = 1 for nonce safety);
+          // retries use exponential backoff per candidate.
+          for (const candidate of candidates) {
+            if (this.shutdownRequested) break;
+            await this.liquidateWithRetry(candidate, keeperRecipient, signerAccount);
+          }
+        } catch (err: any) {
+          this.lastError = err.message || 'Keeper loop error';
         }
-      } catch (err: any) {
-        this.lastError = err.message || 'Keeper loop error';
+        if (!this.shutdownRequested) {
+          await this.sleep(intervalMs);
+        }
       }
-    }, intervalMs);
+      this.isRunning = false;
+    })();
+
+    return this.loopPromise;
   }
 
-  stop() {
+  private async liquidateWithRetry(
+    candidate: LiquidationCandidate,
+    keeperRecipient: string,
+    signerAccount?: any,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      if (this.shutdownRequested) return;
+      if (this.processedLiquidations.has(candidate.commitment.toLowerCase())) return;
+
+      const result = await this.executeLiquidation(candidate, keeperRecipient, signerAccount);
+      if (result.success) {
+        this.totalLiquidations++;
+        return;
+      }
+      // Idempotent: once a candidate is marked processed (confirmed on-chain), never retry.
+      if (this.processedLiquidations.has(candidate.commitment.toLowerCase())) return;
+      if (attempt < this.maxAttempts) {
+        this.totalRetries++;
+        const wait = this.backoffFor(attempt);
+        this.lastError = `LIQ_RETRY(${attempt}/${this.maxAttempts}) ${candidate.commitment.slice(0, 10)}... wait ${wait}ms: ${result.error || 'unknown'}`;
+        await this.sleep(wait);
+      } else {
+        this.lastError = `LIQ_FAILED_MAX_ATTEMPTS ${candidate.commitment.slice(0, 10)}...`;
+      }
+    }
+  }
+
+  /**
+   * Gracefully stop the keeper: requests shutdown, waits for the current cycle to finish.
+   */
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    this.shutdownRequested = true;
+    if (this.loopPromise) {
+      await this.loopPromise;
+      this.loopPromise = null;
+    }
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
     this.isRunning = false;
+  }
+
+  getRuntimeStats(): KeeperRuntimeStats {
+    return {
+      totalCycles: this.totalCycles,
+      totalLiquidations: this.totalLiquidations,
+      totalRetries: this.totalRetries,
+      activeBackoff: this.backoffFor(1),
+    };
   }
 
   getHealthStatus(): KeeperHealthStatus {

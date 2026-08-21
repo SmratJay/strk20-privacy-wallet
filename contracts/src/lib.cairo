@@ -5,3 +5,4 @@ pub mod strk20_adapter;
 pub mod stwo_verifier;
 pub mod groth16_verifier;
 pub mod pel_perps_core;
+pub mod pel_perps_strk20_bridge;
