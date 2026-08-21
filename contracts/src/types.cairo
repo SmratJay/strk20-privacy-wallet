@@ -42,3 +42,9 @@ pub struct PositionRecord {
     pub updated_at: u64,
     pub is_active: bool,
 }
+
+pub fn u256_to_storage_key(x: u256) -> felt252 {
+    core::poseidon::poseidon_hash_span(
+        array![x.low.into(), x.high.into()].span()
+    )
+}

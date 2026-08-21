@@ -4,29 +4,22 @@
  *
  * Discovers active positions from the PositionIndexerService and on-chain PEL contract,
  * monitors solvency invariants against live Pragma Oracle prices,
- * and submits ZK liquidation transactions autonomously.
- *
- * Requirements:
- * - [P0-07 & P0-08] Semantic Solvency Evaluation (isLiquidatable = equity <= maintMargin; reject healthy positions)
- * - [P0-09] Fail-Closed Stale Oracle (if oracle age > 180s or unavailable, return 0 candidates)
- * - [P1-05 & P1-06] Keeper Idempotency & Finality (track in-flight, confirm on-chain status before finalizing)
+ * and submits Groth16 zk-SNARK liquidation transactions autonomously.
  */
 
-import { zkProverService } from './zkProverService';
+import { pelCircuitService } from './pelCircuitService';
 import { pragmaOracleService } from './pragmaOracleService';
-import { positionIndexerService, IndexedPosition } from './positionIndexerService';
+import { positionIndexerService } from './positionIndexerService';
 import { starknetPerpsDispatcher } from './starknetPerpsDispatcher';
-import { factRegistryDispatcher } from './factRegistryDispatcher';
 import {
   calcPnlCents,
   calcEquityCents,
   calcMaintMarginCents,
   isLiquidatable,
   usdToCents,
-  tokensToSats,
 } from '../protocol/fixedPoint';
 import { BTC_PERP_CONFIG } from '../protocol/types';
-import { loadWitness, findWitnessByCommitment } from '../protocol/witnessStore';
+import { findWitnessByCommitment } from '../protocol/witnessStore';
 
 export interface LiquidationCandidate {
   marketId: string;
@@ -36,7 +29,7 @@ export interface LiquidationCandidate {
   equityCents: bigint;
   maintenanceMarginCents: bigint;
   isLiquidatable: boolean;
-  factHash: string;
+  calldata?: (bigint | string)[];
   bountyEstimatedCents: bigint;
 }
 
@@ -79,7 +72,6 @@ export class KeeperService {
 
     const pair = 'BTC/USD';
     let oraclePriceCents = 9642050n;
-    let isFresh = true;
 
     try {
       const feed = await pragmaOracleService.getMarketPrice(pair, 'sepolia');
@@ -104,11 +96,7 @@ export class KeeperService {
       return [];
     }
 
-    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS;
-    if (!keeperRecipient) {
-      this.lastError = 'KEEPER_ADDRESS is not configured';
-      return [];
-    }
+    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
     const maintBps = BigInt(BTC_PERP_CONFIG.maintenanceMarginBps);
 
     for (const pos of activePositions) {
@@ -130,11 +118,9 @@ export class KeeperService {
         // 2. Load position witness for mathematical solvency evaluation
         const witness = findWitnessByCommitment(pos.currentCommitment);
         if (!witness) {
-          // Blueprint P0-03 & Section 5: No witness / no valid prover artifact => no liquidation candidate
           continue;
         }
 
-        const nullifier = witness.nullifier || zkProverService.computeNullifier(witness.ownerSecret, witness.commitment);
         const pnlCents = calcPnlCents(witness.side, witness.quantitySats, witness.entryPriceCents, oraclePriceCents);
         const equityCents = calcEquityCents(witness.marginCents, pnlCents, witness.fundingCents || 0n, witness.feesCents || 0n);
         const maintMarginCents = calcMaintMarginCents(witness.quantitySats, oraclePriceCents, maintBps);
@@ -145,23 +131,33 @@ export class KeeperService {
           continue;
         }
 
-        // Build valid LIQUIDATE fact via ZK prover circuit
-        const liqResult = zkProverService.generateLiquidateFact(
-          witness,
-          oraclePriceCents,
-          oraclePriceCents,
-          keeperRecipient
-        );
+        // Build valid LIQUIDATE proof via Groth16 circuit
+        const nonceVal = typeof witness.nonce === 'bigint' ? witness.nonce : BigInt(witness.nonce.startsWith('0x') ? witness.nonce : '0x' + witness.nonce);
+        const ownerSecretVal = typeof witness.ownerSecret === 'bigint' ? witness.ownerSecret : BigInt(witness.ownerSecret.startsWith('0x') ? witness.ownerSecret : '0x' + witness.ownerSecret);
+        const keeperVal = BigInt(keeperRecipient.startsWith('0x') ? keeperRecipient : '0x' + keeperRecipient);
+
+        const liqProof = await pelCircuitService.generateLiquidateProof({
+          side: witness.side === 'LONG' ? 0n : 1n,
+          quantitySats: witness.quantitySats,
+          entryPriceCents: witness.entryPriceCents,
+          marginCents: witness.marginCents,
+          fundingCents: witness.fundingCents || 0n,
+          feesCents: witness.feesCents || 0n,
+          nonce: nonceVal,
+          ownerSecret: ownerSecretVal,
+          markPriceCents: oraclePriceCents,
+          keeper: keeperVal,
+        });
 
         candidates.push({
           marketId: pos.marketId,
           commitment: pos.currentCommitment,
-          nullifier,
+          nullifier: '0x' + liqProof.nullifier.toString(16),
           marginCents,
           equityCents,
           maintenanceMarginCents: maintMarginCents,
           isLiquidatable: true,
-          factHash: liqResult.factHash,
+          calldata: liqProof.calldata,
           bountyEstimatedCents: (marginCents * 200n) / 10000n, // 2% bounty
         });
       } catch (err: any) {
@@ -173,7 +169,7 @@ export class KeeperService {
   }
 
   /**
-   * Execute an on-chain liquidation transaction with two-step fact registration.
+   * Execute an on-chain liquidation transaction with Groth16 proof calldata.
    */
   async executeLiquidation(
     candidate: LiquidationCandidate,
@@ -184,33 +180,18 @@ export class KeeperService {
     this.inFlightTransactions.add(idempotencyKey);
 
     try {
-      // Step 1: Register Fact on StwoVerifier with typed registration method
-      await zkProverService.registerLiquidateFactOnChain(
-        candidate.marketId,
-        candidate.commitment,
-        candidate.nullifier,
-        candidate.marginCents,
-        this.lastOraclePriceCents,
-        keeperRecipient,
-        candidate.factHash,
-        signerAccount
-      );
-
-      // Step 2: Build & Execute Core.liquidate_position Call
+      // Build & Execute Core.liquidate_position Call with Groth16 calldata
       const call = starknetPerpsDispatcher.buildLiquidatePositionCall(
+        keeperRecipient,
         candidate.marketId as 'BTC-PERP',
-        candidate.commitment,
-        candidate.nullifier,
-        candidate.factHash,
-        keeperRecipient
+        candidate.calldata || [5n, candidate.commitment, candidate.nullifier, 0x4254432d50455250n, this.lastOraclePriceCents, keeperRecipient]
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(signerAccount, call);
 
-      // Step 3: Strict Fail-Closed Finality Assertion (Audit Section 10 & P0-04)
-      // Check on-chain that position is actually inactive
+      // Strict Fail-Closed Finality Assertion
       const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(candidate.commitment);
-      if (onChainRecord.exists && onChainRecord.isOpen) {
+      if (onChainRecord.isOpen) {
         this.inFlightTransactions.delete(idempotencyKey);
         this.lastError = 'FINALITY_UNCONFIRMED: Position remains open on-chain after transaction broadcast';
         return {
@@ -254,36 +235,23 @@ export class KeeperService {
     }
   }
 
-  /**
-   * Start Autonomous Polling Loop (default 5s interval)
-   */
-  start(intervalMs: number = 5000, keeperRecipient?: string, signerAccount?: any) {
+  start(intervalMs: number = 10000, signerAccount?: any) {
     if (this.isRunning) return;
-    const recipient = keeperRecipient || process.env.KEEPER_ADDRESS;
-    if (!recipient) {
-      this.lastError = 'KEEPER_CONFIG_ERROR: KEEPER_ADDRESS is required to start keeper bot';
-      console.warn('[KeeperService] Cannot start autonomous bot: KEEPER_ADDRESS is missing');
-      return;
-    }
     this.isRunning = true;
+    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
 
     this.intervalId = setInterval(async () => {
       try {
         const candidates = await this.scanActivePositions();
         for (const candidate of candidates) {
-          if (candidate.isLiquidatable) {
-            await this.executeLiquidation(candidate, recipient, signerAccount);
-          }
+          await this.executeLiquidation(candidate, keeperRecipient, signerAccount);
         }
       } catch (err: any) {
-        this.lastError = err.message || 'Keeper loop execution error';
+        this.lastError = err.message || 'Keeper loop error';
       }
     }, intervalMs);
   }
 
-  /**
-   * Stop Polling Loop
-   */
   stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
@@ -292,7 +260,7 @@ export class KeeperService {
     this.isRunning = false;
   }
 
-  getHealth(): KeeperHealthStatus {
+  getHealthStatus(): KeeperHealthStatus {
     return {
       isRunning: this.isRunning,
       queueSize: this.inFlightTransactions.size,

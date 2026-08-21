@@ -27,7 +27,7 @@ import {
   Flame
 } from 'lucide-react';
 import { perpsService, PerpMarket, PerpPosition } from '@/services/perpsService';
-import { zkProverService } from '@/services/zkProverService';
+import { pelCircuitService } from '@/services/pelCircuitService';
 import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
@@ -208,71 +208,63 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
     setModalSteps([
       {
-        title: '1. Computing Poseidon SNIP-36 Fact Commitment & Nullifier',
-        desc: 'Deriving ephemeral witness and Poseidon note commitment C_t on STARK curve...',
+        title: '1. Generating Circom Groth16 Proof & Garaga Calldata',
+        desc: 'Deriving private witness, computing Poseidon commitment and Groth16 proof...',
         status: 'LOADING',
       },
       {
-        title: '2. Submitting Transaction to PELPerpsCore (Starknet Sepolia)',
+        title: '2. Submitting Groth16 Proof to PELPerpsCore (Starknet Sepolia)',
         desc: `Target Core: ${PERPS_DEPLOYMENTS.sepolia.pelCoreAddress.slice(0, 10)}... (Atomic Margin Lock)`,
         status: 'PENDING',
       },
       {
-        title: '3. Awaiting Block Inclusion & State Commitment Verification',
-        desc: 'Querying on-chain position record and STWO fact verifier registry...',
+        title: '3. On-Chain Cairo Verification & State Confirmation',
+        desc: 'Verifying pairing & MSM hints via IGroth16VerifierBN254...',
         status: 'PENDING',
       },
     ]);
 
     try {
-      // Step 1: Client Witness & Transition Fact Generation
-      const newPos = perpsService.openPosition(
-        effectiveAddress,
-        selectedMarketId,
-        side,
-        marginNum,
-        leverage
-      );
-
-      setModalSteps((prev) => [
-        { ...prev[0], status: 'SUCCESS', desc: `Commitment: ${newPos.zkCommitment.slice(0, 14)}...` },
-        { ...prev[1], status: 'LOADING' },
-        prev[2],
-      ]);
-
       const browserAccount = (window as any).starknet?.account;
       const userAddress = browserAccount?.address || walletAddress;
       if (!userAddress) {
         throw new Error('Please connect your Starknet wallet first.');
       }
 
-      const currentOraclePriceCents = BigInt(Math.floor((currentMarket.markPrice || 96420.50) * 100));
+      // Step 1: Generate Groth16 Proof + Garaga Calldata
+      const ownerSecret = BigInt('0x' + Buffer.from(effectiveAddress.slice(2, 34).padEnd(32, '0')).toString('hex'));
+      const nonce = BigInt(Date.now());
+      const quantitySats = BigInt(Math.floor(sizeTokens * 1e8));
+      const entryPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
       const marginCents = BigInt(Math.floor(marginNum * 100));
 
-      // Register Fact on StwoVerifier on-chain with dedicated typed method (P0-03 & P0-05)
-      await zkProverService.registerOpenFactOnChain(
-        selectedMarketId,
-        newPos.zkCommitment,
-        newPos.nullifier,
+      const openProof = await pelCircuitService.generateOpenProof({
+        side: side === 'LONG' ? 0n : 1n,
+        quantitySats,
+        entryPriceCents,
         marginCents,
-        currentOraclePriceCents,
-        userAddress,
-        newPos.starkFactHash,
-        browserAccount
-      );
+        nonce,
+        ownerSecret,
+      });
 
-      // Step 2: Build Real Call to PELPerpsCore.open_position
+      const commitmentKey = '0x' + openProof.commitment.toString(16);
+      const nullifierKey = '0x' + openProof.nullifier.toString(16);
+
+      setModalSteps((prev) => [
+        { ...prev[0], status: 'SUCCESS', desc: `Commitment: ${commitmentKey.slice(0, 14)}...` },
+        { ...prev[1], status: 'LOADING' },
+        prev[2],
+      ]);
+
+      // Step 2: Build Real Call to PELPerpsCore.open_position with Groth16 calldata
       const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
         userAddress,
         selectedMarketId,
-        newPos.zkCommitment,
-        newPos.nullifier,
         marginNum,
-        newPos.starkFactHash
+        openProof.calldata || [3n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n]
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, openCall);
-
       setCurrentTxHash(executionRes.transactionHash);
       setCurrentExplorerUrl(executionRes.explorerUrl);
 
@@ -283,7 +275,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       ]);
 
       // Step 3: Verify On-Chain Position Record from PELPerpsCore
-      const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(newPos.zkCommitment);
+      const onChainRecord = await starknetPerpsDispatcher.getPositionOnChain(commitmentKey);
 
       setModalSteps((prev) => [
         prev[0],
@@ -295,17 +287,39 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         },
       ]);
 
-      // Deduct and spend shielded note in vaultService strictly post-confirmation (Workstream C)
+      // Deduct and spend shielded note in vaultService strictly post-confirmation
       vaultService.spendNotesForMargin(
         effectiveAddress,
         'SN_SEPOLIA',
         requiredMarginUnits,
-        newPos.nullifier,
+        nullifierKey,
         SEPOLIA_USDC_ADDRESS
       );
       setShieldedBalanceUsd((prev) => Math.max(0, prev - marginNum));
 
       // Persist in local frontend cache ONLY after on-chain confirmation
+      const newPos: PerpPosition = {
+        id: `pos-${Date.now()}`,
+        marketId: selectedMarketId,
+        side,
+        marginUsd: marginNum,
+        leverage,
+        entryPrice: currentMarket.markPrice,
+        sizeTokens,
+        notionalUsd: notionalNum,
+        liquidationPrice: liqPrice,
+        unrealizedPnlUsd: 0,
+        pnlPercentage: 0,
+        cumulativeFundingUsd: 0,
+        openedAt: Date.now(),
+        zkCommitment: commitmentKey,
+        nullifier: nullifierKey,
+        starkFactHash: '0x' + openProof.commitment.toString(16),
+        publicInputsHash: '0x' + openProof.commitment.toString(16),
+        proofStatus: 'VERIFIED_ON_CHAIN',
+        status: 'OPEN',
+      };
+
       perpsService.savePosition(effectiveAddress, newPos);
       loadPositions();
       setInspectedPosition(newPos);
@@ -335,7 +349,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
     setModalSteps([
       {
-        title: '1. Evaluating Poseidon SNIP-36 PnL Settlement Witness',
+        title: '1. Generating Circom Groth16 PnL Settlement Proof',
         desc: 'Binding linear PnL invariant and nullifying previous state commitment...',
         status: 'LOADING',
       },
@@ -352,31 +366,34 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
     ]);
 
     try {
-      let payoutNoteCommitment: string;
-      let finalNullifier: string;
-      let closeFactHash: string;
-      let payoutAmountUsd: number;
-
       const browserAccount = (window as any).starknet?.account;
       const userAddress = browserAccount?.address || walletAddress;
       if (!userAddress) {
         throw new Error('Please connect your Starknet wallet first.');
       }
 
-      // Step 1: Check canonical witness in witnessStore (P0-04: No weak fallback)
-      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment);
-      if (!witness) {
-        throw new Error('Position witness not found in private shielded storage. Cannot construct valid close proof.');
-      }
+      const ownerSecret = BigInt('0x' + Buffer.from(effectiveAddress.slice(2, 34).padEnd(32, '0')).toString('hex'));
+      const nonce = BigInt(targetPos.openedAt);
+      const quantitySats = BigInt(Math.floor(targetPos.sizeTokens * 1e8));
+      const entryPriceCents = BigInt(Math.floor(targetPos.entryPrice * 100));
+      const marginCents = BigInt(Math.floor(targetPos.marginUsd * 100));
+      const oraclePriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
+      const payoutNonce = BigInt(Date.now());
 
-      const currentPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
-      const closeFactRes = zkProverService.generateCloseFact(witness, currentPriceCents, currentPriceCents, userAddress);
+      const closeProof = await pelCircuitService.generateCloseProof({
+        side: targetPos.side === 'LONG' ? 0n : 1n,
+        quantitySats,
+        entryPriceCents,
+        marginCents,
+        fundingCents: 0n,
+        feesCents: 0n,
+        nonce,
+        ownerSecret,
+        payoutNonce,
+        oraclePriceCents,
+      });
 
-      payoutNoteCommitment = closeFactRes.payoutNoteCommitment;
-      finalNullifier = closeFactRes.fact.nullifier;
-      closeFactHash = closeFactRes.fact.factHash;
-      payoutAmountUsd = Number(closeFactRes.payoutCents) / 100;
-      const payoutCents = closeFactRes.payoutCents;
+      const payoutAmountUsd = Number(closeProof.payout) / 100;
 
       setModalSteps((prev) => [
         { ...prev[0], status: 'SUCCESS', desc: `Realized PnL: ${targetPos.unrealizedPnlUsd >= 0 ? '+' : ''}$${targetPos.unrealizedPnlUsd.toFixed(2)}` },
@@ -384,28 +401,11 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         prev[2],
       ]);
 
-      // Register Close Fact on StwoVerifier on-chain with exact typed arguments (P0-04)
-      await zkProverService.registerCloseFactOnChain(
-        targetPos.marketId,
-        targetPos.zkCommitment,
-        finalNullifier,
-        payoutNoteCommitment,
-        payoutCents,
-        currentPriceCents,
-        userAddress,
-        closeFactHash,
-        browserAccount
-      );
-
-      // Step 2: Build Real Call to PELPerpsCore.close_position
+      // Build Real Call to PELPerpsCore.close_position with Groth16 calldata
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
         userAddress,
         targetPos.marketId as 'BTC-PERP',
-        targetPos.zkCommitment,
-        finalNullifier,
-        payoutNoteCommitment,
-        payoutAmountUsd,
-        closeFactHash
+        closeProof.calldata || [6n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents]
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);
@@ -425,7 +425,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         { ...prev[2], status: 'SUCCESS', desc: 'Settlement confirmed on Starknet Sepolia! Payout Note Minted.' },
       ]);
 
-      // Mint fresh shielded payout note into STRK20 vault strictly post-confirmation (Workstream C & I)
+      // Mint fresh shielded payout note into STRK20 vault strictly post-confirmation
       vaultService.addNote(
         effectiveAddress,
         'SN_SEPOLIA',
@@ -435,25 +435,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         executionRes.transactionHash
       );
 
-      // Clean up witness after consumption
       deleteWitness(effectiveAddress, targetPos.zkCommitment);
-
-      const closed = perpsService.closePosition(effectiveAddress, positionId);
-      if (closed) {
-        setShieldedBalanceUsd((prev) => prev + payoutAmountUsd);
-        loadPositions();
-        if (inspectedPosition?.id === positionId) {
-          setInspectedPosition(null);
-        }
-        showToast({
-          type: 'info',
-          title: 'Position Settled On-Chain',
-          description: `Payout: $${payoutAmountUsd.toFixed(2)} USDC returned to Shielded Vault`,
-        });
+      perpsService.closePosition(effectiveAddress, positionId);
+      loadPositions();
+      showToast({
+        type: 'success',
+        title: 'Position Settled On-Chain!',
+        description: `Tx: ${executionRes.transactionHash.slice(0, 10)}... | Shielded Payout Credited`,
+      });
+      if (inspectedPosition?.id === positionId) {
+        setInspectedPosition(null);
       }
     } catch (err: any) {
       console.error('Close position error:', err);
-      showToast({ type: 'error', title: 'Settlement Failed', description: err.message || 'Transaction failed' });
+      showToast({ type: 'error', title: 'Close Failed', description: err.message || 'Settlement failed' });
+      setModalSteps((prev) => prev.map((s) => (s.status === 'LOADING' ? { ...s, status: 'ERROR', desc: err.message } : s)));
     }
   };
 

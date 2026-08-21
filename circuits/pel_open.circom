@@ -5,7 +5,9 @@
 //         (c) side ∈ {0,1}, margin > 0;
 //         (d) leverage bound: q*entry*BPS_SCALE <= MAX_LEVERAGE_BPS * margin * QTY_SCALE.
 //
-// Public inputs:  [ commitment, marginNullifier, marketId ]
+// Public inputs:  [ commitment, marginNullifier, marketId, margin ]
+//   - margin is public so the on-chain Core can pull the exact ERC-20 collateral amount.
+//   - side / quantity / entryPrice / nonce / ownerSecret remain private.
 // Private witness: side, quantity, entryPrice, margin, nonce, ownerSecret
 pragma circom 2.1.0;
 

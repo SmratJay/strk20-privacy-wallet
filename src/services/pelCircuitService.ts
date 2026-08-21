@@ -1,22 +1,19 @@
 /**
  * @file src/services/pelCircuitService.ts
- * @description Canonical client bridge to the PEL zk-SNARK circuits (Groth16, BN254).
+ * @description Canonical client bridge to the PEL zk-SNARK circuits (Groth16, BN254) and Garaga calldata builder.
  *
- * This is the single source of truth for the Poseidon commitment/nullifier used by the
- * PEL transition circuits (circuits/pel_open.circom, circuits/pel_close.circom).
- *
- * IMPORTANT: the hash here is BN254 Poseidon (circomlibjs), which matches the circom
- * circuit exactly. It intentionally differs from starknet.js's STARK-field Poseidon used
- * by the legacy `zkProverService.ts` — that legacy service is superseded by this one.
- *
- * Known field-compatibility note: BN254 Poseidon outputs live in [0, r) where
- * r ≈ 2.18e76 > 2^251; before storing commitments on-chain as felt252 the values must
- * be reduced/bound to the STARK field (p ≈ 2^251). The on-chain Groth16 verifier
- * (Garaga) handles this. This service keeps commitments as full BN254 field elements.
+ * Single source of truth for PEL transition proofs across:
+ * - circuits/pel_open.circom
+ * - circuits/pel_close.circom
+ * - circuits/pel_update.circom
+ * - circuits/pel_fund.circom
+ * - circuits/pel_liquidate.circom
  */
 
 import * as snarkjs from 'snarkjs';
 import { buildPoseidon } from 'circomlibjs';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString('hex'));
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
@@ -39,6 +36,22 @@ async function poseidonHash(elems: bigint[]): Promise<bigint> {
   return BigInt(p.F.toString(p(elems.map((e) => e.toString()))));
 }
 
+let garagaModule: any = null;
+let garagaPromise: Promise<any> | null = null;
+
+async function getGaraga() {
+  if (garagaModule) return garagaModule;
+  if (!garagaPromise) {
+    garagaPromise = (async () => {
+      const g = await import('garaga');
+      await g.init();
+      garagaModule = g;
+      return g;
+    })();
+  }
+  return garagaPromise;
+}
+
 export interface OpenWitness {
   side: 0n | 1n; // 0 = LONG, 1 = SHORT
   quantitySats: bigint;
@@ -59,131 +72,6 @@ export interface CloseWitness {
   ownerSecret: bigint;
   payoutNonce: bigint;
   oraclePriceCents: bigint;
-}
-
-export interface ProvenTransition {
-  proof: unknown;
-  publicSignals: string[];
-  commitment: bigint;
-  nullifier: bigint;
-}
-
-export async function computePositionCommitment(
-  side: 0n | 1n,
-  quantitySats: bigint,
-  entryPriceCents: bigint,
-  marginCents: bigint,
-  fundingCents: bigint,
-  nonce: bigint,
-  ownerSecret: bigint,
-): Promise<bigint> {
-  return poseidonHash([DOMAIN_SEP, MARKET_ID, side, quantitySats, entryPriceCents, marginCents, fundingCents, nonce, ownerSecret]);
-}
-
-export async function computeNullifier(ownerSecret: bigint, commitment: bigint): Promise<bigint> {
-  return poseidonHash([NULLIFIER_TAG, ownerSecret, commitment]);
-}
-
-export async function computePayoutCommitment(payoutAmount: bigint, payoutNonce: bigint): Promise<bigint> {
-  return poseidonHash([PAYOUT_TAG, payoutAmount, payoutNonce]);
-}
-
-/**
- * Signed value decomposition matching the circuit's SignedDecompose template:
- * returns [isNeg (0|1), magnitude].
- */
-export function decomposeSigned(value: bigint): [bigint, bigint] {
-  if (value < 0n) return [1n, -value];
-  return [0n, value];
-}
-
-/** Compute the close PnL/equity/payout witnesses, matching the circuit + riskEngine. */
-export function computeCloseSettlement(
-  side: 0n | 1n,
-  quantitySats: bigint,
-  entryPriceCents: bigint,
-  marginCents: bigint,
-  fundingCents: bigint,
-  feesCents: bigint,
-  oraclePriceCents: bigint,
-): {
-  diffIsNeg: bigint; diffMag: bigint; pnlMag: bigint; pnlRem: bigint;
-  equityIsNeg: bigint; equityMag: bigint; payout: bigint;
-} {
-  const delta = side === 0n ? oraclePriceCents - entryPriceCents : entryPriceCents - oraclePriceCents;
-  const [diffIsNeg, diffMag] = decomposeSigned(delta);
-  const prod = quantitySats * diffMag;
-  const pnlMag = prod / QTY_SCALE;
-  const pnlRem = prod % QTY_SCALE;
-  const pnl = diffIsNeg ? -pnlMag : pnlMag;
-  const equity = marginCents + pnl - fundingCents - feesCents;
-  const [equityIsNeg, equityMag] = decomposeSigned(equity);
-  const payout = equityIsNeg ? 0n : equityMag;
-  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, payout };
-}
-
-const WASM_DIR = 'circuits/build';
-
-export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransition> {
-  const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, 0n, w.nonce, w.ownerSecret);
-  const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
-
-  const input = {
-    commitment: commitment.toString(),
-    marginNullifier: nullifier_.toString(),
-    marketId: MARKET_ID.toString(),
-    side: w.side.toString(),
-    quantity: w.quantitySats.toString(),
-    entryPrice: w.entryPriceCents.toString(),
-    margin: w.marginCents.toString(),
-    nonce: w.nonce.toString(),
-    ownerSecret: w.ownerSecret.toString(),
-  };
-
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    input,
-    `${WASM_DIR}/pel_open_js/pel_open.wasm`,
-    `${WASM_DIR}/pel_open.zkey`
-  );
-  return { proof, publicSignals, commitment, nullifier: nullifier_ };
-}
-
-export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransition & { payout: bigint; payoutCommitment: bigint }> {
-  const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
-  const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
-  const s = computeCloseSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.feesCents, w.oraclePriceCents);
-  const payoutCommitment = await computePayoutCommitment(s.payout, w.payoutNonce);
-
-  const input = {
-    commitment: commitment.toString(),
-    finalNullifier: nullifier_.toString(),
-    payoutCommitment: payoutCommitment.toString(),
-    payoutAmount: s.payout.toString(),
-    marketId: MARKET_ID.toString(),
-    oraclePrice: w.oraclePriceCents.toString(),
-    side: w.side.toString(),
-    quantity: w.quantitySats.toString(),
-    entryPrice: w.entryPriceCents.toString(),
-    margin: w.marginCents.toString(),
-    funding: w.fundingCents.toString(),
-    fees: w.feesCents.toString(),
-    nonce: w.nonce.toString(),
-    ownerSecret: w.ownerSecret.toString(),
-    payoutNonce: w.payoutNonce.toString(),
-    diffIsNeg: s.diffIsNeg.toString(),
-    diffMag: s.diffMag.toString(),
-    pnlMag: s.pnlMag.toString(),
-    pnlRem: s.pnlRem.toString(),
-    equityIsNeg: s.equityIsNeg.toString(),
-    equityMag: s.equityMag.toString(),
-  };
-
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    input,
-    `${WASM_DIR}/pel_close_js/pel_close.wasm`,
-    `${WASM_DIR}/pel_close.zkey`
-  );
-  return { proof, publicSignals, commitment, nullifier: nullifier_, payout: s.payout, payoutCommitment };
 }
 
 export interface UpdateWitness {
@@ -224,7 +112,63 @@ export interface LiquidateWitness {
   keeper: bigint;
 }
 
-/** Funding settlement, matching the circuit's PelFund + riskEngine. */
+export interface ProvenTransition {
+  proof: unknown;
+  publicSignals: string[];
+  commitment: bigint;
+  nullifier: bigint;
+  calldata?: bigint[];
+}
+
+export async function computePositionCommitment(
+  side: 0n | 1n,
+  quantitySats: bigint,
+  entryPriceCents: bigint,
+  marginCents: bigint,
+  fundingCents: bigint,
+  nonce: bigint,
+  ownerSecret: bigint,
+): Promise<bigint> {
+  return poseidonHash([DOMAIN_SEP, MARKET_ID, side, quantitySats, entryPriceCents, marginCents, fundingCents, nonce, ownerSecret]);
+}
+
+export async function computeNullifier(ownerSecret: bigint, commitment: bigint): Promise<bigint> {
+  return poseidonHash([NULLIFIER_TAG, ownerSecret, commitment]);
+}
+
+export async function computePayoutCommitment(payoutAmount: bigint, payoutNonce: bigint): Promise<bigint> {
+  return poseidonHash([PAYOUT_TAG, payoutAmount, payoutNonce]);
+}
+
+export function decomposeSigned(value: bigint): [bigint, bigint] {
+  if (value < 0n) return [1n, -value];
+  return [0n, value];
+}
+
+export function computeCloseSettlement(
+  side: 0n | 1n,
+  quantitySats: bigint,
+  entryPriceCents: bigint,
+  marginCents: bigint,
+  fundingCents: bigint,
+  feesCents: bigint,
+  oraclePriceCents: bigint,
+): {
+  diffIsNeg: bigint; diffMag: bigint; pnlMag: bigint; pnlRem: bigint;
+  equityIsNeg: bigint; equityMag: bigint; payout: bigint;
+} {
+  const delta = side === 0n ? oraclePriceCents - entryPriceCents : entryPriceCents - oraclePriceCents;
+  const [diffIsNeg, diffMag] = decomposeSigned(delta);
+  const prod = quantitySats * diffMag;
+  const pnlMag = prod / QTY_SCALE;
+  const pnlRem = prod % QTY_SCALE;
+  const pnl = diffIsNeg ? -pnlMag : pnlMag;
+  const equity = marginCents + pnl - fundingCents - feesCents;
+  const [equityIsNeg, equityMag] = decomposeSigned(equity);
+  const payout = equityIsNeg ? 0n : equityMag;
+  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, payout };
+}
+
 export function computeFundingSettlement(
   quantitySats: bigint,
   markPriceCents: bigint,
@@ -249,7 +193,6 @@ export function computeFundingSettlement(
   return { rateIsNeg, rateAbs, notional, notionalRem, rawFunding, rawFundingRem, fundingPayment, isLongPays, newMargin, newFunding };
 }
 
-/** Liquidation settlement, matching the circuit's PelLiquidate. */
 export function computeLiquidationSettlement(
   side: 0n | 1n,
   quantitySats: bigint,
@@ -279,6 +222,96 @@ export function computeLiquidationSettlement(
   return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, notional, notionalRem, maint, maintRem, equity, isLiquidatable };
 }
 
+const WASM_DIR = path.join(process.cwd(), 'circuits', 'build');
+
+export async function generateGaragaCalldata(
+  proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE',
+  proof: any,
+  publicSignals: string[],
+): Promise<bigint[]> {
+  const g = await getGaraga();
+  const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
+  const vkeyJson = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
+  const vk = g.parseGroth16VerifyingKeyFromObject(vkeyJson);
+  const parsedProof = g.parseGroth16ProofFromObject(proof, publicSignals.map((s) => BigInt(s)));
+  const calldata: bigint[] = g.getGroth16CallData(parsedProof, vk, g.CurveId.BN254);
+  return calldata;
+}
+
+export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransition> {
+  const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, 0n, w.nonce, w.ownerSecret);
+  const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
+
+  const input = {
+    commitment: commitment.toString(),
+    marginNullifier: nullifier_.toString(),
+    marketId: MARKET_ID.toString(),
+    side: w.side.toString(),
+    quantity: w.quantitySats.toString(),
+    entryPrice: w.entryPriceCents.toString(),
+    margin: w.marginCents.toString(),
+    nonce: w.nonce.toString(),
+    ownerSecret: w.ownerSecret.toString(),
+  };
+
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    path.join(WASM_DIR, 'pel_open_js', 'pel_open.wasm'),
+    path.join(WASM_DIR, 'pel_open.zkey')
+  );
+
+  let calldata: bigint[] | undefined;
+  try {
+    calldata = await generateGaragaCalldata('OPEN', proof, publicSignals);
+  } catch {}
+
+  return { proof, publicSignals, commitment, nullifier: nullifier_, calldata };
+}
+
+export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransition & { payout: bigint; payoutCommitment: bigint }> {
+  const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
+  const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
+  const s = computeCloseSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.feesCents, w.oraclePriceCents);
+  const payoutCommitment = await computePayoutCommitment(s.payout, w.payoutNonce);
+
+  const input = {
+    commitment: commitment.toString(),
+    finalNullifier: nullifier_.toString(),
+    payoutCommitment: payoutCommitment.toString(),
+    payoutAmount: s.payout.toString(),
+    marketId: MARKET_ID.toString(),
+    oraclePrice: w.oraclePriceCents.toString(),
+    side: w.side.toString(),
+    quantity: w.quantitySats.toString(),
+    entryPrice: w.entryPriceCents.toString(),
+    margin: w.marginCents.toString(),
+    funding: w.fundingCents.toString(),
+    fees: w.feesCents.toString(),
+    nonce: w.nonce.toString(),
+    ownerSecret: w.ownerSecret.toString(),
+    payoutNonce: w.payoutNonce.toString(),
+    diffIsNeg: s.diffIsNeg.toString(),
+    diffMag: s.diffMag.toString(),
+    pnlMag: s.pnlMag.toString(),
+    pnlRem: s.pnlRem.toString(),
+    equityIsNeg: s.equityIsNeg.toString(),
+    equityMag: s.equityMag.toString(),
+  };
+
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    path.join(WASM_DIR, 'pel_close_js', 'pel_close.wasm'),
+    path.join(WASM_DIR, 'pel_close.zkey')
+  );
+
+  let calldata: bigint[] | undefined;
+  try {
+    calldata = await generateGaragaCalldata('CLOSE', proof, publicSignals);
+  } catch {}
+
+  return { proof, publicSignals, commitment, nullifier: nullifier_, payout: s.payout, payoutCommitment, calldata };
+}
+
 export async function generateUpdateProof(w: UpdateWitness): Promise<ProvenTransition & { newCommitment: bigint }> {
   const commitment_ = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
   const nullifier_ = await computeNullifier(w.ownerSecret, commitment_);
@@ -292,8 +325,18 @@ export async function generateUpdateProof(w: UpdateWitness): Promise<ProvenTrans
     newNonce: w.newNonce.toString(), ownerSecret: w.ownerSecret.toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, `${WASM_DIR}/pel_update_js/pel_update.wasm`, `${WASM_DIR}/pel_update.zkey`);
-  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment };
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    path.join(WASM_DIR, 'pel_update_js', 'pel_update.wasm'),
+    path.join(WASM_DIR, 'pel_update.zkey')
+  );
+
+  let calldata: bigint[] | undefined;
+  try {
+    calldata = await generateGaragaCalldata('UPDATE', proof, publicSignals);
+  } catch {}
+
+  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, calldata };
 }
 
 export async function generateFundProof(w: FundWitness): Promise<ProvenTransition & { newCommitment: bigint; fundingPayment: bigint; newMargin: bigint; newFunding: bigint }> {
@@ -316,8 +359,18 @@ export async function generateFundProof(w: FundWitness): Promise<ProvenTransitio
     newMarginIsNeg: '0', newMarginMag: s.newMargin.toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, `${WASM_DIR}/pel_fund_js/pel_fund.wasm`, `${WASM_DIR}/pel_fund.zkey`);
-  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, fundingPayment: s.fundingPayment, newMargin: s.newMargin, newFunding: s.newFunding };
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    path.join(WASM_DIR, 'pel_fund_js', 'pel_fund.wasm'),
+    path.join(WASM_DIR, 'pel_fund.zkey')
+  );
+
+  let calldata: bigint[] | undefined;
+  try {
+    calldata = await generateGaragaCalldata('FUND', proof, publicSignals);
+  } catch {}
+
+  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, fundingPayment: s.fundingPayment, newMargin: s.newMargin, newFunding: s.newFunding, calldata };
 }
 
 export async function generateLiquidateProof(w: LiquidateWitness): Promise<ProvenTransition> {
@@ -338,12 +391,39 @@ export async function generateLiquidateProof(w: LiquidateWitness): Promise<Prove
     equityIsNeg: s.equityIsNeg.toString(), equityMag: s.equityMag.toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, `${WASM_DIR}/pel_liquidate_js/pel_liquidate.wasm`, `${WASM_DIR}/pel_liquidate.zkey`);
-  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_ };
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    path.join(WASM_DIR, 'pel_liquidate_js', 'pel_liquidate.wasm'),
+    path.join(WASM_DIR, 'pel_liquidate.zkey')
+  );
+
+  let calldata: bigint[] | undefined;
+  try {
+    calldata = await generateGaragaCalldata('LIQUIDATE', proof, publicSignals);
+  } catch {}
+
+  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, calldata };
 }
 
 export async function verifyProof(proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE', proof: unknown, publicSignals: string[]): Promise<boolean> {
-  const vkeyFile = `${WASM_DIR}/pel_${proofType.toLowerCase()}_verification_key.json`;
-  const vkey = JSON.parse(await import('fs').then((f) => f.readFileSync(vkeyFile, 'utf8')));
+  const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
+  const vkey = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
   return snarkjs.groth16.verify(vkey, publicSignals, proof);
 }
+
+export const pelCircuitService = {
+  computePositionCommitment,
+  computeNullifier,
+  computePayoutCommitment,
+  decomposeSigned,
+  computeCloseSettlement,
+  computeFundingSettlement,
+  computeLiquidationSettlement,
+  generateOpenProof,
+  generateCloseProof,
+  generateUpdateProof,
+  generateFundProof,
+  generateLiquidateProof,
+  generateGaragaCalldata,
+  verifyProof,
+};

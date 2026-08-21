@@ -40,7 +40,7 @@ async function main() {
           console.log(`  -> Liquidating Commitment: ${c.commitment.slice(0, 16)}...`);
           console.log(`     Market: ${c.marketId}`);
           console.log(`     Locked Margin: $${(Number(c.marginCents) / 100).toFixed(2)}`);
-          console.log(`     SNIP-36 Fact Hash: ${c.factHash}`);
+          console.log(`     Nullifier: ${c.nullifier}`);
           console.log(`     Claimable Bounty: $${(Number(c.bountyEstimatedCents) / 100).toFixed(2)} USDC`);
         }
       } else {
