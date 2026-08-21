@@ -20,7 +20,7 @@
  * injective, and identical across Circom/TS/Garaga/Cairo/storage/indexer/tests.
  */
 
-import { uint256 } from 'starknet';
+import { uint256, hash } from 'starknet';
 
 export const BN254_R =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -28,6 +28,12 @@ export const STARKNET_P =
   3618502788666131213697322783095070105623107215331596699973092056135872020481n;
 
 const U128_MASK = (1n << 128n) - 1n;
+
+// ── Explicit Typed Identifiers ───────────────────────────────────────────────
+export type Bn254Commitment = bigint;
+export type Bn254Nullifier = bigint;
+export type CommitmentStorageKey = string;
+export type NullifierStorageKey = string;
 
 /** Exact BN254 element -> u256 (collision-safe; no modulo). */
 export function bn254ToU256(x: bigint): { low: bigint; high: bigint } {
@@ -47,27 +53,45 @@ export function toFelt252(x: bigint): bigint {
   return x;
 }
 
+/** Compute canonical on-chain storage key from a 256-bit BN254 element */
+export function bn254ToStorageKey(x: bigint): string {
+  const { low, high } = bn254ToU256(x);
+  return hash.computePoseidonHash(
+    '0x' + low.toString(16),
+    '0x' + high.toString(16),
+  );
+}
+
 /** u256 -> starknet.js uint256 struct. */
 export function bn254ToUint256(x: bigint): ReturnType<typeof uint256.bnToUint256> {
   return uint256.bnToUint256(x);
 }
 
-// ── Protocol constants ───────────────────────────────────────────────────────
+// ── Protocol constants (Canonical Protocol V3) ──────────────────────────────
+export const PROTOCOL_VERSION = 3;
 export const MARKET_ID = BigInt('0x' + Buffer.from('BTC-PERP').toString('hex'));
 export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString('hex'));
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
 export const PAYOUT_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_V2').toString('hex'));
 
-// ── Public input layouts (MUST match the Circom `component main { public [...] }`) ──
-// These are the public signals, in order, produced by snarkjs and returned by the
+export const PRICE_SCALE = 100n; // Cents ($1.00 = 100)
+export const QTY_SCALE = 100_000_000n; // Satoshis (1 BTC = 1e8 sats)
+export const BPS_SCALE = 10_000n;
+export const MAX_LEVERAGE_BPS = 500_500n; // 50x (with 0.05x tolerance)
+export const MAINTENANCE_MARGIN_BPS = 200n; // 2.00%
+export const INITIAL_MARGIN_BPS = 200n; // 2.00%
+export const FUNDING_INTERVAL_SECONDS = 3600n; // 1 hour
+export const MAX_ORACLE_STALENESS_SECONDS = 60n; // 60s max staleness
+
+// ── Public input layouts (MUST match Circom `component main { public [...] }`) ──
+// These are the public signals produced by snarkjs and returned by the
 // Garaga verifier's `verify_groth16_proof_bn254` as `Span<u256>`.
-//
-// Each entry: [ name, on-chain type ]  where type is 'u256' (BN254 field) or 'felt' (small).
 export const PUBLIC_INPUT_LAYOUTS = {
   OPEN: [
     ['commitment', 'u256'],
     ['marginNullifier', 'u256'],
     ['marketId', 'felt'],
+    ['margin', 'felt'],
   ],
   UPDATE: [
     ['oldCommitment', 'u256'],
@@ -83,6 +107,8 @@ export const PUBLIC_INPUT_LAYOUTS = {
     ['oraclePrice', 'felt'],
     ['fundingRateBpsHr', 'felt'],
     ['intervalsElapsed', 'felt'],
+    ['fundingPayment', 'felt'],
+    ['isLongPays', 'felt'],
   ],
   CLOSE: [
     ['commitment', 'u256'],
@@ -91,6 +117,7 @@ export const PUBLIC_INPUT_LAYOUTS = {
     ['payoutAmount', 'felt'],
     ['marketId', 'felt'],
     ['oraclePrice', 'felt'],
+    ['recipient', 'felt'],
   ],
   LIQUIDATE: [
     ['positionCommitment', 'u256'],

@@ -125,12 +125,13 @@ async function main() {
     ownerSecret,
     payoutNonce,
     oraclePriceCents,
+    recipient: BigInt(testAccountAddress),
   });
 
   const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
     testAccountAddress,
     'BTC-PERP',
-    closeProof.calldata || [6n, openProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents]
+    closeProof.calldata || [7n, openProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents, BigInt(testAccountAddress)]
   );
 
   const closeTx = await account.execute(closeCall);

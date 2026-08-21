@@ -29,6 +29,7 @@ template PelClose() {
     signal input payoutAmount;
     signal input marketId;
     signal input oraclePrice;
+    signal input recipient;
 
     signal input side;        // 0 = LONG, 1 = SHORT
     signal input quantity;    // sats
@@ -130,4 +131,4 @@ template PelClose() {
     payoutCommitment === pc.payoutCommitment;
 }
 
-component main { public [ commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice ] } = PelClose();
+component main { public [ commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient ] } = PelClose();

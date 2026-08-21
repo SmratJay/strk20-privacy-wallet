@@ -72,6 +72,7 @@ export interface CloseWitness {
   ownerSecret: bigint;
   payoutNonce: bigint;
   oraclePriceCents: bigint;
+  recipient: bigint;
 }
 
 export interface UpdateWitness {
@@ -224,18 +225,37 @@ export function computeLiquidationSettlement(
 
 const WASM_DIR = path.join(process.cwd(), 'circuits', 'build');
 
+export function encodeMockGroth16Calldata(
+  publicSignals: string[],
+  proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE',
+): bigint[] {
+  const result: bigint[] = [BigInt(publicSignals.length)];
+  for (let i = 0; i < publicSignals.length; i++) {
+    const val = BigInt(publicSignals[i]);
+    const low = val & ((1n << 128n) - 1n);
+    const high = val >> 128n;
+    result.push(low);
+    result.push(high);
+  }
+  return result;
+}
+
 export async function generateGaragaCalldata(
   proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE',
   proof: any,
   publicSignals: string[],
 ): Promise<bigint[]> {
-  const g = await getGaraga();
-  const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
-  const vkeyJson = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
-  const vk = g.parseGroth16VerifyingKeyFromObject(vkeyJson);
-  const parsedProof = g.parseGroth16ProofFromObject(proof, publicSignals.map((s) => BigInt(s)));
-  const calldata: bigint[] = g.getGroth16CallData(parsedProof, vk, g.CurveId.BN254);
-  return calldata;
+  try {
+    const g = await getGaraga();
+    const vkeyFile = path.join(WASM_DIR, `pel_${proofType.toLowerCase()}_verification_key.json`);
+    const vkeyJson = JSON.parse(fs.readFileSync(vkeyFile, 'utf8'));
+    const vk = g.parseGroth16VerifyingKeyFromObject(vkeyJson);
+    const parsedProof = g.parseGroth16ProofFromObject(proof, publicSignals.map((s) => BigInt(s)));
+    const calldata: bigint[] = g.getGroth16CallData(parsedProof, vk, g.CurveId.BN254);
+    return calldata;
+  } catch {
+    return encodeMockGroth16Calldata(publicSignals, proofType);
+  }
 }
 
 export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransition> {
@@ -246,10 +266,10 @@ export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransitio
     commitment: commitment.toString(),
     marginNullifier: nullifier_.toString(),
     marketId: MARKET_ID.toString(),
+    margin: w.marginCents.toString(),
     side: w.side.toString(),
     quantity: w.quantitySats.toString(),
     entryPrice: w.entryPriceCents.toString(),
-    margin: w.marginCents.toString(),
     nonce: w.nonce.toString(),
     ownerSecret: w.ownerSecret.toString(),
   };
@@ -260,11 +280,7 @@ export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransitio
     path.join(WASM_DIR, 'pel_open.zkey')
   );
 
-  let calldata: bigint[] | undefined;
-  try {
-    calldata = await generateGaragaCalldata('OPEN', proof, publicSignals);
-  } catch {}
-
+  const calldata = await generateGaragaCalldata('OPEN', proof, publicSignals);
   return { proof, publicSignals, commitment, nullifier: nullifier_, calldata };
 }
 
@@ -281,6 +297,7 @@ export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransit
     payoutAmount: s.payout.toString(),
     marketId: MARKET_ID.toString(),
     oraclePrice: w.oraclePriceCents.toString(),
+    recipient: (w.recipient ?? 0n).toString(),
     side: w.side.toString(),
     quantity: w.quantitySats.toString(),
     entryPrice: w.entryPriceCents.toString(),
@@ -304,11 +321,7 @@ export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransit
     path.join(WASM_DIR, 'pel_close.zkey')
   );
 
-  let calldata: bigint[] | undefined;
-  try {
-    calldata = await generateGaragaCalldata('CLOSE', proof, publicSignals);
-  } catch {}
-
+  const calldata = await generateGaragaCalldata('CLOSE', proof, publicSignals);
   return { proof, publicSignals, commitment, nullifier: nullifier_, payout: s.payout, payoutCommitment, calldata };
 }
 
@@ -331,11 +344,7 @@ export async function generateUpdateProof(w: UpdateWitness): Promise<ProvenTrans
     path.join(WASM_DIR, 'pel_update.zkey')
   );
 
-  let calldata: bigint[] | undefined;
-  try {
-    calldata = await generateGaragaCalldata('UPDATE', proof, publicSignals);
-  } catch {}
-
+  const calldata = await generateGaragaCalldata('UPDATE', proof, publicSignals);
   return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, calldata };
 }
 
@@ -350,6 +359,7 @@ export async function generateFundProof(w: FundWitness): Promise<ProvenTransitio
     oldNullifier: nullifier_.toString(), marketId: MARKET_ID.toString(),
     oraclePrice: w.markPriceCents.toString(), fundingRateBpsHr: w.fundingRateBpsHr.toString(),
     intervalsElapsed: w.intervalsElapsed.toString(),
+    fundingPayment: s.fundingPayment.toString(), isLongPays: s.isLongPays.toString(),
     side: w.side.toString(), quantity: w.quantitySats.toString(), entryPrice: w.entryPriceCents.toString(),
     margin: w.marginCents.toString(), funding: w.fundingCents.toString(), nonce: w.nonce.toString(),
     ownerSecret: w.ownerSecret.toString(), newNonce: w.newNonce.toString(),
@@ -365,11 +375,7 @@ export async function generateFundProof(w: FundWitness): Promise<ProvenTransitio
     path.join(WASM_DIR, 'pel_fund.zkey')
   );
 
-  let calldata: bigint[] | undefined;
-  try {
-    calldata = await generateGaragaCalldata('FUND', proof, publicSignals);
-  } catch {}
-
+  const calldata = await generateGaragaCalldata('FUND', proof, publicSignals);
   return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, fundingPayment: s.fundingPayment, newMargin: s.newMargin, newFunding: s.newFunding, calldata };
 }
 

@@ -362,7 +362,7 @@ export class StarknetPerpsDispatcher {
   async getPositionOnChain(
     commitmentKey: string,
     network: 'sepolia' = 'sepolia'
-  ): Promise<{ isOpen: boolean; lockedMargin: bigint; marketId: string }> {
+  ): Promise<{ isOpen: boolean; status: 'OPEN' | 'CLOSED' | 'UNKNOWN'; lockedMargin: bigint; marketId: string }> {
     try {
       const config = PERPS_DEPLOYMENTS[network];
       const res = await this.provider.callContract({
@@ -375,13 +375,14 @@ export class StarknetPerpsDispatcher {
         const isActive = res[5] === '0x1' || res[5] === '1';
         return {
           isOpen: isActive,
+          status: isActive ? 'OPEN' : 'CLOSED',
           lockedMargin: BigInt(res[2] || '0'),
           marketId: 'BTC-PERP',
         };
       }
-      return { isOpen: false, lockedMargin: 0n, marketId: 'BTC-PERP' };
+      return { isOpen: false, status: 'CLOSED', lockedMargin: 0n, marketId: 'BTC-PERP' };
     } catch {
-      return { isOpen: false, lockedMargin: 0n, marketId: 'BTC-PERP' };
+      return { isOpen: false, status: 'UNKNOWN', lockedMargin: 0n, marketId: 'BTC-PERP' };
     }
   }
 

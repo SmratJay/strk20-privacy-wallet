@@ -104,12 +104,12 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       ownerSecret,
     });
 
-    expect(openProof.publicSignals.length).toBe(3);
+    expect(openProof.publicSignals.length).toBe(4);
     const openCall = starknetPerpsDispatcher.buildOpenPositionCall(
       traderAddress,
       marketId,
       5000,
-      openProof.calldata || [3n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n]
+      openProof.calldata || [4n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n, marginCents]
     );
 
     expect(openCall.entrypoint).toBe('open_position');
@@ -149,12 +149,12 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       intervalsElapsed: 1n,
     });
 
-    expect(fundProof.publicSignals.length).toBe(7);
+    expect(fundProof.publicSignals.length).toBe(9);
     const fundCall = starknetPerpsDispatcher.buildFundPositionCall(
       marketId,
       Number(fundProof.fundingPayment) / 100,
       true,
-      fundProof.calldata || [7n, updateProof.newCommitment, fundProof.newCommitment, fundProof.nullifier, 0x4254432d50455250n, 9600000n, 10n, 1n]
+      fundProof.calldata || [9n, updateProof.newCommitment, fundProof.newCommitment, fundProof.nullifier, 0x4254432d50455250n, 9600000n, 10n, 1n, fundProof.fundingPayment, 1n]
     );
     expect(fundCall.entrypoint).toBe('fund_position');
 
@@ -170,15 +170,16 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       ownerSecret,
       payoutNonce: 9999n,
       oraclePriceCents: 9700000n,
+      recipient: BigInt(traderAddress),
     });
 
-    expect(closeProof.publicSignals.length).toBe(6);
+    expect(closeProof.publicSignals.length).toBe(7);
     expect(closeProof.payout > marginCents).toBe(true); // Profitable close
 
     const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
       traderAddress,
       marketId,
-      closeProof.calldata || [6n, fundProof.newCommitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, 9700000n]
+      closeProof.calldata || [7n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, 9700000n, BigInt(traderAddress)]
     );
     expect(closeCall.entrypoint).toBe('close_position');
   });
@@ -314,5 +315,164 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
 
     const attemptWithdraw = 300_000n; // trying to withdraw $3,000
     expect(attemptWithdraw > withdrawableNav).toBe(true);
+  });
+
+  it('FLOW 3 (5-Transition State Machine Chain): OPEN -> UPDATE -> UPDATE -> FUND -> UPDATE -> CLOSE', async () => {
+    const traderAddress = '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';
+    const marketId = 'BTC-PERP';
+    const ownerSecret = 9876543210987654321n;
+    const quantitySats = 100000000n; // 1 BTC
+    const entryPriceCents = 9500000n; // $95,000.00
+    const marginCents = 500000n; // $5,000.00
+    let currentNonce = 2001n;
+
+    // Transition 1: OPEN
+    const openProof = await pelCircuitService.generateOpenProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents,
+      nonce: currentNonce,
+      ownerSecret,
+    });
+    expect(openProof.publicSignals.length).toBe(4);
+    let activeCommitment = openProof.commitment;
+    let currentMargin = marginCents;
+    let currentFunding = 0n;
+
+    // Transition 2: UPDATE (Rotate nonce to 2002)
+    const nextNonce1 = 2002n;
+    const updateProof1 = await pelCircuitService.generateUpdateProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents: currentMargin,
+      fundingCents: currentFunding,
+      nonce: currentNonce,
+      newNonce: nextNonce1,
+      ownerSecret,
+    });
+    expect(updateProof1.publicSignals.length).toBe(4);
+    activeCommitment = updateProof1.newCommitment;
+    currentNonce = nextNonce1;
+
+    // Transition 3: UPDATE (Rotate nonce to 2003)
+    const nextNonce2 = 2003n;
+    const updateProof2 = await pelCircuitService.generateUpdateProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents: currentMargin,
+      fundingCents: currentFunding,
+      nonce: currentNonce,
+      newNonce: nextNonce2,
+      ownerSecret,
+    });
+    expect(updateProof2.publicSignals.length).toBe(4);
+    activeCommitment = updateProof2.newCommitment;
+    currentNonce = nextNonce2;
+
+    // Transition 4: FUND (1 interval elapsed at rate 10 bps)
+    const nextNonce3 = 2004n;
+    const fundProof = await pelCircuitService.generateFundProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents: currentMargin,
+      fundingCents: currentFunding,
+      nonce: currentNonce,
+      newNonce: nextNonce3,
+      ownerSecret,
+      markPriceCents: 9600000n,
+      fundingRateBpsHr: 10n,
+      intervalsElapsed: 1n,
+    });
+    expect(fundProof.publicSignals.length).toBe(9);
+    activeCommitment = fundProof.newCommitment;
+    currentMargin = fundProof.newMargin;
+    currentFunding = fundProof.newFunding;
+    currentNonce = nextNonce3;
+
+    // Transition 5: UPDATE (Rotate nonce to 2005)
+    const nextNonce4 = 2005n;
+    const updateProof3 = await pelCircuitService.generateUpdateProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents: currentMargin,
+      fundingCents: currentFunding,
+      nonce: currentNonce,
+      newNonce: nextNonce4,
+      ownerSecret,
+    });
+    expect(updateProof3.publicSignals.length).toBe(4);
+    activeCommitment = updateProof3.newCommitment;
+    currentNonce = nextNonce4;
+
+    // Transition 6: CLOSE (Close position at $98,000)
+    const closeProof = await pelCircuitService.generateCloseProof({
+      side: 0n,
+      quantitySats,
+      entryPriceCents,
+      marginCents: currentMargin,
+      fundingCents: currentFunding,
+      feesCents: 0n,
+      nonce: currentNonce,
+      ownerSecret,
+      payoutNonce: 8888n,
+      oraclePriceCents: 9800000n,
+      recipient: BigInt(traderAddress),
+    });
+    expect(closeProof.publicSignals.length).toBe(7);
+    expect(closeProof.payout > marginCents).toBe(true);
+
+    const isCloseValid = await pelCircuitService.verifyProof('CLOSE', closeProof.proof, closeProof.publicSignals);
+    expect(isCloseValid).toBe(true);
+  });
+
+  it('ATTACK 6: Recipient substitution in CLOSE proof fails verification', async () => {
+    const honestTrader = '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';
+    const attacker = '0x0deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234567';
+    const ownerSecret = 9876543210987654321n;
+
+    const closeProof = await pelCircuitService.generateCloseProof({
+      side: 0n,
+      quantitySats: 100000000n,
+      entryPriceCents: 9500000n,
+      marginCents: 500000n,
+      fundingCents: 0n,
+      feesCents: 0n,
+      nonce: 3001n,
+      ownerSecret,
+      payoutNonce: 8888n,
+      oraclePriceCents: 9800000n,
+      recipient: BigInt(honestTrader),
+    });
+
+    // Attacker tries to replace recipient in public signals
+    const tamperedSignals = [...closeProof.publicSignals];
+    tamperedSignals[6] = BigInt(attacker).toString();
+
+    const isProofValid = await pelCircuitService.verifyProof('CLOSE', closeProof.proof, tamperedSignals);
+    expect(isProofValid).toBe(false);
+  });
+
+  it('ATTACK 7: Margin amount tampering in OPEN proof fails verification', async () => {
+    const ownerSecret = 9876543210987654321n;
+    const openProof = await pelCircuitService.generateOpenProof({
+      side: 0n,
+      quantitySats: 100000000n,
+      entryPriceCents: 9500000n,
+      marginCents: 500000n,
+      nonce: 4001n,
+      ownerSecret,
+    });
+
+    // Attacker tries to claim margin was only $100 (10000 cents) instead of $5,000
+    const tamperedSignals = [...openProof.publicSignals];
+    tamperedSignals[3] = '10000';
+
+    const isProofValid = await pelCircuitService.verifyProof('OPEN', openProof.proof, tamperedSignals);
+    expect(isProofValid).toBe(false);
   });
 });

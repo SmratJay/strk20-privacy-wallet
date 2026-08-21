@@ -264,17 +264,20 @@ pub mod PELPerpsCore {
                 },
             };
 
-            // Public input layout: [ commitment (u256), marginNullifier (u256), marketId (felt) ]
-            assert(public_inputs.len() >= 3, 'MALFORMED_OPEN_PUBLIC_INPUTS');
+            // Public input layout: [ commitment (u256), marginNullifier (u256), marketId (felt), margin (felt) ]
+            assert(public_inputs.len() >= 4, 'MALFORMED_OPEN_PUBLIC_INPUTS');
             let commitment_u256 = *public_inputs.at(0);
             let margin_nullifier_u256 = *public_inputs.at(1);
             let proof_market_id_u256 = *public_inputs.at(2);
+            let proof_margin_u256 = *public_inputs.at(3);
 
             let commitment_key = u256_to_storage_key(commitment_u256);
             let margin_nullifier_key = u256_to_storage_key(margin_nullifier_u256);
 
             let proof_market_id: felt252 = proof_market_id_u256.low.into();
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
+            let proof_margin: u128 = proof_margin_u256.low;
+            assert(margin_amount == proof_margin, 'MARGIN_AMOUNT_MISMATCH');
             assert(!self.used_nullifiers.read(margin_nullifier_key), 'NULLIFIER_ALREADY_SPENT');
             assert(!self.positions.read(commitment_key).is_active, 'COMMITMENT_ALREADY_EXISTS');
 
@@ -283,14 +286,14 @@ pub mod PELPerpsCore {
 
             // 4. Lock Shielded Margin in STRK20 Vault from verified collateral owner
             let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.lock_shielded_margin(collateral_owner, margin_nullifier_key, margin_amount);
+            strk20.lock_shielded_margin(collateral_owner, margin_nullifier_key, proof_margin);
 
             // 5. Store Active Position Record
             let now = get_block_timestamp();
             self.positions.write(commitment_key, PositionRecord {
                 commitment: commitment_key,
                 margin_nullifier: margin_nullifier_key,
-                locked_margin: margin_amount,
+                locked_margin: proof_margin,
                 market_id,
                 created_at: now,
                 updated_at: now,
@@ -298,7 +301,7 @@ pub mod PELPerpsCore {
             });
             self.commitment_by_nullifier.write(margin_nullifier_key, commitment_key);
 
-            self.emit(PositionOpened { collateral_owner, commitment: commitment_key, market_id, margin_amount, timestamp: now });
+            self.emit(PositionOpened { collateral_owner, commitment: commitment_key, market_id, margin_amount: proof_margin, timestamp: now });
         }
 
         // ─── UPDATE (Groth16 Proof Verification & State Rotation) ────────────
@@ -374,15 +377,29 @@ pub mod PELPerpsCore {
                 },
             };
 
-            // Layout: [ oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRateBpsHr, intervalsElapsed ]
-            assert(public_inputs.len() >= 7, 'MALFORMED_FUND_PUBLIC_INPUTS');
+            // Layout: [ oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRateBpsHr, intervalsElapsed, fundingPayment, isLongPays ]
+            assert(public_inputs.len() >= 9, 'MALFORMED_FUND_PUBLIC_INPUTS');
             let old_commitment_key = u256_to_storage_key(*public_inputs.at(0));
             let new_commitment_key = u256_to_storage_key(*public_inputs.at(1));
             let old_nullifier_key = u256_to_storage_key(*public_inputs.at(2));
             let proof_market_id: felt252 = (*public_inputs.at(3)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(4)).low;
+            let proof_funding_rate_low: u128 = (*public_inputs.at(5)).low;
+            let proof_funding_amount: u128 = (*public_inputs.at(7)).low;
+            let proof_is_long_pays: bool = (*public_inputs.at(8)).low == 1_u128;
 
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
+            let market = self.markets.read(market_id);
+            assert(!self.market_paused.read(market_id), 'MARKET_IS_PAUSED');
+            assert(market.is_active, 'MARKET_NOT_ACTIVE');
+            let market_rate_abs: u128 = if market.funding_rate_bps_hr >= 0 {
+                market.funding_rate_bps_hr.try_into().unwrap()
+            } else {
+                (-market.funding_rate_bps_hr).try_into().unwrap()
+            };
+            assert(proof_funding_rate_low == market_rate_abs, 'FUNDING_RATE_MISMATCH');
+            assert(funding_amount == proof_funding_amount, 'FUNDING_AMOUNT_MISMATCH');
+            assert(is_long_pays == proof_is_long_pays, 'FUNDING_DIR_MISMATCH');
 
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
@@ -458,8 +475,11 @@ pub mod PELPerpsCore {
             let position_nullifier_key = u256_to_storage_key(*public_inputs.at(1));
             let proof_market_id: felt252 = (*public_inputs.at(2)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(3)).low;
+            let proof_keeper_felt: felt252 = (*public_inputs.at(4)).low.into();
+            let proof_keeper: ContractAddress = proof_keeper_felt.try_into().unwrap();
 
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(keeper_recipient == proof_keeper, 'KEEPER_RECIPIENT_MISMATCH');
 
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);
@@ -515,16 +535,19 @@ pub mod PELPerpsCore {
                 },
             };
 
-            // Layout: [ commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice ]
-            assert(public_inputs.len() >= 6, 'MALFORMED_CLOSE_PUBLIC_INPUTS');
+            // Layout: [ commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient ]
+            assert(public_inputs.len() >= 7, 'MALFORMED_CLOSE_PUBLIC_INPUTS');
             let position_commitment_key = u256_to_storage_key(*public_inputs.at(0));
             let final_nullifier_key = u256_to_storage_key(*public_inputs.at(1));
             let payout_note_commitment_key = u256_to_storage_key(*public_inputs.at(2));
             let payout_amount: u128 = (*public_inputs.at(3)).low;
             let proof_market_id: felt252 = (*public_inputs.at(4)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(5)).low;
+            let proof_recipient_felt: felt252 = (*public_inputs.at(6)).low.into();
+            let proof_recipient: ContractAddress = proof_recipient_felt.try_into().unwrap();
 
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
+            assert(recipient == proof_recipient, 'RECIPIENT_MISMATCH');
 
             let oracle = IOracleAdapterDispatcher { contract_address: self.oracle_adapter.read() };
             let price = oracle.get_market_price(market_id);

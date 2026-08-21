@@ -15,6 +15,9 @@ const curve = await buildBn128();
 const CIRCUITS = [
   { name: 'pel_open', power: 12 },
   { name: 'pel_close', power: 12 },
+  { name: 'pel_update', power: 12 },
+  { name: 'pel_fund', power: 12 },
+  { name: 'pel_liquidate', power: 12 },
 ];
 
 async function setupCircuit(name, power) {

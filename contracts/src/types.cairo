@@ -1,5 +1,10 @@
-// PEL Private Perpetuals Types — V2 (Whitepaper Sections 5, 7, 11)
-// CONFIG VERSION: 2 — must match BTC_PERP_CONFIG.configVersion in src/protocol/types.ts
+// PEL Private Perpetuals Types — V3 (Whitepaper Sections 5, 7, 11)
+// CONFIG VERSION: 3 — must match canonical protocol constants
+
+pub type Bn254Commitment = u256;
+pub type Bn254Nullifier = u256;
+pub type CommitmentStorageKey = felt252;
+pub type NullifierStorageKey = felt252;
 
 #[derive(Drop, Copy, Serde, starknet::Store)]
 pub struct MarketConfig {
@@ -14,7 +19,7 @@ pub struct MarketConfig {
     pub funding_interval_secs: u64,      // 3600 = 1 hour
     pub max_oracle_age_secs: u64,        // 180 = 3 minutes
     pub max_exec_deviation_bps: u16,     // 100 = 1.0%
-    pub config_version: u32,             // 2 — checked on every transition
+    pub config_version: u32,             // 3 — checked on every transition
     pub is_active: bool,
 }
 
@@ -34,10 +39,10 @@ pub struct ProofFact {
 
 #[derive(Drop, Copy, Serde, starknet::Store)]
 pub struct PositionRecord {
-    pub commitment: felt252,             // Active state commitment C_t
-    pub margin_nullifier: felt252,       // Consumed margin nullifier NF_margin (from OPEN)
+    pub commitment: felt252,             // Active state commitment storage key
+    pub margin_nullifier: felt252,       // Consumed margin nullifier storage key
     pub locked_margin: u128,             // Locked margin amount in USD cents
-    pub market_id: felt252,              // Market ID — verified on all transitions (B5 fix)
+    pub market_id: felt252,              // Market ID — verified on all transitions
     pub created_at: u64,
     pub updated_at: u64,
     pub is_active: bool,

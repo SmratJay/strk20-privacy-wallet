@@ -71,4 +71,4 @@ template PelOpen() {
     le.out === 1;
 }
 
-component main { public [ commitment, marginNullifier, marketId ] } = PelOpen();
+component main { public [ commitment, marginNullifier, marketId, margin ] } = PelOpen();

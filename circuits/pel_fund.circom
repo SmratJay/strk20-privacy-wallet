@@ -31,6 +31,8 @@ template PelFund() {
     signal input oraclePrice;        // mark price (cents)
     signal input fundingRateBpsHr;   // signed: positive = longs pay
     signal input intervalsElapsed;
+    signal input fundingPayment;     // cents
+    signal input isLongPays;         // 1 = longs pay, 0 = shorts pay
 
     signal input side;        // 0 = LONG, 1 = SHORT
     signal input quantity;    // sats
@@ -78,8 +80,7 @@ template PelFund() {
     rd.x <== fundingRateBpsHr;
     rd.isNeg <== rateIsNeg;
     rd.mag <== rateAbs;
-    signal isLongPays;
-    isLongPays <== 1 - rateIsNeg;
+    isLongPays === 1 - rateIsNeg;
 
     // 4. notional = floor(q * markPrice / 1e8)
     signal notionalProd;
@@ -98,8 +99,7 @@ template PelFund() {
     rd2.rem <== rawFundingRem;
 
     // 6. fundingPayment = rawFunding * intervals
-    signal fundingPayment;
-    fundingPayment <== rawFunding * intervalsElapsed;
+    fundingPayment === rawFunding * intervalsElapsed;
 
     // 7. newMargin = isLongPays ? (margin - fundingPayment) : (margin + fundingPayment)
     signal newMargin;
@@ -134,4 +134,4 @@ template PelFund() {
     newCommitment === cNew.commitment;
 }
 
-component main { public [ oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRateBpsHr, intervalsElapsed ] } = PelFund();
+component main { public [ oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRateBpsHr, intervalsElapsed, fundingPayment, isLongPays ] } = PelFund();

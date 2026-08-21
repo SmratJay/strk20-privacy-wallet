@@ -19,6 +19,28 @@ const STORE_VERSION   = 2;
 const NAMESPACE       = 'pel_witness_v2';
 const ENCRYPTION_MSG  = 'PEL_WITNESS_ENCRYPTION_V2'; // signed by wallet to derive key
 
+// ─── CSPRNG Key Generation ───────────────────────────────────────────────────
+
+/** Generate a true 256-bit CSPRNG secret (never derived from public wallet address). */
+export function generateOwnerSecret(): string {
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    // Node.js environment
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const nodeCrypto = require('crypto');
+    const nodeBytes = nodeCrypto.randomBytes(32);
+    bytes.set(nodeBytes);
+  }
+  return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Generate a true 256-bit CSPRNG nonce. */
+export function generateNonce(): string {
+  return generateOwnerSecret();
+}
+
 // ─── In-Memory Fallback (SSR / non-browser) ────────────────────────────────
 
 const memStore = new Map<string, string>();

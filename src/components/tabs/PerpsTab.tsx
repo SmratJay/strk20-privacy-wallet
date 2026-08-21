@@ -32,7 +32,7 @@ import { pragmaOracleService } from '@/services/pragmaOracleService';
 import { liveMarketDataService } from '@/services/liveMarketDataService';
 import { vaultService } from '@/services/vaultService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '@/services/starknetPerpsDispatcher';
-import { loadWitness, deleteWitness, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
+import { loadWitness, saveWitness, deleteWitness, generateOwnerSecret, generateNonce, findWitnessByCommitment, exportWitnesses, importWitnesses } from '@/protocol/witnessStore';
 import { DualViewInspector } from './DualViewInspector';
 import { InteractivePerpChart } from '../terminal/InteractivePerpChart';
 import { LiveOrderBook } from '../terminal/LiveOrderBook';
@@ -232,8 +232,10 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       }
 
       // Step 1: Generate Groth16 Proof + Garaga Calldata
-      const ownerSecret = BigInt('0x' + Buffer.from(effectiveAddress.slice(2, 34).padEnd(32, '0')).toString('hex'));
-      const nonce = BigInt(Date.now());
+      const ownerSecretHex = generateOwnerSecret();
+      const nonceHex = generateNonce();
+      const ownerSecret = BigInt(ownerSecretHex);
+      const nonce = BigInt(nonceHex);
       const quantitySats = BigInt(Math.floor(sizeTokens * 1e8));
       const entryPriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
       const marginCents = BigInt(Math.floor(marginNum * 100));
@@ -250,6 +252,23 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       const commitmentKey = '0x' + openProof.commitment.toString(16);
       const nullifierKey = '0x' + openProof.nullifier.toString(16);
 
+      // Persist private witness securely
+      saveWitness(effectiveAddress, {
+        protocolVersion: 2,
+        marketId: 'BTC-PERP',
+        side,
+        quantitySats,
+        entryPriceCents,
+        marginCents,
+        fundingCents: 0n,
+        feesCents: 0n,
+        nonce: nonceHex,
+        ownerSecret: ownerSecretHex,
+        commitment: commitmentKey,
+        nullifier: nullifierKey,
+        openedAtMs: Date.now(),
+      });
+
       setModalSteps((prev) => [
         { ...prev[0], status: 'SUCCESS', desc: `Commitment: ${commitmentKey.slice(0, 14)}...` },
         { ...prev[1], status: 'LOADING' },
@@ -261,7 +280,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         userAddress,
         selectedMarketId,
         marginNum,
-        openProof.calldata || [3n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n]
+        openProof.calldata || [4n, openProof.commitment, openProof.nullifier, 0x4254432d50455250n, marginCents]
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, openCall);
@@ -372,25 +391,30 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         throw new Error('Please connect your Starknet wallet first.');
       }
 
-      const ownerSecret = BigInt('0x' + Buffer.from(effectiveAddress.slice(2, 34).padEnd(32, '0')).toString('hex'));
-      const nonce = BigInt(targetPos.openedAt);
-      const quantitySats = BigInt(Math.floor(targetPos.sizeTokens * 1e8));
-      const entryPriceCents = BigInt(Math.floor(targetPos.entryPrice * 100));
-      const marginCents = BigInt(Math.floor(targetPos.marginUsd * 100));
+      const witness = loadWitness(effectiveAddress, targetPos.zkCommitment) || findWitnessByCommitment(targetPos.zkCommitment);
+      const ownerSecret = witness ? BigInt(witness.ownerSecret) : BigInt(generateOwnerSecret());
+      const nonce = witness ? BigInt(witness.nonce) : BigInt(targetPos.openedAt);
+      const quantitySats = witness?.quantitySats ?? BigInt(Math.floor(targetPos.sizeTokens * 1e8));
+      const entryPriceCents = witness?.entryPriceCents ?? BigInt(Math.floor(targetPos.entryPrice * 100));
+      const marginCents = witness?.marginCents ?? BigInt(Math.floor(targetPos.marginUsd * 100));
+      const fundingCents = witness?.fundingCents ?? 0n;
+      const feesCents = witness?.feesCents ?? 0n;
       const oraclePriceCents = BigInt(Math.floor(currentMarket.markPrice * 100));
       const payoutNonce = BigInt(Date.now());
+      const recipientVal = BigInt(userAddress);
 
       const closeProof = await pelCircuitService.generateCloseProof({
         side: targetPos.side === 'LONG' ? 0n : 1n,
         quantitySats,
         entryPriceCents,
         marginCents,
-        fundingCents: 0n,
-        feesCents: 0n,
+        fundingCents,
+        feesCents,
         nonce,
         ownerSecret,
         payoutNonce,
         oraclePriceCents,
+        recipient: recipientVal,
       });
 
       const payoutAmountUsd = Number(closeProof.payout) / 100;
@@ -405,7 +429,7 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
       const closeCall = starknetPerpsDispatcher.buildClosePositionCall(
         userAddress,
         targetPos.marketId as 'BTC-PERP',
-        closeProof.calldata || [6n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents]
+        closeProof.calldata || [7n, closeProof.commitment, closeProof.nullifier, closeProof.payoutCommitment, closeProof.payout, 0x4254432d50455250n, oraclePriceCents, recipientVal]
       );
 
       const executionRes = await starknetPerpsDispatcher.executeOnChain(browserAccount, closeCall);

@@ -1,0 +1,46 @@
+{
+  "protocolVersion": 3,
+  "generatedAt": "2026-08-21T08:26:25.747Z",
+  "circuits": {
+    "pel_open": {
+      "circomSourceSha256": "b036a9c82a5ee49bbf1cbbd8b7f4a0e53a3735e084eaf22a6f4b13f3774fe7e2",
+      "r1csSha256": "eabc3cc27d50c7c307d827078bb26d7b87e32699bfcc80de7780b7e92c382450",
+      "wasmSha256": "f1ad99947de8d2f4f4ab04414a25a0ba5303e40aa83ee3505fa68633eada22ed",
+      "zkeySha256": "bfe51eaab9f943b09a0143eec80a38be2c03cf4aae51741eb344eb09303e4a4b",
+      "verificationKeySha256": "9c510dcf9c79fa54f58e62dcaf34b51e90fb533b459a5f3b531eab0355233de0"
+    },
+    "pel_update": {
+      "circomSourceSha256": "8812ef00f7d4139c04d062c19164002d2a01bfdd45cdb7bf2b1ec29af461c1c4",
+      "r1csSha256": "d4c0a7c1bcebb99f4e9ddd80b2b498f515240a10c1e3728ccd68bc03f949bd18",
+      "wasmSha256": "9089b2a3af022b79f0eb57279dda942bfa5b3d9de49384d341c631a59c60c551",
+      "zkeySha256": "e637ff50e53c8752abd1df9029b9a46128d11521eea9cc0b52aefbbbcb49160f",
+      "verificationKeySha256": "3587a8f0182949f61b2e6a92cdea789105950f304beb96442a68a8f1c2fdc027"
+    },
+    "pel_fund": {
+      "circomSourceSha256": "9058361fd9175e8bcf1b79756fe0953bd38cd2def3d0cd5ea472cdb3466b1b6e",
+      "r1csSha256": "8dfb69e0ba7b749837f891b677ed11fcb3cb8adf2f340dbaf188f9cfb1bbd9e3",
+      "wasmSha256": "a4f080aa78eb2ff5f19c2cbc1f6cb17faa62b9536cfac7c52af591a741dcd1c2",
+      "zkeySha256": "2dfd1f4b40cf1b35f40bdb6aafbf6372170c162e8a26e531aa7216ab0566bb8f",
+      "verificationKeySha256": "489073290f520e92409f451a02ae82175750d99e9ee7ee785df3929d0ce4f0ca"
+    },
+    "pel_close": {
+      "circomSourceSha256": "f344571bdefa1d856bce1f82f1c2c4612e39ce94d701b1c52210908ec3709963",
+      "r1csSha256": "4bae186b443d24da5051faff1c966f0b0ee5103ca856e2bd431e3342c19acae5",
+      "wasmSha256": "05afcb077232fc1d37bda3f5a7b8f949f66f68cc34070114f71550c692187d85",
+      "zkeySha256": "aa594b12d39828a6905446e1b0364f9b5ffd2f8493727f27a7789677d8248b97",
+      "verificationKeySha256": "ced5bc3b2f2064da9c5d0fbad835fb4268b467950e753402c33c1975186f4160"
+    },
+    "pel_liquidate": {
+      "circomSourceSha256": "e75a02265a437cbc42d5c017be46f3dd80440e39fcf5ffc317f5e53f80cd4936",
+      "r1csSha256": "3e7670c9c2d5a9ec62313b5a772550a82a75b05283c68536125f89fd164fc96e",
+      "wasmSha256": "2a3945a0581e79e0a4d7094f1112016e20d9555d2b9c264c6e7f310c7a9fb40f",
+      "zkeySha256": "dcd0c4104da863396cfe5bdcb809757ff85df0056784d43a7e4066019b86210c",
+      "verificationKeySha256": "337b4a9c12d446968727ba13dcc3616999969c14ebb600f4864d8fc3e86d9e9b"
+    }
+  },
+  "contracts": {
+    "pel_perps_core": "6dc4a13c3f1138bc35a62e378c2b72fb3f12e75cd4575483e96e0fd5a4e276cd",
+    "types": "a71483d6a6b32686c7c78efb33b963ff824c26ca6cefb84d801ccec4b31f75ab",
+    "groth16_verifier": "7b54ecc7dbbb81506ff4d39135fc93a7accf8606fc4db313e16eb77e6a410b8f"
+  }
+}
