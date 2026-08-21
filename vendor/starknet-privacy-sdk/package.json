@@ -1,0 +1,24 @@
+{
+  "name": "@starkware-libs/starknet-privacy-sdk",
+  "version": "0.14.3-rc.5",
+  "description": "TypeScript SDK for private transfers on Starknet (vendored build of github.com/starkware-libs/starknet-privacy, sdk/ — Apache-2.0)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./abi": {
+      "import": "./dist/internal/abi.js",
+      "types": "./dist/internal/abi.d.ts"
+    }
+  },
+  "dependencies": {
+    "@starknet-io/starknet-types-0101": "npm:@starknet-io/types-js@~0.10.2",
+    "ohttp-ts": "^0.3.0",
+    "starknet": "10.5.0",
+    "zod": "^3.24.0"
+  }
+}

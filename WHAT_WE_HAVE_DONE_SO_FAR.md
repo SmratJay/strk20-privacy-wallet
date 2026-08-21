@@ -876,3 +876,160 @@
 
 
 
+
+---
+
+## 📅 Thursday, August 20, 2026 — 23:12:55 IST
+
+### 🔬 Full-Stack Professional Audit + Launch Remediation Kickoff
+
+#### 🔴 [BIG CHANGE] — Independent Full-Stack Audit (Whitepapers + Code + On-Chain)
+* **Scope:** Read both whitepapers (`PEL_Private_Perpetuals_Whitepaper.pdf`, `private_execution_layer_starknet_whitepaper.pdf`), all 5 Cairo contracts, the full off-chain service layer (`zkProverService`, `keeperService`, `pragmaOracleService`, `witnessStore`, `riskEngine`, `starknetPerpsDispatcher`, `factRegistryDispatcher`, `relayerSecurity`), the frontend (`PerpsTab.tsx`), tests, and deployment manifests.
+* **Verdict (pre-remediation):** NOT launchable as "private" or "zero-knowledge." Documented in a severity-ranked findings report.
+* **Key findings:**
+  1. **No ZK proof exists.** `StwoVerifier.cairo` is a `Map<felt252,bool>` whitelist; "verification" = Poseidon hash equality + flag check. Zero ZK deps in `package.json`; grep for snark/groth16/plonky/r1cs/air/prove across `src/`,`contracts/`,`keeper/` returned nothing. "SNIP-36" / "STWO" branding is not a real standard and has no backing implementation.
+  2. **Not private.** `locked_margin`, `payout_amount`, `recipient`, timestamps are public on-chain; witness stored in plaintext `localStorage` (`witnessStore.saveWitness` writes unencrypted JSON; AES-GCM only in optional export/import).
+  3. **Fully centralized.** `StwoVerifier` constructor sets `prover_address = admin`; `register_*_fact` requires `caller == prover_address`; the frontend registers facts with the user's browser wallet (reverts `UNAUTHORIZED_PROVER`) — only the founder/deployer can actually open/close/fund/liquidate.
+  4. **No on-chain solvency.** `close_position`/`liquidate_position` trust pre-registered facts; a compromised prover can drain LP NAV + insurance.
+  5. **Oracle divergence.** Frontend displays Binance price; settlement reads the manually-published `OracleAdapter` — any divergence breaks the open fact.
+  6. **Test claims misleading.** Zero Cairo unit tests (`snforge test` errors with "Package snforge_std is not present in dependencies"); the "real Cairo integration" test only asserts ABI names via `.toContain(...)`, never executes Cairo.
+  7. **Doc drift.** README deployment addresses differ from `deployments/sepolia_contracts.json`; README claims 0.05% taker fee vs 7 bps in `MarketConfig`.
+
+#### 🔴 [BIG CHANGE] — On-Chain Deployment Verification (Sepolia)
+* **Result:** Contracts **ARE deployed** on Starknet Sepolia, but **STALE** — deployed classes predate current source.
+* **Evidence:**
+  - On-chain class hashes match `deployments/sepolia_contracts.json` (deployer `0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d`, nonce `0x49`).
+  - Compiled class hashes from **current** source do NOT match: e.g. `PELPerpsCore` compiled `0x6abac049592ca6ca74f511fefb8110934b9062e46b6c71717206c5ae395eeb4` vs on-chain `0x164291d1a897e750b482bab2a66e0b1608b58818c88e027b51b381aa25ea086`.
+  - Deployed `PELPerpsCore` has only 9 EXTERNAL entrypoints, missing `fund_position`, `get_market_config`, `pause_market`, `resume_market`.
+* **Action:** Redeploy required after contract remediation (Phase 2).
+
+#### 🔴 [BIG CHANGE] — STRK20 (External) Availability Research — Full-Thesis Path Confirmed
+* **Finding:** STRK20 is a **real, audited, open-source** privacy pool by StarkWare (`github.com/starkware-libs/starknet-privacy`, Apache-2.0).
+* **Key facts:**
+  - Mainnet privacy pool: `0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a` (already referenced in `.env.example`).
+  - **Sepolia pool:** `0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91` (already referenced in `src/services/sessionKeyService.ts:77`).
+  - TypeScript SDK in `sdk/`; proof system is **Stwo/Cairo** with an operator-side transaction prover + discovery service; proof facts delivered to the pool via Starknet v0.14.2 syscall.
+  - Compatibility matrix tags `PRIVACY-0.14.3-RC.2`; privacy pool class hash `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633`.
+* **Implication:** The current repo's "STRK20" (localStorage `vaultService` + custom `strk20Crypto`) is **not** the real STRK20 — it is a local Umbra-style simulation. Full thesis requires integrating the StarkWare SDK against the real pool.
+
+#### 🟢 [SMALL CHANGE] — Toolchain Hardened (snforge + sncast)
+* Installed `starknet-foundry 0.63.0` via asdf (`asdf plugin add starknet-foundry`), providing `snforge 0.63.0` and `sncast 0.63.0` for real Cairo unit tests and declare/deploy.
+* Confirmed baseline: `snforge test` fails with `Package snforge_std is not present in dependencies` (no Cairo tests exist yet — confirms finding #6).
+* Toolchain now: node v24.19.0, scarb 2.20.0, snforge 0.63.0, sncast 0.63.0, starkli 0.4.2.
+
+#### 🔵 [DECISION] — Remediation Path Locked: Full Thesis
+* Per founder decision: **full thesis before public launch**, **Sepolia testnet first**, targeting a 2-week timeline.
+* Proof stack refined to the Starknet-native route (Cairo transition program + Stwo/Stone verification via STRK20 SDK infrastructure) rather than a foreign Circom/Groth16 stack, given STRK20's open-source proving stack.
+
+---
+
+## 📅 Thursday, August 20, 2026 — 23:28:21 IST
+
+### 🔌 Real STRK20 SDK Integration (Shield / Unshield Utility)
+
+#### 🔴 [BIG CHANGE] — New `src/services/strk20SdkService.ts` (Real StarkWare Privacy SDK)
+* **Purpose:** Replace the local localStorage `vaultService`/`strk20Crypto` simulation with the official `@starkware-libs/starknet-privacy-sdk` for real shield (deposit), unshield (withdraw), private transfer, viewing-key register, and note discovery.
+* **API surface implemented:** `register()`, `shield(usd)`, `unshield(usd)`, `transfer(recipient, usd)`, `getShieldedBalance()` — all built on the SDK's `createPrivateTransfers(...).build().with(USDC, ...)` fluent builder and submitted via `account.execute(call, { proofFacts, proof })` (Starknet v0.14.2 proof-linked execution).
+* **Lazy import:** The SDK is dynamically imported with a non-literal specifier so the rest of the app still typechecks/builds before the authenticated `npm install`; shield/unshield throw a clear runtime error until then.
+
+#### 🔴 [BIG CHANGE] — Verified On-Chain Addresses (Sepolia)
+* Confirmed live on Sepolia via RPC:
+  - **STRK20 privacy pool:** `0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91` (class `0x56ab118a…`, 45 EXTERNAL entrypoints).
+  - **Official Circle USDC (Sepolia):** `0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343` (symbol `USDC`, decimals `6`).
+* Both were already present in `src/config/networks.ts` / `SEPOLIA_TOKENS` — the gap was purely the SDK wiring, now added.
+
+#### 🟢 [SMALL CHANGE] — Dependency + Env Config
+* Added `@starkware-libs/starknet-privacy-sdk@0.14.3-rc.5` to `package.json` dependencies (GitHub Packages — requires one-time npm auth: `echo "//npm.pkg.github.com/:_authToken=<PAT>" >> ~/.npmrc`).
+* Added to `.env.example`: `NEXT_PUBLIC_STRK20_SEPOLIA_POOL`, `NEXT_PUBLIC_USDC_SEPOLIA`, `NEXT_PUBLIC_STRK20_PROVER_URL`, `NEXT_PUBLIC_STRK20_DISCOVERY_URL`.
+
+#### 🔵 [DEPENDENCY] — Operator Infrastructure Required (not yet provisioned)
+* Real shield/unshield requires the team to run (or rent) the STRK20 **proving service** (Stwo transaction prover) and **discovery service**, both pinned to the `PRIVACY-0.14.x` compatibility tag of the deployed pool. Documented in the `strk20SdkService.ts` header.
+* **Sequencing rule:** the prover reads finalized state; each private tx must be ~10 blocks after the previous one (deposit cannot follow the funding transfer in the same block).
+
+#### 🟡 [KNOWN] — Pre-existing typecheck failures (unrelated to this change)
+* `npm run typecheck` reports 41 pre-existing errors, all in test files (`tests/integration/realCairoContractIntegration.test.ts`, `tests/pelPerpsEngine.test.ts`) — `PrivatePositionState` missing `commitment`/`nullifier` and `.calldata` indexing. The new `strk20SdkService.ts` introduces zero new errors.
+
+---
+
+## 📅 Friday, August 21, 2026 — 10:45:53 IST
+
+### 🔐 PEL Transition Circuit — Real zk-SNARK (Groth16) Implemented & Tested
+
+#### 🔴 [BIG CHANGE] — Circom circuits for OPEN and CLOSE (the real ZK core)
+* **New files:**
+  - `circuits/lib/pel_hash.circom` — `PelPositionCommitment` (Poseidon over 9 fields), `PelNullifier`, `PelPayoutCommitment`.
+  - `circuits/lib/pel_math.circom` — `SignedDecompose` (sign+magnitude with `|v|<2^128` bound) and `PnlFloorDiv` (floor division by `QTY_SCALE=1e8`).
+  - `circuits/pel_open.circom` — proves commitment binding, nullifier binding, `side ∈ {0,1}`, `margin > 0`, and the leverage bound `q·e·1e4 ≤ 500500 · m · 1e8` (≤50x).
+  - `circuits/pel_close.circom` — proves commitment/nullifier binding, `PnL = q·Δ/QTY_SCALE` (signed, floor), `equity = margin + PnL − funding − fees`, `payout = max(0, equity)`, and payout-commitment binding.
+* **Commitment matches the whitepaper state model:** `C = Poseidon(domain, market, side, q, e, m, f, nonce, secret)`.
+
+#### 🔴 [BIG CHANGE] — Groth16 toolchain + trusted setup + test harness
+* Installed `circom 2.2.3` (compiler), `snarkjs 0.7.6`, `circomlib 2.0.5`, `circomlibjs` (devDependencies).
+* `circuits/build.sh` (compile + setup) and `circuits/setup.sh` (powers-of-tau → zkey → verification keys). Artifacts written to `circuits/build/` (gitignored, regenerable).
+* `tests/circuits/pelCircuit.test.ts` — **6/6 passing**: valid OPEN proof, valid profitable-close proof, valid losing-close (payout=0) proof, plus three negative cases (leverage violation, tampered commitment, inflated payout) all correctly rejected.
+
+#### 🔴 [BIG CHANGE] — Client bridge service `src/services/pelCircuitService.ts`
+* Canonical BN254-Poseidon commitment/nullifier/payout-commitment (via `circomlibjs`), witness construction, `generateOpenProof` / `generateCloseProof` / `verifyProof`.
+* `computeCloseSettlement()` mirrors `riskEngine.ts` exactly (same floor-division + signed handling).
+* Supersedes the legacy STARK-Poseidon `zkProverService.ts` (field mismatch documented — see header).
+
+#### 🟢 [SMALL CHANGE] — Config & scripts
+* `src/types/zkp-modules.d.ts` — ambient types for snarkjs/circomlibjs.
+* `package.json`: added `circuit:build`, `circuit:test` scripts; `@starkware-libs/starknet-privacy-sdk` moved to `optionalDependencies` so `npm install` no longer hard-fails without GitHub Packages auth.
+* Test count now 181 (180 pass, 1 pre-existing environmental failure in `pelPerpsEngine.test.ts` which asserts a stale oracle but the live Sepolia feed is fresh).
+
+#### 🔵 [KNOWN GAP] — On-chain verifier + remaining transitions
+* The circuit is proven/verified **off-chain** (snarkjs). Next steps: on-chain Groth16 verifier (Garaga), FUND/UPDATE/LIQUIDATE circuits, then the Cairo contract rewrite to store commitments + verify proofs on-chain.
+* **Field-compatibility note:** BN254 Poseidon outputs ∈ [0, r) with r ≈ 2.18e76 > 2^251; commitments must be reduced to the STARK field before felt252 storage (handled by the Garaga on-chain verifier).
+
+---
+
+## 📅 Friday, August 21, 2026 — 11:00:05 IST
+
+### 📦 STRK20 SDK Vendored (npm auth eliminated) + Operator Service Deployment Config
+
+#### 🔴 [BIG CHANGE] — STRK20 SDK vendored (no GitHub Packages auth needed)
+* **Problem:** `@starkware-libs/starknet-privacy-sdk` is published to GitHub Packages and requires a PAT; `npm install` hard-failed with 404 without auth.
+* **Solution:** built the SDK locally (`sdk/` of `starkware-libs/starknet-privacy`, tag `0.14.3-rc.5`) with `npm ci && npm run build`, then vendored `dist/` into `vendor/starknet-privacy-sdk/`.
+* `package.json` now references it via `"@starkware-libs/starknet-privacy-sdk": "file:vendor/starknet-privacy-sdk"` (in `optionalDependencies`).
+* **Verified:** `createPrivateTransfers`, `IndexerDiscoveryProvider`, `ProvingServiceProofProvider`, `Open`, `classifyTransaction` all import and resolve. `npm install` completes cleanly with no GitHub auth.
+* Update path documented in `src/services/strk20SdkService.ts` header.
+
+#### 🔴 [BIG CHANGE] — STRK20 operator service deployment config
+* `infra/strk20-operator/docker-compose.yml` — discovery-service container (image `.../discovery-service:PRIVACY-0.14.3-RC.2`), with optional Pathfinder node block (`PATHFINDER_STORAGE_STATE_TRIES=10000`).
+* `infra/strk20-operator/README.md` — full deployment guide for the two required operator services:
+  1. **Discovery service** (`NEXT_PUBLIC_STRK20_DISCOVERY_URL`) — HTTP note/channel indexer, needs RPC+WS node.
+  2. **Transaction prover** (`NEXT_PUBLIC_STRK20_PROVER_URL`) — Stwo proving service (`starknet_proveTransaction`), chainId `SN_SEPOLIA`; authoritative config in the sequencer repo README (`crates/starknet_transaction_prover`, tag `PRIVACY-0.14.3-RC.2`).
+* (Optional) proof-interceptor for deposit screening.
+
+#### 🟢 [SMALL CHANGE] — Deployer wallet top-up address (recorded)
+* **Sepolia deployer (needs STRK/ETH top-up before redeploy):** `0x20cc56b8972d4ecbba9a9eb2629b74f11c89c13a870b83d28658b25a7bda34d`
+  - STRK faucet: https://starknet-faucet.vercel.app (or the Starknet Foundation faucet)
+  - ETH (optional, for fee token flexibility): bridge/faucet Sepolia ETH to the same address.
+
+#### 🔵 [REMAINING] — Blockers + next build units
+* Operator services must actually be **run** (Docker) and pointed at by env before live shield/unshield works.
+* Next units: FUND/UPDATE/LIQUIDATE circuits → on-chain Garaga Groth16 verifier → Cairo contract rewrite → frontend wiring → snforge tests + fix 41 pre-existing TS errors → redeploy.
+
+---
+
+## 📅 Friday, August 21, 2026 — 11:52:19 IST
+
+### 🔐 PEL Circuits Complete — UPDATE / FUND / LIQUIDATE (all 5 transitions)
+
+#### 🔴 [BIG CHANGE] — Three new zk-SNARK circuits (Groth16)
+* `circuits/pel_update.circom` — commitment rotation / nullifier spending with fresh nonce (state unchanged), proving ownership + state continuity.
+* `circuits/pel_fund.circom` — funding accrual: exact reference math (`notional=floor(q·P/1e8)`, `rawFunding=floor(notional·|rate|/1e4)`, `payment=rawFunding·intervals`), `isLongPays` derived from rate sign, `newMargin = m ∓ payment` (non-negative invariant enforced), `newFunding = f + payment`, re-commitment.
+* `circuits/pel_liquidate.circom` — private liquidation predicate: proves `equity <= maintenance` (`notional=floor(q·P/1e8)`, `maint=floor(notional·200/1e4)`) **without revealing** equity/margin/q/entry.
+* Added generic `FloorDivBy(divisor)` to `circuits/lib/pel_math.circom`.
+
+#### 🔴 [BIG CHANGE] — Client bridge extended
+* `src/services/pelCircuitService.ts` now exposes `computeFundingSettlement`, `computeLiquidationSettlement`, `generateUpdateProof`, `generateFundProof`, `generateLiquidateProof`, and `verifyProof` for all 5 proof types.
+
+#### ✅ Verification
+* `circuits/build.sh` + `circuits/setup.sh` updated for all 5 circuits (power 12, max 3859 constraints < 4096).
+* **`tests/circuits/` = 13/13 passing**: 6 (open/close) + 2 (update, incl. tampered-state rejection) + 3 (fund long-pays / short-pays / negative-margin rejection) + 2 (liquidate underwater / healthy-position rejection).
+* Fixed a mux bug in `pel_fund` (`newMargin` branch was reversed — caught by the short-pays test).
+
+#### 🔵 [NEXT] — On-chain verification
+* Circuits are proven/verified off-chain (snarkjs). Next: on-chain Groth16 verifier (Garaga) + Cairo contract rewrite to store commitments + verify proofs on-chain, then frontend wiring, snforge tests, redeploy.

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "circuit:build": "bash circuits/build.sh",
+    "circuit:test": "vitest run tests/circuits"
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^4.2.0",
@@ -30,9 +32,15 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.5.4",
+    "circomlib": "2.0.5",
+    "circomlibjs": "^0.1.7",
     "postcss": "^8.5.2",
+    "snarkjs": "0.7.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "@starkware-libs/starknet-privacy-sdk": "file:vendor/starknet-privacy-sdk"
   }
 }

@@ -31,6 +31,9 @@ dist/
 build/
 tsconfig.tsbuildinfo
 
+# Vendored STRK20 SDK build — committed intentionally (see src/services/strk20SdkService.ts)
+!vendor/starknet-privacy-sdk/dist/
+
 # Logs
 *.log
 npm-debug.log*

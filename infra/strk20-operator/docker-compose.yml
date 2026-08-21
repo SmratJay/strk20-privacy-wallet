@@ -1,0 +1,53 @@
+# STRK20 operator infrastructure — discovery service (and notes for the proving service).
+#
+# Components (from the starknet-privacy compatibility matrix, tag PRIVACY-0.14.3-RC.2):
+#   1. A Starknet node (Pathfinder) providing RPC + WebSocket — REQUIRED by both services.
+#   2. Discovery service  — indexes encrypted pool storage so wallets can sync notes.
+#   3. Transaction prover — Stwo proving service (JSON-RPC starknet_proveTransaction).
+#   4. (Optional) Proof interceptor — deposit screening sidecar.
+#
+# This compose file runs the discovery service against a node you provide.
+# The transaction prover is a separate, heavier service (see README.md) — it is not
+# bundled here because it needs its own config + a local node + significant resources.
+
+services:
+  discovery-service:
+    image: ghcr.io/starkware-libs/starknet-privacy/discovery-service:PRIVACY-0.14.3-RC.2
+    container_name: strk20-discovery
+    restart: unless-stopped
+    environment:
+      # Point both at a Starknet Sepolia node that supports WebSocket indexing.
+      RPC_URL: ${RPC_URL:-https://api.cartridge.gg/x/starknet/sepolia}
+      WS_URL: ${WS_URL:-ws://pathfinder:9545}
+      API_HOST: 0.0.0.0:8080
+      RUST_LOG: ${RUST_LOG:-info}
+      # Optional compliance/privacy hardening: enable OHTTP (needs a 32-byte x25519 key).
+      # OHTTP_ENABLED: ${OHTTP_ENABLED:-false}
+      # OHTTP_KEY: ${OHTTP_KEY:-}
+    ports:
+      - "8080:8080"
+    # If you run your own Pathfinder, put it on the same network.
+    networks:
+      - strk20
+
+  # ---------------------------------------------------------------------------
+  # Uncomment to run your own Pathfinder node (recommended for production WS).
+  # Requires a funded/configured node. See https://eqlabs.github.io/pathfinder/.
+  # ---------------------------------------------------------------------------
+  # pathfinder:
+  #   image: eqlabs/pathfinder:v0.22.7
+  #   container_name: strk20-pathfinder
+  #   restart: unless-stopped
+  #   environment:
+  #     PATHFINDER_STORAGE_STATE_TRIES: "10000"
+  #     PATHFINDER_ETHEREUM_API_URL: ${ETHEREUM_API_URL}
+  #     PATHFINDER_HTTP_RPC_ENDPOINT: "0.0.0.0:9545"
+  #   ports:
+  #     - "9545:9545"
+  #     - "9546:9546"
+  #   networks:
+  #     - strk20
+
+networks:
+  strk20:
+    driver: bridge
