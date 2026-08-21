@@ -9,6 +9,7 @@ starknet = "2.16.1"
 
 [cairo]
 sierra-replace-ids = false
+inlining-strategy = 2
 
 [[target.starknet-contract]]
 casm = true

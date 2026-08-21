@@ -1,0 +1,51 @@
+{
+  "network": "local-devnet",
+  "chainId": "0x534e5f5345504f4c4941",
+  "blockNumber": 62,
+  "contracts": {
+    "usdc": "0x420e6664a5ae24012dff2998301d48a50e36696e9142e65afb3c2253b27b47f",
+    "oracleAdapter": "0x7c49fb0137c5dc7a7fb139b822d53fd3755c55fc6bf2a0dc521e312a35830d9",
+    "openVerifier": "0x417b055de3c74ee347398ca5756272d9b102c2b3a33d2dff240cd861895d682",
+    "strk20Adapter": "0x17ccee88000ecfcd7c9d26451a72b89675b8eed799ec4c02d91e3824133e6c",
+    "pelCore": "0x45a3466ddb59505cbdb1e4efd50e8a9e8d8c80fad91d358e716c259c9bc362b"
+  },
+  "accounts": {
+    "admin": "0x64b48806902a367c8598f4f95c305e8c1a1acba5f082d294a43793113115691",
+    "trader": "0x78662e7352d062084b0010068b99288486c2d8b914f6e2a55ce945f8792c8b1"
+  },
+  "proof": {
+    "signals": [
+      "12132523108912108857891205740202724038628654329944677135162656678562234040399",
+      "16317431486818179074566196657688002310952812310634994782750182734819248633126",
+      "4779518966446248528",
+      "500000"
+    ],
+    "commitment": "0x1ad2c3c563abd4fe557979e3f7bf9ec8427ee3444e24f70ba1287f8f2a3b004f",
+    "nullifier": "0x241356c457e04554b698cda9ff8b23ba8e7cfbb25e7d38b5d6cc7a7f3b20f526",
+    "marginCents": "500000",
+    "calldataLength": 1978
+  },
+  "transaction": {
+    "transactionHash": "0x4c3c5e19e1f0cd2770ddc1e4c9fa5a62b55a7d0d757027d2dd17b17644a69d7",
+    "status": "SUCCEEDED",
+    "executionStatus": "SUCCEEDED"
+  },
+  "collateral": {
+    "balanceBefore": "100000000000",
+    "balanceAfter": "95000000000",
+    "collateralMovedUnits": "5000000000",
+    "lockedMarginCents": "500000"
+  },
+  "position": {
+    "commitmentKey": "0x77c145a69da192f090f722d5fa062e808daddd2ad3fc7b16360b2006c4286bf",
+    "nullifierKey": "0x22c60aaf66ec82832da85e3c5d0330fc870a5d1a42dd3b6ec59b8d9644b8973",
+    "lockedMargin": "500000",
+    "marketId": "BTC-PERP",
+    "isActive": true
+  },
+  "attacks": {
+    "replayReverted": true,
+    "tamperedCommitmentReverted": true,
+    "tamperedMarginReverted": true
+  }
+}

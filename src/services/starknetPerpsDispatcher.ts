@@ -58,6 +58,18 @@ export class StarknetPerpsDispatcher {
     return calldata.map((x) => (typeof x === 'bigint' ? '0x' + x.toString(16) : typeof x === 'number' ? '0x' + x.toString(16) : x.startsWith('0x') ? x : '0x' + x));
   }
 
+  private encodeProofSpan(proofCalldata: (bigint | string | number)[]): string[] {
+    if (!proofCalldata || proofCalldata.length === 0) return ['0x0'];
+    const first = BigInt(proofCalldata[0]);
+    const expectedRemaining = BigInt(proofCalldata.length - 1);
+    if (first === expectedRemaining) {
+      // Already formatted with span length header (standard Garaga getGroth16CallData output format)
+      return this.formatCalldata(proofCalldata);
+    }
+    const formatted = this.formatCalldata(proofCalldata);
+    return ['0x' + formatted.length.toString(16), ...formatted];
+  }
+
   /**
    * Builds ERC20 approve call for collateral token (e.g. TestUSDC)
    */
@@ -103,7 +115,7 @@ export class StarknetPerpsDispatcher {
       const marginAmountUsd = arg3;
       const proofCalldata = Array.isArray(arg4) ? arg4 : [];
       const marginAmountFelt = '0x' + Math.floor(marginAmountUsd * 100).toString(16);
-      const formattedProof = this.formatCalldata(proofCalldata);
+      const encodedSpan = this.encodeProofSpan(proofCalldata);
       return {
         contractAddress: config.pelCoreAddress,
         entrypoint: 'open_position',
@@ -111,8 +123,7 @@ export class StarknetPerpsDispatcher {
           collateralOwner,
           marketFelt,
           marginAmountFelt,
-          '0x' + formattedProof.length.toString(16),
-          ...formattedProof,
+          ...encodedSpan,
         ],
       };
     } else {
@@ -152,14 +163,13 @@ export class StarknetPerpsDispatcher {
     const marketFelt = this.marketToFelt(marketId);
 
     if (Array.isArray(arg2)) {
-      const formattedProof = this.formatCalldata(arg2);
+      const encodedSpan = this.encodeProofSpan(arg2);
       return {
         contractAddress: config.pelCoreAddress,
         entrypoint: 'update_position',
         calldata: [
           marketFelt,
-          '0x' + formattedProof.length.toString(16),
-          ...formattedProof,
+          ...encodedSpan,
         ],
       };
     } else {
@@ -198,7 +208,7 @@ export class StarknetPerpsDispatcher {
       const isLongPays = Boolean(arg3);
       const proofCalldata = Array.isArray(arg4) ? arg4 : [];
       const fundingAmountFelt = '0x' + Math.floor(fundingAmountUsd * 100).toString(16);
-      const formattedProof = this.formatCalldata(proofCalldata);
+      const encodedSpan = this.encodeProofSpan(proofCalldata);
       return {
         contractAddress: config.pelCoreAddress,
         entrypoint: 'fund_position',
@@ -206,8 +216,7 @@ export class StarknetPerpsDispatcher {
           marketFelt,
           fundingAmountFelt,
           isLongPays ? '0x1' : '0x0',
-          '0x' + formattedProof.length.toString(16),
-          ...formattedProof,
+          ...encodedSpan,
         ],
       };
     } else {
@@ -244,15 +253,14 @@ export class StarknetPerpsDispatcher {
     const marketFelt = this.marketToFelt(marketId);
 
     if (Array.isArray(arg3)) {
-      const formattedProof = this.formatCalldata(arg3);
+      const encodedSpan = this.encodeProofSpan(arg3);
       return {
         contractAddress: config.pelCoreAddress,
         entrypoint: 'close_position',
         calldata: [
           marketFelt,
           recipient,
-          '0x' + formattedProof.length.toString(16),
-          ...formattedProof,
+          ...encodedSpan,
         ],
       };
     } else {
@@ -294,15 +302,14 @@ export class StarknetPerpsDispatcher {
     const marketFelt = this.marketToFelt(marketId);
 
     if (Array.isArray(arg3)) {
-      const formattedProof = this.formatCalldata(arg3);
+      const encodedSpan = this.encodeProofSpan(arg3);
       return {
         contractAddress: config.pelCoreAddress,
         entrypoint: 'liquidate_position',
         calldata: [
           marketFelt,
           keeperRecipient,
-          '0x' + formattedProof.length.toString(16),
-          ...formattedProof,
+          ...encodedSpan,
         ],
       };
     } else {

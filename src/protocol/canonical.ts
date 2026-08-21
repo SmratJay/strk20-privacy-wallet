@@ -56,10 +56,10 @@ export function toFelt252(x: bigint): bigint {
 /** Compute canonical on-chain storage key from a 256-bit BN254 element */
 export function bn254ToStorageKey(x: bigint): string {
   const { low, high } = bn254ToU256(x);
-  return hash.computePoseidonHash(
+  return hash.computePoseidonHashOnElements([
     '0x' + low.toString(16),
     '0x' + high.toString(16),
-  );
+  ]);
 }
 
 /** u256 -> starknet.js uint256 struct. */
