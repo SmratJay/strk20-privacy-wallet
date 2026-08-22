@@ -80,16 +80,15 @@ describe('PEL Canonical Risk Engine (Phase 8 & 10)', () => {
     expect(shortPays.fundingCents).toBe(fundingCents);
   });
 
-  it('Bad Debt Waterfall: allocates 2% keeper bounty and remainder to insurance', () => {
+  it('Bad Debt Waterfall: delegates to canonical liquidation settlement with exact bad debt deficit', () => {
     const crashPrice = (BTC_PRICE_CENTS * 88n) / 100n;
     const pnl = RiskEngine.getPnl('LONG', QTY_SATS, BTC_PRICE_CENTS, crashPrice);
     const waterfall = RiskEngine.getBadDebtWaterfall(MARGIN_CENTS, pnl, 0n, 0n, 200n);
 
     expect(waterfall.userPayoutCents).toBe(0n);
-    expect(waterfall.keeperBountyCents).toBe(2000n); // 2% of  = .00 (2000 cents)
-    expect(waterfall.insuranceCreditCents).toBe(98000n); // 98% of  = .00 (98000 cents)
-    expect(waterfall.keeperBountyCents + waterfall.insuranceCreditCents).toBe(MARGIN_CENTS);
-    expect(waterfall.badDebtDeficitCents).toBeGreaterThan(0n);
+    expect(waterfall.keeperBountyCents).toBe(0n); // 0 seized collateral on negative equity
+    expect(waterfall.insuranceCreditCents).toBe(0n);
+    expect(waterfall.badDebtDeficitCents).toBe(19999n); // $199.99 bad debt deficit
   });
 
   it('computes exact theoretical liquidation price', () => {

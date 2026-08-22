@@ -33,6 +33,7 @@
 
 import type { AccountInterface, BigNumberish } from 'starknet';
 import { getNetworkConfig } from '@/config/networks';
+import { savePendingPayout, updatePendingPayoutStatus } from '../protocol/witnessStore';
 
 export const STRK20_SEPOLIA_POOL =
   process.env.NEXT_PUBLIC_STRK20_SEPOLIA_POOL ||
@@ -389,10 +390,17 @@ export class Strk20SdkService {
     pelCoreAddress: string,
     marketId: string,
     proofCalldata: (bigint | string)[],
+    options?: {
+      expectedCommitment?: string;
+      expectedNullifier?: string;
+      payoutNullifier?: bigint;
+      payoutCommitment?: bigint;
+    }
   ): Promise<{
     transactionHash: string;
     closeTxHash: string;
     explorerUrl: string;
+    payoutClaimed: boolean;
     payoutShielded: boolean;
     authoritativePayoutUsd: number | null;
     warnings: unknown[];
@@ -412,28 +420,85 @@ export class Strk20SdkService {
       );
     }
 
-    // Step 2: read the AUTHORITATIVE payout from the on-chain PositionClosed event —
-    // bound to expected recipient and proof commitment.
+    // Step 2: Extract bound commitment and nullifier from proof calldata or options
+    // In Garaga span: [span_len, commitment, nullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient, ...]
+    const extractedCommitment = options?.expectedCommitment ?? (
+      proofCalldata.length > 1 ? '0x' + BigInt(proofCalldata[1]).toString(16) : undefined
+    );
+    const extractedNullifier = options?.expectedNullifier ?? (
+      proofCalldata.length > 2 ? '0x' + BigInt(proofCalldata[2]).toString(16) : undefined
+    );
+    const extractedPayoutCommitment = options?.payoutCommitment ?? (
+      proofCalldata.length > 3 ? BigInt(proofCalldata[3]) : undefined
+    );
+
+    // Step 3: read the AUTHORITATIVE payout from the on-chain PositionClosed event —
+    // bound strictly to expected recipient, commitment, and nullifier (fail closed).
     let authoritativePayoutUsd: number | null = null;
     if (closeRes.status === 'SUCCESS') {
       authoritativePayoutUsd = await this.readPayoutFromReceipt(
         closeRes.transactionHash,
-        undefined,
-        user.address
+        extractedCommitment,
+        user.address,
+        extractedNullifier
       );
     }
 
-    // Step 3: shield the authoritative payout into the STRK20 pool (real shielded note).
+    let payoutClaimed = false;
     let payoutShielded = false;
+
     if (closeRes.status === 'SUCCESS' && authoritativePayoutUsd !== null && authoritativePayoutUsd > 0) {
+      const payoutAmountCents = BigInt(Math.round(authoritativePayoutUsd * 100));
+
+      // Record initial CLOSED_PENDING_SHIELD state
+      if (extractedCommitment) {
+        savePendingPayout(user.address, {
+          commitment: extractedCommitment,
+          positionTxHash: closeRes.transactionHash,
+          payoutAmountCents,
+          recipient: user.address,
+          status: 'CLOSED_PENDING_SHIELD',
+          updatedAtMs: Date.now(),
+        });
+      }
+
+      // Step 3a: If payout nullifier and commitment are available, claim payout from PELLiquidityVault
+      // This transfers the physical payout USDC from the vault to the recipient's wallet.
+      if (options?.payoutNullifier && (extractedPayoutCommitment !== undefined)) {
+        try {
+          const claimCall = starknetPerpsDispatcher.buildVaultClaimPayoutCall(
+            options.payoutNullifier,
+            extractedPayoutCommitment
+          );
+          const claimRes = await starknetPerpsDispatcher.executeOnChain(user.account as any, claimCall);
+          payoutClaimed = claimRes.status === 'SUCCESS';
+        } catch (claimErr: any) {
+          console.warn(`[PELLiquidityVault] Payout claim deferred: ${claimErr?.message || claimErr}`);
+          payoutClaimed = false;
+        }
+      }
+
+      // Step 3b: shield the delivered payout into the STRK20 pool (real shielded note).
       try {
+        if (extractedCommitment) {
+          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_SHIELDING');
+        }
         const shieldRes = await this.shield(user, authoritativePayoutUsd);
         payoutShielded = shieldRes.transactionHash !== '';
+        if (payoutShielded && extractedCommitment) {
+          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_SHIELDED', {
+            shieldedNoteCommitment: shieldRes.transactionHash,
+          });
+        }
       } catch (err: any) {
-        // If shielding fails, the authoritative close transaction is still confirmed on-chain.
-        // Payout note is safely registered on-chain in PELLiquidityVault.
+        // If shielding fails, the authoritative close transaction and payout obligation remain confirmed on-chain.
         console.warn(`[STRK20] Payout shielding deferred: ${err?.message || err}`);
         payoutShielded = false;
+        if (extractedCommitment) {
+          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_FAILED', {
+            failureReason: err?.message || 'STRK20 Prover offline or shielding failed',
+          });
+        }
       }
     }
 
@@ -441,6 +506,7 @@ export class Strk20SdkService {
       transactionHash: closeRes.transactionHash,
       closeTxHash: closeRes.transactionHash,
       explorerUrl: closeRes.explorerUrl,
+      payoutClaimed,
       payoutShielded,
       authoritativePayoutUsd,
       warnings: [],

@@ -247,6 +247,7 @@ export class RiskEngine {
 
   /**
    * Calculate bad debt distribution & settlement waterfall
+   * Delegated directly to canonical getLiquidationSettlement to ensure one unified formula.
    */
   static getBadDebtWaterfall(
     lockedMarginCents: bigint,
@@ -255,37 +256,14 @@ export class RiskEngine {
     feesCents: bigint = 0n,
     keeperBountyBps: bigint | number = 200n
   ): BadDebtWaterfall {
-    const margin = BigInt(lockedMarginCents);
-    const pnl = BigInt(pnlCents);
-    const funding = BigInt(fundingCents);
-    const fees = BigInt(feesCents);
-    const bountyBps = BigInt(keeperBountyBps);
-
-    const equity = calcEquityCents(margin, pnl, funding, fees);
-
-    if (equity > 0n) {
-      const userPayoutCents = minFixed(equity, margin + maxFixed(0n, pnl));
-      const loss = margin > userPayoutCents ? margin - userPayoutCents : 0n;
-      return {
-        lockedMarginCents: margin,
-        userPayoutCents,
-        keeperBountyCents: 0n,
-        insuranceCreditCents: loss,
-        badDebtDeficitCents: 0n,
-      };
-    } else {
-      const keeperBountyCents = (margin * bountyBps) / BPS_SCALE;
-      const remainingCollateral = margin > keeperBountyCents ? margin - keeperBountyCents : 0n;
-      const badDebtDeficitCents = absFixed(equity);
-
-      return {
-        lockedMarginCents: margin,
-        userPayoutCents: 0n,
-        keeperBountyCents,
-        insuranceCreditCents: remainingCollateral,
-        badDebtDeficitCents,
-      };
-    }
+    const s = this.getLiquidationSettlement(lockedMarginCents, pnlCents, fundingCents, feesCents, keeperBountyBps);
+    return {
+      lockedMarginCents: BigInt(lockedMarginCents),
+      userPayoutCents: 0n,
+      keeperBountyCents: s.keeperBountyCents,
+      insuranceCreditCents: s.insuranceShareCents,
+      badDebtDeficitCents: s.badDebtCents,
+    };
   }
 
   /**
