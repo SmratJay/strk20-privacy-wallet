@@ -90,9 +90,11 @@ nullifier rotation) → settle accounting**. Replay is prevented by the nullifie
 | **UPDATE** | `pel_update.circom` | oldCommitment, newCommitment, oldNullifier, marketId | rotate commitment |
 | **FUND** | `pel_fund.circom` | oldCommitment, newCommitment, oldNullifier, marketId, oraclePrice, fundingRate, intervals, fundingPayment, isLongPays | clear funding |
 | **CLOSE** | `pel_close.circom` | commitment, finalNullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient | settle PnL, shielded payout |
-| **LIQUIDATE** | `pel_liquidate.circom` | positionCommitment, positionNullifier, marketId, oraclePrice, keeper | seize collateral, bounty + insurance |
+| **LIQUIDATE** | `pel_liquidate.circom` | positionCommitment, positionNullifier, marketId, oraclePrice, keeper, seizedCollateral, badDebt | seize collateral, bounty + LP/insurance/treasury + bad-debt waterfall |
 
-The **LIQUIDATE** circuit proves `equity <= maintenance` without revealing the operands.
+The **LIQUIDATE** circuit proves `equity <= maintenance` without revealing the operands and
+outputs the **proof-bound `seizedCollateral` and `badDebt`** consumed by the vault's
+settlement waterfall.
 
 ## 12. How keepers work
 
@@ -110,15 +112,32 @@ backoff, bounded concurrency, idempotency, and graceful shutdown (not a bare `se
 
 ## 13. How LPs work
 
-The `STRK20Adapter` is a proportional LP pool. LPs deposit USDC and receive shares at a NAV
-share price. LP value is the counterparty to trader PnL. Withdrawals are **reserve-aware**:
-LPs cannot withdraw value required to cover open interest (50% reserve floor).
+The **`PELLiquidityVault`** is the canonical LP counterparty and custody boundary. LPs
+deposit USDC and receive proportional shares at a NAV-based share price (share price e6 =
+NAV × 1e6 × 1e4 / totalShares). LP value is the counterparty to trader PnL:
+
+- **Trader loss → LP receives the FULL loss** (no 70/20/10 split on PnL).
+- **Trader profit → LP pays the FULL profit** (insurance backstops, then fail-closed revert).
+- **Protocol revenue** (liquidation remnants) is split 70% LP / 20% insurance / 10% treasury.
+
+Withdrawals are **reserve-aware** (Model A queue): shares are burned at request, NAV is
+reduced by the frozen value at request, and a 50% locked-margin reserve floor protects open
+interest. Protocol-enforced risk gates (utilization ≤ 85%, single-position cap ≤ 5% NAV
+notional) are checked on-chain by the vault, not the browser.
 
 ## 14. How insurance works
 
-Liquidation seizes collateral: 2% goes to the keeper bounty, 98% to the insurance fund. The
-insurance fund backs trader profits when LP NAV is insufficient. No value is ever created
-from nothing — every transition conserves token custody against accounting buckets.
+`PELInsuranceReserve` is a **real USDC custody contract**: its booked balance is always backed
+by tokens it physically holds. Liquidation seizes collateral and runs a waterfall:
+
+1. **Trader loss** (margin − seized) → 100% LP NAV.
+2. **Seized collateral** → 2% keeper bounty → 70% LP / 20% insurance (real transfer) / 10% treasury.
+3. **Bad debt** (`equity < 0`) → insurance absorbs real USDC; any uncovered remainder is
+   recorded as explicit `bad_debt_total` and absorbed by LP NAV (never silently clamped).
+
+No value is created from nothing — every transition conserves token custody against the
+accounting buckets (locked margin + pool margin + NAV + payouts + bounties + withdrawals +
+treasury + bad debt).
 
 ## 15. How proofs work
 
@@ -134,9 +153,12 @@ distinct (fail-closed validation).
 npm install
 # Start a Starknet devnet (e.g. starknet-devnet on :5050)
 npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts   # real Groth16 OPEN on devnet
-npx vitest run                                          # full suite
+npx vitest run tests/e2e/REAL_LIFECYCLE_E2E.test.ts      # OPEN→CLOSE→LIQUIDATE conservation
+npx vitest run --exclude tests/e2e                       # unit/integration/adversarial suites
 npm run typecheck
-cd contracts && scarb build                             # Cairo contracts
+cd contracts && scarb build                             # Cairo contracts (compiles)
+cd contracts && snforge test                             # Cairo LP/vault/adapter integration tests
+cd crates/pel-risk-engine && cargo test                  # Rust risk engine + golden vectors
 ```
 
 ## 18. Deploy
@@ -236,6 +258,10 @@ historical tests.
 - **Devnet**: verified — five distinct verifiers, real Groth16 OPEN proof verified on-chain,
   bridge `privacy_compute`/`privacy_invoke_with_computation` verified on-chain with a real
   proof.
+- **Devnet LP counterparty**: verified — `PELLiquidityVault` + `PELInsuranceReserve` deployed
+  and wired to `PELPerpsCore`; real Cairo tests (deposit/shares, PnL, funding, liquidation
+  waterfall, insurance custody, bad debt, withdrawal queue, risk gates, conservation) pass via
+  `snforge test`; Rust risk engine + golden vectors pass via `cargo test`.
 - **Sepolia / Mainnet STRK20 shield/perp execution**: **PENDING** — requires the operator
   proving + discovery services (external infrastructure) and funded accounts. See
   `infra/strk20-operator/README.md` and the final engineering report for the exact steps.

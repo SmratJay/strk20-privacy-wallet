@@ -8,7 +8,7 @@
 
 use starknet::{ContractAddress, get_contract_address, contract_address_const};
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait};
-use pel_perpetuals_core::test_usdc::{IERC20Dispatcher, IERC20DispatcherTrait};
+use pel_perpetuals_core::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
 use pel_perpetuals_core::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
 
 const M: u128 = 1_000_000; // 1,000,000 cents margin = $10,000
@@ -17,22 +17,22 @@ fn deploy() -> (IERC20Dispatcher, ISTRK20AdapterDispatcher, ContractAddress) {
     let me: ContractAddress = get_contract_address();
 
     let usdc_class = declare("TestUSDC").unwrap().contract_class();
-    let usdc_contract = usdc_class.deploy(@array![me.into()]).unwrap();
+    let (usdc_contract, _) = usdc_class.deploy(@array![me.into()]).unwrap();
     let usdc = IERC20Dispatcher { contract_address: usdc_contract };
 
     let adapter_class = declare("STRK20Adapter").unwrap().contract_class();
     // admin = me, pel_core = me (so this test contract can act as PELCore)
-    let adapter_contract = adapter_class
+    let (adapter_contract, _) = adapter_class
         .deploy(@array![me.into(), me.into(), usdc_contract.into()])
         .unwrap();
     let adapter = ISTRK20AdapterDispatcher { contract_address: adapter_contract };
 
     // fund the test contract + approve the adapter for 3*M cents in token units
-    let token_units = (3_u128 * M * 10000_u128).into();
+    let token_units: u256 = (3_u128 * M * 10000_u128).into();
     usdc.mint(me, token_units);
     usdc.approve(adapter_contract, token_units);
 
-    (usdc, adapter, usdc_contract)
+    (usdc, adapter, adapter_contract)
 }
 
 fn token_balance_cents(usdc: IERC20Dispatcher, adapter: ContractAddress) -> u128 {
@@ -97,7 +97,6 @@ fn test_profit_payout_drains_lp() {
     let (usdc, adapter, adapter_addr) = deploy();
     let me = get_contract_address();
     // LP deposits 500k via liquidity
-    let lp_token_units = (500_000_u128 * 10000_u128).into();
     adapter.deposit_liquidity(500_000);
     adapter.lock_shielded_margin(me, 0x1, M);
     // payout 1.2M, profit 200k

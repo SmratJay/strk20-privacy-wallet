@@ -420,7 +420,7 @@ export class Strk20SdkService {
       );
     }
 
-    // Step 2: Extract bound commitment and nullifier from proof calldata or options
+    // Step 2: Extract bound identity from proof calldata or options.
     // In Garaga span: [span_len, commitment, nullifier, payoutCommitment, payoutAmount, marketId, oraclePrice, recipient, ...]
     const extractedCommitment = options?.expectedCommitment ?? (
       proofCalldata.length > 1 ? '0x' + BigInt(proofCalldata[1]).toString(16) : undefined
@@ -431,6 +431,7 @@ export class Strk20SdkService {
     const extractedPayoutCommitment = options?.payoutCommitment ?? (
       proofCalldata.length > 3 ? BigInt(proofCalldata[3]) : undefined
     );
+    const payoutNullifier = options?.payoutNullifier;
 
     // Step 3: read the AUTHORITATIVE payout from the on-chain PositionClosed event —
     // bound strictly to expected recipient, commitment, and nullifier (fail closed).
@@ -444,60 +445,123 @@ export class Strk20SdkService {
       );
     }
 
+    // Fail closed: if we cannot derive the authoritative payout, never proceed to shield.
+    if (authoritativePayoutUsd === null) {
+      throw new Error(
+        'PEL: could not read authoritative payout from PositionClosed (ambiguous or missing event). Close is confirmed; payout is retained on-chain. Do not shield.',
+      );
+    }
+
     let payoutClaimed = false;
     let payoutShielded = false;
+    const warnings: unknown[] = [];
 
-    if (closeRes.status === 'SUCCESS' && authoritativePayoutUsd !== null && authoritativePayoutUsd > 0) {
+    if (authoritativePayoutUsd > 0) {
       const payoutAmountCents = BigInt(Math.round(authoritativePayoutUsd * 100));
+      const payoutTokenUnits = payoutAmountCents * 10_000n; // 1 cent = 10,000 micro-USDC (6 decimals)
 
-      // Record initial CLOSED_PENDING_SHIELD state
       if (extractedCommitment) {
         savePendingPayout(user.address, {
           commitment: extractedCommitment,
           positionTxHash: closeRes.transactionHash,
           payoutAmountCents,
           recipient: user.address,
-          status: 'CLOSED_PENDING_SHIELD',
+          status: 'POSITION_CLOSED',
           updatedAtMs: Date.now(),
         });
       }
 
-      // Step 3a: If payout nullifier and commitment are available, claim payout from PELLiquidityVault
-      // This transfers the physical payout USDC from the vault to the recipient's wallet.
-      if (options?.payoutNullifier && (extractedPayoutCommitment !== undefined)) {
+      // HARD INVARIANT (Phase 1): the payout note MUST be claimed from the LP vault
+      // and delivery MUST be verified before any STRK20 shielding can occur. A failed
+      // or skipped claim must NEVER proceed to shield (prevents self-funded payouts).
+      if (payoutNullifier === undefined || extractedPayoutCommitment === undefined) {
+        // Fail closed: without payout identity we cannot claim the note.
+        if (extractedCommitment) {
+          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_CLAIM_FAILED', {
+            failureReason: 'Missing payout nullifier/commitment — cannot claim the payout note.',
+          });
+        }
+        warnings.push('PAYOUT_CLAIM_FAILED: missing payout identity (payoutNullifier/payoutCommitment).');
+      } else {
+        if (extractedCommitment) {
+          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_CLAIMING');
+        }
         try {
+          const balanceBefore = await starknetPerpsDispatcher.getTokenBalance(user.address);
           const claimCall = starknetPerpsDispatcher.buildVaultClaimPayoutCall(
-            options.payoutNullifier,
+            payoutNullifier,
             extractedPayoutCommitment
           );
           const claimRes = await starknetPerpsDispatcher.executeOnChain(user.account as any, claimCall);
-          payoutClaimed = claimRes.status === 'SUCCESS';
+          const balanceAfter = await starknetPerpsDispatcher.getTokenBalance(user.address);
+          const delivered = balanceAfter - balanceBefore;
+
+          // Phase 1D: verify ACTUAL recipient-side delivery, never trust tx status alone.
+          if (claimRes.status === 'SUCCESS' && delivered >= payoutTokenUnits) {
+            payoutClaimed = true;
+            if (extractedCommitment) {
+              updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_CLAIMED');
+            }
+          } else {
+            const reason = `claim status=${claimRes.status}, delivered=${delivered}, expected=${payoutTokenUnits}`;
+            if (extractedCommitment) {
+              updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_CLAIM_FAILED', {
+                failureReason: `Payout delivery not verified: ${reason}`,
+              });
+            }
+            warnings.push(`PAYOUT_CLAIM_FAILED: ${reason}`);
+          }
         } catch (claimErr: any) {
-          console.warn(`[PELLiquidityVault] Payout claim deferred: ${claimErr?.message || claimErr}`);
+          console.warn(`[PELLiquidityVault] Payout claim failed: ${claimErr?.message || claimErr}`);
           payoutClaimed = false;
+          if (extractedCommitment) {
+            updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_CLAIM_FAILED', {
+              failureReason: claimErr?.message || 'Payout claim reverted.',
+            });
+          }
+          warnings.push(`PAYOUT_CLAIM_FAILED: ${claimErr?.message || 'unknown'}`);
         }
       }
 
-      // Step 3b: shield the delivered payout into the STRK20 pool (real shielded note).
-      try {
+      // Phase 1: shield ONLY after a verified claim. Never self-fund.
+      if (payoutClaimed) {
         if (extractedCommitment) {
           updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_SHIELDING');
         }
-        const shieldRes = await this.shield(user, authoritativePayoutUsd);
-        payoutShielded = shieldRes.transactionHash !== '';
-        if (payoutShielded && extractedCommitment) {
-          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_SHIELDED', {
-            shieldedNoteCommitment: shieldRes.transactionHash,
-          });
-        }
-      } catch (err: any) {
-        // If shielding fails, the authoritative close transaction and payout obligation remain confirmed on-chain.
-        console.warn(`[STRK20] Payout shielding deferred: ${err?.message || err}`);
-        payoutShielded = false;
-        if (extractedCommitment) {
-          updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_FAILED', {
-            failureReason: err?.message || 'STRK20 Prover offline or shielding failed',
-          });
+        try {
+          const shieldedBefore = (await this.getShieldedBalance(user)).total;
+          const shieldRes = await this.shield(user, authoritativePayoutUsd);
+          payoutShielded = shieldRes.transactionHash !== '';
+
+          if (payoutShielded) {
+            // Phase 1E: discover the real note. A tx hash is NOT a note commitment.
+            if (extractedCommitment) {
+              updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_NOTE_DISCOVERY_PENDING');
+            }
+            try {
+              const shieldedAfter = (await this.getShieldedBalance(user)).total;
+              const delta = shieldedAfter - shieldedBefore;
+              if (delta >= payoutTokenUnits) {
+                if (extractedCommitment) {
+                  updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_SHIELDED');
+                }
+              } else {
+                warnings.push(`PAYOUT_NOTE_DISCOVERY_PENDING: shielded delta=${delta} < expected=${payoutTokenUnits}`);
+              }
+            } catch (discErr: any) {
+              warnings.push(`PAYOUT_NOTE_DISCOVERY_PENDING: ${discErr?.message || 'discovery unavailable'}`);
+            }
+          }
+        } catch (err: any) {
+          // If shielding fails, the authoritative payout is still delivered to the
+          // recipient's public wallet; the position is closed and the value is retained.
+          console.warn(`[STRK20] Payout shielding deferred: ${err?.message || err}`);
+          payoutShielded = false;
+          if (extractedCommitment) {
+            updatePendingPayoutStatus(user.address, extractedCommitment, 'PAYOUT_FAILED', {
+              failureReason: err?.message || 'STRK20 Prover offline or shielding failed',
+            });
+          }
         }
       }
     }
@@ -509,7 +573,7 @@ export class Strk20SdkService {
       payoutClaimed,
       payoutShielded,
       authoritativePayoutUsd,
-      warnings: [],
+      warnings,
     };
   }
 

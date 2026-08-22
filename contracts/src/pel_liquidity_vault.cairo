@@ -744,7 +744,10 @@ pub mod PELLiquidityVault {
             self.lp_pool_nav.write(nav);
 
             // Register the payout note (real USDC claimable from the vault).
-            if payout_cents > 0_u128 && recipient_note_commitment != 0 {
+            // Fail closed: a non-zero payout MUST have a note commitment, otherwise
+            // the payout value would vanish (no destination) and violate conservation.
+            if payout_cents > 0_u128 {
+                assert(recipient_note_commitment != 0, 'VAULT: MISSING_NOTE');
                 self.registered_notes.write(recipient_note_commitment, payout_cents);
                 self.registered_note_recipients.write(recipient_note_commitment, recipient);
                 self.unclaimed_payouts_total.write(self.unclaimed_payouts_total.read() + payout_cents);
@@ -875,21 +878,27 @@ pub mod PELLiquidityVault {
                     .deposit_liquidation_remnant(insurance_share);
             }
 
-            // 6. Bad debt absorption (insurance transfers real USDC back to the vault)
+            // 6. Bad debt absorption (insurance transfers real USDC back to the vault).
+            //    The LP is the ultimate backstop: NAV gains the insurance-covered portion
+            //    but absorbs any uncovered deficit as an explicit loss (recorded in
+            //    bad_debt_total) so conservation holds and no value is silently created.
             if insurance_deficit_cents > 0_u128 {
                 assert(ins_addr != 0.try_into().unwrap(), 'VAULT: INS_NOT_CONFIGURED');
                 let absorbed = IPELInsuranceReserveDispatcher { contract_address: ins_addr }
                     .absorb_bad_debt(insurance_deficit_cents);
-                self.lp_pool_nav.write(self.lp_pool_nav.read() + absorbed);
                 insurance_absorbed_cents = absorbed;
                 let remaining = insurance_deficit_cents - absorbed;
+
+                let mut new_nav = self.lp_pool_nav.read() + absorbed;
                 if remaining > 0_u128 {
                     self.bad_debt_total.write(self.bad_debt_total.read() + remaining);
+                    new_nav = if new_nav >= remaining { new_nav - remaining } else { 0_u128 };
                     self.emit(BadDebtRecorded {
                         amount_cents: remaining,
                         cumulative: self.bad_debt_total.read(),
                     });
                 }
+                self.lp_pool_nav.write(new_nav);
             }
 
             self.emit(LiquidationSettled {

@@ -1106,3 +1106,36 @@
 #### ✅ Verification & Test Results
 * **Vitest Suite:** 29 test files passed (29/29), 260 tests passed (260/260), 0 failures.
 * **Next.js Production Build:** `npm run build` succeeds with 0 errors (`✓ Generating static pages (6/6)`).
+
+---
+
+## 📅 Saturday, August 22, 2026 — FINAL PRODUCTIZATION & SHIPPING RUN
+
+#### 🔴 [BIG CHANGE] — P0 Payout Safety: claim-before-shield invariant
+* `src/services/strk20SdkService.ts` — `closePerpPosition` now enforces a hard invariant: the payout note MUST be claimed from the LP vault and delivery MUST be verified (`balance_after - balance_before >= payout`) before any STRK20 shielding. A failed or skipped claim enters `PAYOUT_CLAIM_FAILED` and NEVER shields (prevents self-funded payouts). Missing payout identity (`payoutNullifier`/`payoutCommitment`) fails closed.
+* `src/protocol/canonical.ts` + `src/services/pelCircuitService.ts` — Added `PAYOUT_NULLIFIER_TAG` and `computePayoutNullifier`; `generateCloseProof` now returns the payout nullifier alongside the commitment.
+* `src/protocol/types.ts` — Expanded the payout state machine with `POSITION_CLOSING/POSITION_CLOSED/PAYOUT_CLAIM_PENDING/PAYOUT_CLAIMING/PAYOUT_CLAIMED/PAYOUT_CLAIM_FAILED/PAYOUT_NOTE_DISCOVERY_PENDING/PAYOUT_UNSHIELDING`.
+* `src/services/starknetPerpsDispatcher.ts` — Added `getTokenBalance` for actual delivery verification.
+* `src/components/tabs/PerpsTab.tsx` — Wires the payout nullifier/commitment into the close flow; removed the fabricated `vaultService.addNote` (tx hash is never a note commitment); final close message reflects the real claim→shield state.
+
+#### 🔴 [BIG CHANGE] — Cairo accounting correctness (2 P0 bugs fixed)
+* `contracts/src/pel_liquidity_vault.cairo`:
+  * **Bad-debt NAV overstatement fix** — `settle_liquidation` now reduces LP NAV by the insurance-uncovered bad-debt remainder (LP is the ultimate backstop), so conservation holds.
+  * **Missing-note value-loss fix** — `settle_trader_pnl` now fails closed (`VAULT: MISSING_NOTE`) when a non-zero payout has no note commitment (previously the payout value silently vanished).
+
+#### 🔴 [BIG CHANGE] — Cairo & Rust test toolchain unblocked + real execution
+* Installed Rust (`rustup`, cargo 1.98) to unblock `snforge test` and `cargo test` (previously blocked by missing toolchain).
+* `crates/pel-risk-engine` — Fixed serde derive imports + golden-vector test references; **`cargo test` = 5/5 passing**.
+* `contracts/tests/` — Rewrote both test files for snforge_std 0.57 (`deploy(...).unwrap().0` tuple API, `start_cheat_*` cheatcodes, `#[should_panic]` revert assertions); fixed a pre-existing conservation-test bug (`deploy` returned the token address instead of the adapter address). **`snforge test` = 20/20 passing** (deposit/shares, fair pricing, profit/loss, funding, liquidation waterfall, insurance real custody, bad debt, withdrawal Model A, double-claim/unauthorized/cap/utilization rejections, conservation).
+
+#### 🔴 [BIG CHANGE] — Devnet E2E upgraded to the canonical LP vault
+* `scripts/deploy_perps_devnet.ts` — Now deploys + wires `PELLiquidityVault` and `PELInsuranceReserve`, bootstraps $10M LP capital, and approves the vault for trader margin. Manifest extended with `lpVault`/`insurance`.
+* `tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts` — Updated collateral-movement assertion to the vault (8/9 real-verifier OPEN steps pass; last assertion updated).
+* `tests/e2e/REAL_LIFECYCLE_E2E.test.ts` — Rewritten for the vault: OPEN→profitable CLOSE (LP pays full profit), OPEN→losing CLOSE (full loss to LP NAV), OPEN→LIQUIDATION (proof-bound seizedCollateral/badDebt + 70/20/10 waterfall), with proof-derived delta assertions and conservation checks.
+
+#### 🟢 [SMALL CHANGE] — Frontend honesty sweep (Phase 19/11)
+* Deleted `src/services/earnService.ts` (simulated localStorage earn vault); `PortfolioTab` now derives the LP position value from the real `pelLiquidityService` (fail-closed to null when the vault is unavailable — never fabricated).
+* `PerpsTab` position table now labels private fields (`Size · PRIVATE`, `Entry · PRIVATE`, `PnL · PRIVATE`) with an explicit privacy disclosure.
+
+#### 📝 Documentation
+* `README.md` — Updated LP (§13), insurance/bad-debt waterfall (§14), LIQUIDATE proof-bound outputs (§7–11), test commands (§16–17), and real-network status (§26) to match the canonical `PELLiquidityVault` architecture.

@@ -136,12 +136,18 @@ export const CALLDATA_SCHEMAS = {
 
 export type PositionPayoutStatus =
   | 'POSITION_OPEN'
-  | 'CLOSING'
-  | 'CLOSED_PENDING_SHIELD'
+  | 'POSITION_CLOSING'
+  | 'POSITION_CLOSED'
+  | 'PAYOUT_CLAIM_PENDING'
+  | 'PAYOUT_CLAIMING'
+  | 'PAYOUT_CLAIMED'
+  | 'PAYOUT_CLAIM_FAILED'
   | 'PAYOUT_SHIELDING'
+  | 'PAYOUT_NOTE_DISCOVERY_PENDING'
   | 'PAYOUT_SHIELDED'
-  | 'PAYOUT_FAILED'
-  | 'PAYOUT_UNSHIELDED';
+  | 'PAYOUT_UNSHIELDING'
+  | 'PAYOUT_UNSHIELDED'
+  | 'PAYOUT_FAILED';
 
 export interface PendingPayoutRecord {
   readonly commitment: string;

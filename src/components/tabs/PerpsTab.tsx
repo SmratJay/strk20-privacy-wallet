@@ -566,6 +566,12 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         PERPS_DEPLOYMENTS.sepolia.pelCoreAddress,
         targetPos.marketId as 'BTC-PERP',
         closeProof.calldata,
+        {
+          expectedCommitment: '0x' + closeProof.commitment.toString(16),
+          expectedNullifier: '0x' + closeProof.nullifier.toString(16),
+          payoutCommitment: closeProof.payoutCommitment,
+          payoutNullifier: closeProof.payoutNullifier,
+        },
       );
 
       setCurrentTxHash(executionRes.closeTxHash);
@@ -577,29 +583,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
         { ...prev[2], status: 'LOADING' },
       ]);
 
-      const payoutAmountUsd = executionRes.authoritativePayoutUsd ?? Number(closeProof.payout) / 100;
+      // Reflect the real payout state machine: claim (verified delivery) -> shield.
+      const finalDesc = executionRes.payoutShielded
+        ? `Payout delivered + claimed + shielded into STRK20. Tx: ${executionRes.closeTxHash.slice(0, 16)}...`
+        : executionRes.payoutClaimed
+          ? `Payout delivered to your wallet. STRK20 shield pending — retry shielding.`
+          : `Position closed. Payout claim pending/failed — retry the vault claim (do not self-fund).`;
 
       setModalSteps((prev) => [
         prev[0],
         prev[1],
-        {
-          ...prev[2],
-          status: 'SUCCESS',
-          desc: executionRes.payoutShielded
-            ? `Settlement confirmed + payout shielded into STRK20! Tx: ${executionRes.closeTxHash.slice(0, 16)}...`
-            : `Position closed. Payout pending privacy shield — retry shielding when operator services are available.`,
-        },
+        { ...prev[2], status: 'SUCCESS', desc: finalDesc },
       ]);
 
-      // Local cache note is strictly a UI cache — authoritative state is STRK20 discovery.
-      vaultService.addNote(
-        effectiveAddress,
-        'SN_SEPOLIA',
-        SEPOLIA_USDC_ADDRESS,
-        'USDC',
-        BigInt(Math.floor(payoutAmountUsd * 1e6)),
-        executionRes.closeTxHash
-      );
+      // Do NOT fabricate a cached note: authoritative note state comes from STRK20
+      // discovery after a real shield. A transaction hash is never a note commitment.
 
       await deleteWitness(effectiveAddress, targetPos.zkCommitment, witnessSignature);
       perpsService.closePosition(effectiveAddress, positionId);
@@ -1073,14 +1071,21 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
+            <div className="flex items-center gap-2 mb-2 text-[10px] text-[#a1a1aa]">
+              <Lock className="w-3 h-3 text-[#a855f7]" />
+              <span>
+                <strong className="text-[#c084fc]">PRIVATE POSITION STATE:</strong> size, entry, and PnL below are
+                known only to your local ZK witness — they are never published on-chain in plaintext.
+              </span>
+            </div>
             <table className="w-full text-left text-xs text-[#d4d4d8]">
               <thead className="text-[10px] uppercase tracking-wider text-[#71717a] border-b border-[#27272a] pb-2">
                 <tr>
                   <th className="py-2.5 px-3">Market / Side</th>
-                  <th className="py-2.5 px-3">Size (Notional)</th>
-                  <th className="py-2.5 px-3">Entry Price</th>
+                  <th className="py-2.5 px-3">Size <span className="text-[#a855f7]">· PRIVATE</span></th>
+                  <th className="py-2.5 px-3">Entry <span className="text-[#a855f7]">· PRIVATE</span></th>
                   <th className="py-2.5 px-3">Liq Price & Buffer</th>
-                  <th className="py-2.5 px-3">Unrealized PnL</th>
+                  <th className="py-2.5 px-3">PnL <span className="text-[#a855f7]">· PRIVATE</span></th>
                   <th className="py-2.5 px-3">STARK Commitment</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>

@@ -17,7 +17,7 @@ import {
 import { ShieldedBalance } from '@/services/privacyService';
 import { TokenInfo } from '@/config/tokens';
 import { perpsService } from '@/services/perpsService';
-import { earnService } from '@/services/earnService';
+import { pelLiquidityService } from '@/services/pelLiquidityService';
 
 import { priceService } from '@/services/priceService';
 
@@ -35,12 +35,34 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
   const [tokenPrices, setTokenPrices] = React.useState<Record<string, number>>(() => ({
     ...priceService.getCachedPrices(),
   }));
+  // Real on-chain LP counterparty position value (PELLiquidityVault), NOT a simulated
+  // earn vault. null = unavailable/not deployed; 0 = no LP position.
+  const [lpValueUsd, setLpValueUsd] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     priceService.getPrices().then((prices) => {
       setTokenPrices({ ...prices });
     }).catch(() => {});
   }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [metrics, shares] = await Promise.all([
+          pelLiquidityService.fetchPoolMetrics(),
+          walletAddress ? pelLiquidityService.fetchLpShares(walletAddress) : Promise.resolve(0n),
+        ]);
+        if (cancelled) return;
+        const sharePriceUsd = Number(metrics.sharePriceE6) / 1_000_000;
+        const valueUsd = (Number(shares) * sharePriceUsd) / 10_000;
+        setLpValueUsd(valueUsd);
+      } catch {
+        if (!cancelled) setLpValueUsd(null); // vault unavailable -> fail closed, no fabricated value
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [walletAddress]);
 
   // 1. Calculate Shielded Cash Value
   const shieldedCashUsd = useMemo(() => {
@@ -69,14 +91,8 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
     return perpPositions.reduce((acc, p) => acc + p.marginUsd + p.unrealizedPnlUsd, 0);
   }, [perpPositions]);
 
-  // 4. Calculate Earn / Lending Vault Value
-  const userDeposits = useMemo(() => {
-    return walletAddress ? earnService.getUserDeposits(walletAddress, tokenPrices) : [];
-  }, [walletAddress]);
-
-  const earnDepositsUsd = useMemo(() => {
-    return userDeposits.reduce((acc, d) => acc + d.depositedAmountUsd + d.accruedYieldUsd, 0);
-  }, [userDeposits]);
+  // 4. Calculate real LP counterparty vault value (PELLiquidityVault). Never fabricated.
+  const earnDepositsUsd = lpValueUsd ?? 0;
 
   // Total Private Net Worth: NetWorth = sum(Value(Ni)) + sum(Equity(Posj)) + sum(Value(Vaultk))
   const privateNetWorthUsd = shieldedCashUsd + perpEquityUsd + earnDepositsUsd;
@@ -150,13 +166,15 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
 
           <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 hover:border-orrange-500/40 transition-all">
             <div className="text-[10px] text-zinc-500 uppercase flex items-center justify-between font-bold">
-              <span>3. Shielded Lending Vaults</span>
+              <span>3. LP Counterparty Position</span>
               <Layers className="w-3 h-3 text-orrange-400" />
             </div>
             <div className="text-lg font-bold text-white mt-1">
               ${earnDepositsUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[10px] text-orrange-400 mt-0.5 font-bold uppercase">[ VESU YIELD ACTIVE ]</div>
+            <div className="text-[10px] text-orrange-400 mt-0.5 font-bold uppercase">
+              [ {lpValueUsd === null ? 'LP VAULT UNAVAILABLE' : 'PELLiquidityVault' } ]
+            </div>
           </div>
         </div>
       </div>

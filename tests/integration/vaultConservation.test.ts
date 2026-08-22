@@ -102,7 +102,11 @@ class ModelVault {
       }
     }
     if (loss > 0n) this.state.navCents += loss;
-    if (payoutCents > 0n && noteCommitment !== 0n) {
+    // Fail closed: a non-zero payout MUST have a note commitment (matches Cairo).
+    if (payoutCents > 0n && noteCommitment === 0n) {
+      throw new Error('VAULT: MISSING_NOTE');
+    }
+    if (payoutCents > 0n) {
       this.state.unclaimedPayoutsCents += payoutCents;
     }
     this.assertConserved('settle_pnl');
@@ -198,7 +202,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
     // profit  (payout ,500 on ,000 margin)
-    v.settleTraderPnl(100_000n, 150_000n, false, 0xaa);
+    v.settleTraderPnl(100_000n, 150_000n, false, 0xaan);
     expect(v.state.navCents).toBe(950_000n);
     expect(v.state.unclaimedPayoutsCents).toBe(150_000n);
     v.assertConserved('profit');
@@ -209,7 +213,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
     // loss  (payout  on ,000 margin)
-    v.settleTraderPnl(100_000n, 20_000n, false, 0xbb);
+    v.settleTraderPnl(100_000n, 20_000n, false, 0xbbn);
     expect(v.state.navCents).toBe(1_080_000n);
     expect(v.state.unclaimedPayoutsCents).toBe(20_000n);
     v.assertConserved('loss');
@@ -253,7 +257,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.lockTraderMargin(0n, 100_000n);
     v.insurance.balanceCents = 0n; // exhausted
     // trader wins 1,200,000 on 100,000 margin -> profit 1,100,000 > NAV 1,000,000
-    expect(() => v.settleTraderPnl(100_000n, 1_200_000n, false, 0xbb)).toThrow('VAULT: INSUFFICIENT_NAV');
+    expect(() => v.settleTraderPnl(100_000n, 1_200_000n, false, 0xbbn)).toThrow('VAULT: INSUFFICIENT_NAV');
     expect(v.state.unclaimedPayoutsCents).toBe(0n);
     expect(v.state.badDebtCents).toBe(0n);
   });
@@ -289,7 +293,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.lockPoolCustodiedMargin(100_000n);
     expect(v.state.poolAssetsCents).toBe(100_000n);
     expect(v.state.poolMarginCents).toBe(100_000n);
-    v.settleTraderPnl(100_000n, 20_000n, true, 0xcc);
+    v.settleTraderPnl(100_000n, 20_000n, true, 0xccn);
     expect(v.state.poolMarginCents).toBe(0n);
     expect(v.state.navCents).toBe(1_000_000n + 80_000n);
     v.assertConserved('shielded_loss');

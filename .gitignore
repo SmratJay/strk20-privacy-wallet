@@ -44,3 +44,8 @@ yarn-error.log*
 
 # Cache
 .cache/
+.snfoundry_cache/
+
+# Rust (pel-risk-engine is a library; lock + target are not tracked)
+crates/**/target/
+crates/**/Cargo.lock

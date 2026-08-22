@@ -74,6 +74,7 @@ export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString(
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
 export const MARGIN_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_MARGIN_NULLIFIER_V2').toString('hex'));
 export const PAYOUT_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_V2').toString('hex'));
+export const PAYOUT_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_NULLIFIER_V2').toString('hex'));
 
 export const PRICE_SCALE = 100n; // Cents ($1.00 = 100)
 export const QTY_SCALE = 100_000_000n; // Satoshis (1 BTC = 1e8 sats)

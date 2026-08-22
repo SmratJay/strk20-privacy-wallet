@@ -1,5 +1,4 @@
 use crate::types::*;
-use crate::risk_engine::RiskEngine;
 
 /// Golden PnL / equity / liquidation vectors shared with Cairo and TypeScript.
 pub struct GoldenVector {
@@ -146,12 +145,13 @@ pub fn partial_withdrawal_expected_cents() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::risk_engine::RiskEngine;
 
     #[test]
     fn golden_pnl_vectors_pass() {
         for v in get_golden_test_vectors() {
             let pnl = RiskEngine::calc_pnl_cents(v.side, v.quantity_sats, v.entry_price_cents, v.mark_price_cents);
-            assert_eq!(pnl, v.expected_pnl_cents, "PnL mismatch for vector {:?} side={:?}", v.label, v.side);
+            assert_eq!(pnl, v.expected_pnl_cents, "PnL mismatch for vector side={:?}", v.side);
             let equity = RiskEngine::calc_equity_cents(v.margin_cents, pnl, 0, 0);
             assert_eq!(equity, v.expected_equity_cents, "Equity mismatch");
         }

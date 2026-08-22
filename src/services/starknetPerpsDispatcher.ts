@@ -541,6 +541,29 @@ export class StarknetPerpsDispatcher {
   }
 
   /**
+   * Query the canonical collateral token balance (token base units) for an address.
+   * Used to verify actual payout delivery — never trusts tx status alone.
+   */
+  async getTokenBalance(
+    accountAddress: string,
+    tokenAddress?: string,
+    network: 'sepolia' = 'sepolia'
+  ): Promise<bigint> {
+    const config = PERPS_DEPLOYMENTS[network];
+    const token = tokenAddress || config.collateralTokenAddress;
+    const res = await this.provider.callContract({
+      contractAddress: token,
+      entrypoint: 'balance_of',
+      calldata: [accountAddress],
+    });
+    const low = res?.[0]?.toString?.() ?? '0x0';
+    const high = res?.[1]?.toString?.() ?? '0x0';
+    const lowBig = BigInt(low === '0x' ? '0x0' : low);
+    const highBig = BigInt(high === '0x' ? '0x0' : high);
+    return (highBig << 128n) | lowBig;
+  }
+
+  /**
    * Execute real transaction on Starknet via browser account and wait for finality.
    * Returns SUCCESS / REVERTED / REJECTED — never treats `execute()` submission as
    * proof of a successful state transition.

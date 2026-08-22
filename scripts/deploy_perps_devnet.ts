@@ -38,6 +38,8 @@ export interface PerpsDevnetManifest {
   strk20Adapter: string;
   pelStrk20Bridge: string;
   collateralToken: string;
+  lpVault: string;
+  insurance: string;
   ecipClassHash: string;
   openVerifier: string;
   updateVerifier: string;
@@ -192,6 +194,28 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
   const strk20Address = strk20Dep.contract_address;
   txHashes.strk20Adapter = strk20Dep.transaction_hash;
 
+  // 5b. PELInsuranceReserve (real USDC custody tail-risk reserve)
+  const insuranceArt = readSierraCasm('pel_perpetuals_core', 'PELInsuranceReserve', CORE_TARGET);
+  const insuranceClassHash = await declareIfNotExists(admin, provider, insuranceArt.sierra, insuranceArt.casm);
+  const insuranceDep = await admin.deployContract({
+    classHash: insuranceClassHash,
+    constructorCalldata: [adminAddress, usdcAddress, '1000000'], // target reserve $10k cents
+  });
+  await provider.waitForTransaction(insuranceDep.transaction_hash);
+  const insuranceAddress = insuranceDep.contract_address;
+  txHashes.insurance = insuranceDep.transaction_hash;
+
+  // 5c. PELLiquidityVault (canonical LP counterparty custody layer)
+  const vaultArt = readSierraCasm('pel_perpetuals_core', 'PELLiquidityVault', CORE_TARGET);
+  const vaultClassHash = await declareIfNotExists(admin, provider, vaultArt.sierra, vaultArt.casm);
+  const vaultDep = await admin.deployContract({
+    classHash: vaultClassHash,
+    constructorCalldata: [adminAddress, usdcAddress, adminAddress], // admin, collateral, treasury=admin
+  });
+  await provider.waitForTransaction(vaultDep.transaction_hash);
+  const vaultAddress = vaultDep.contract_address;
+  txHashes.lpVault = vaultDep.transaction_hash;
+
   // 6. PELPerpsCore wired to the five DISTINCT verifiers
   const core = readSierraCasm('pel_perpetuals_core', 'PELPerpsCore', CORE_TARGET);
   const coreClassHash = await declareIfNotExists(admin, provider, core.sierra, core.casm);
@@ -250,6 +274,28 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
   await provider.waitForTransaction(setOracle.transaction_hash);
   txHashes.wire_set_oracle = setOracle.transaction_hash;
 
+  // 7b. Wire the canonical LP counterparty: vault <-> core <-> insurance.
+  const setVaultCore = await admin.execute({ contractAddress: vaultAddress, entrypoint: 'set_pel_core_address', calldata: [coreAddress] });
+  await provider.waitForTransaction(setVaultCore.transaction_hash);
+  txHashes.wire_vault_set_core = setVaultCore.transaction_hash;
+
+  const setVaultInsurance = await admin.execute({ contractAddress: vaultAddress, entrypoint: 'set_insurance_reserve', calldata: [insuranceAddress] });
+  await provider.waitForTransaction(setVaultInsurance.transaction_hash);
+  txHashes.wire_vault_set_insurance = setVaultInsurance.transaction_hash;
+
+  const setInsuranceVault = await admin.execute({ contractAddress: insuranceAddress, entrypoint: 'set_authorized_caller', calldata: [vaultAddress, '0x1'] });
+  await provider.waitForTransaction(setInsuranceVault.transaction_hash);
+  txHashes.wire_insurance_authorize_vault = setInsuranceVault.transaction_hash;
+
+  // Core -> LP vault + insurance (fail-closed settlement authority).
+  const setCoreVault = await admin.execute({ contractAddress: coreAddress, entrypoint: 'set_lp_vault', calldata: [vaultAddress] });
+  await provider.waitForTransaction(setCoreVault.transaction_hash);
+  txHashes.wire_core_set_vault = setCoreVault.transaction_hash;
+
+  const setCoreInsurance = await admin.execute({ contractAddress: coreAddress, entrypoint: 'set_insurance_reserve', calldata: [insuranceAddress] });
+  await provider.waitForTransaction(setCoreInsurance.transaction_hash);
+  txHashes.wire_core_set_insurance = setCoreInsurance.transaction_hash;
+
   const block = await provider.getBlock('latest');
   const publish = await admin.execute({
     contractAddress: oracleAddress,
@@ -259,9 +305,9 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
   await provider.waitForTransaction(publish.transaction_hash);
   txHashes.oracle_publish = publish.transaction_hash;
 
-  // mint collateral to trader + keeper, approve adapter
+  // mint collateral to trader + keeper + admin (LP)
   const mintAmt = uint256.bnToUint256(1_000_000_000_000n * 10000n); // 1e9 cents in token units
-  for (const [name, addr] of [['trader', traderAddress], ['keeper', keeperAddress]] as const) {
+  for (const [name, addr] of [['trader', traderAddress], ['keeper', keeperAddress], ['admin', adminAddress]] as const) {
     const mint = await admin.execute({
       contractAddress: usdcAddress,
       entrypoint: 'mint',
@@ -270,11 +316,34 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
     await provider.waitForTransaction(mint.transaction_hash);
     txHashes[`mint_${name}`] = mint.transaction_hash;
   }
+
+  // LP bootstrap deposit: the vault enforces a single-position cap relative to NAV,
+  // so the pool needs real counterparty capital before any OPEN can clear. $10M keeps
+  // the 5% NAV cap (-> $10,000 margin) well above the E2E test margins.
+  const lpDepositCents = 1_000_000_000n; // $10,000,000.00
+  const lpApproveUnits = lpDepositCents * 10000n;
+  const lpApprove = await admin.execute({
+    contractAddress: usdcAddress,
+    entrypoint: 'approve',
+    calldata: [vaultAddress, '0x' + lpApproveUnits.toString(16), '0x0'],
+  });
+  await provider.waitForTransaction(lpApprove.transaction_hash);
+  txHashes.lp_approve = lpApprove.transaction_hash;
+
+  const lpDeposit = await admin.execute({
+    contractAddress: vaultAddress,
+    entrypoint: 'deposit_liquidity',
+    calldata: ['0x' + lpDepositCents.toString(16)],
+  });
+  await provider.waitForTransaction(lpDeposit.transaction_hash);
+  txHashes.lp_deposit = lpDeposit.transaction_hash;
+
+  // Trader approves the LP vault (the vault pulls the margin via transfer_from).
   const approveUnits = 500000n * 10000n; // 500k cents margin
   const approve = await trader.execute({
     contractAddress: usdcAddress,
     entrypoint: 'approve',
-    calldata: [strk20Address, '0x' + approveUnits.toString(16), '0x0'],
+    calldata: [vaultAddress, '0x' + approveUnits.toString(16), '0x0'],
   });
   await provider.waitForTransaction(approve.transaction_hash);
   txHashes.trader_approve = approve.transaction_hash;
@@ -287,6 +356,8 @@ export async function deployPerpsDevnet(rpcUrl = 'http://127.0.0.1:5050'): Promi
     strk20Adapter: strk20Address,
     pelStrk20Bridge: bridgeAddress,
     collateralToken: usdcAddress,
+    lpVault: vaultAddress,
+    insurance: insuranceAddress,
     ecipClassHash,
     openVerifier: verifiers.open,
     updateVerifier: verifiers.update,

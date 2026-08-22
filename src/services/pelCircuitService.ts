@@ -19,6 +19,7 @@ export const DOMAIN_SEP = BigInt('0x' + Buffer.from('PEL_POSITION_V2').toString(
 export const NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_NULLIFIER_V2').toString('hex'));
 export const MARGIN_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_MARGIN_NULLIFIER_V2').toString('hex'));
 export const PAYOUT_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_V2').toString('hex'));
+export const PAYOUT_NULLIFIER_TAG = BigInt('0x' + Buffer.from('PEL_PAYOUT_NULLIFIER_V2').toString('hex'));
 export const MARKET_ID = BigInt('0x' + Buffer.from('BTC-PERP').toString('hex'));
 export const QTY_SCALE = 100000000n; // sats per BTC
 
@@ -145,6 +146,11 @@ export async function computeMarginNullifier(ownerSecret: bigint, commitment: bi
 
 export async function computePayoutCommitment(payoutAmount: bigint, payoutNonce: bigint): Promise<bigint> {
   return poseidonHash([PAYOUT_TAG, payoutAmount, payoutNonce]);
+}
+
+/** Deterministic payout nullifier used for vault note replay protection. */
+export async function computePayoutNullifier(payoutAmount: bigint, payoutNonce: bigint): Promise<bigint> {
+  return poseidonHash([PAYOUT_NULLIFIER_TAG, payoutAmount, payoutNonce]);
 }
 
 export function decomposeSigned(value: bigint): [bigint, bigint] {
@@ -291,11 +297,12 @@ export async function generateOpenProof(w: OpenWitness): Promise<ProvenTransitio
   return { proof, publicSignals, commitment, nullifier: nullifier_, calldata };
 }
 
-export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransition & { payout: bigint; payoutCommitment: bigint }> {
+export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransition & { payout: bigint; payoutCommitment: bigint; payoutNullifier: bigint }> {
   const commitment = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
   const nullifier_ = await computeNullifier(w.ownerSecret, commitment);
   const s = computeCloseSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.oraclePriceCents);
   const payoutCommitment = await computePayoutCommitment(s.payout, w.payoutNonce);
+  const payoutNullifier = await computePayoutNullifier(s.payout, w.payoutNonce);
 
   const input = {
     commitment: commitment.toString(),
@@ -332,7 +339,7 @@ export async function generateCloseProof(w: CloseWitness): Promise<ProvenTransit
   );
 
   const calldata = await generateGaragaCalldata('CLOSE', proof, publicSignals);
-  return { proof, publicSignals, commitment, nullifier: nullifier_, payout: s.payout, payoutCommitment, calldata };
+  return { proof, publicSignals, commitment, nullifier: nullifier_, payout: s.payout, payoutCommitment, payoutNullifier, calldata };
 }
 
 export async function generateUpdateProof(w: UpdateWitness): Promise<ProvenTransition & { newCommitment: bigint }> {
@@ -429,6 +436,7 @@ export const pelCircuitService = {
   computePositionCommitment,
   computeNullifier,
   computePayoutCommitment,
+  computePayoutNullifier,
   decomposeSigned,
   computeCloseSettlement,
   computeFundingSettlement,

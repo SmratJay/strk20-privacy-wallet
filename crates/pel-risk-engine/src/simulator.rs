@@ -1,5 +1,6 @@
 use crate::types::*;
 use crate::risk_engine::RiskEngine;
+use serde::{Serialize, Deserialize};
 
 /// Stress scenario with an integer basis-point shock (100 bps = +1.0%).
 #[derive(Debug, Clone, Serialize, Deserialize)]
