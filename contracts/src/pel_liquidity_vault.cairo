@@ -592,10 +592,15 @@ pub mod PELLiquidityVault {
             let bounties = self.unclaimed_bounties_total.read();
             let withdrawals = self.pending_withdrawals_total.read();
             let treasury = self.treasury_balance.read();
-            let bad_debt = self.bad_debt_total.read();
 
             let total_assets_cents = tokens_cents + pool_assets;
-            let total_liabilities_cents = locked + pool_margin + lp_nav + payouts + bounties + withdrawals + treasury + bad_debt;
+            // BAD DEBT is NOT a liability: it is a historical deficit ledger already
+            // reflected in the reduced lp_pool_nav. Adding it again would double-count the
+            // deficit and permanently mark a solvent vault as insolvent after any
+            // historical loss. The conservation identity is:
+            //   assets == locked + pool_margin + lp_nav + payouts + bounties
+            //             + withdrawals + treasury
+            let total_liabilities_cents = locked + pool_margin + lp_nav + payouts + bounties + withdrawals + treasury;
             let is_solvent = total_assets_cents >= total_liabilities_cents;
 
             (token_balance, locked + pool_margin, lp_nav, payouts, bounties, withdrawals, treasury, is_solvent)

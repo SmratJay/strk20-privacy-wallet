@@ -70,6 +70,10 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
   const [priceFlash, setPriceFlash] = useState<'UP' | 'DOWN' | null>(null);
   const prevPriceRef = useRef<number>(0);
 
+  // Real 24h high/low from the live ticker (never a synthetic ±2.5% estimate).
+  const [high24h, setHigh24h] = useState<number | null>(null);
+  const [low24h, setLow24h] = useState<number | null>(null);
+
   // On-Chain Execution Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState('Opening Private Position');
@@ -132,6 +136,8 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
 
       if (btcTicker && btcTicker.price > 0) {
         perpsService.updateMarketPrice('BTC-PERP', btcTicker.price, btcTicker.change24h, btcTicker.volume24h);
+        if (btcTicker.high24h > 0) setHigh24h(btcTicker.high24h);
+        if (btcTicker.low24h > 0) setLow24h(btcTicker.low24h);
       }
 
       const updatedMarkets = perpsService.getMarkets();
@@ -714,7 +720,9 @@ export const PerpsTab: React.FC<PerpsTabProps> = ({ walletAddress }) => {
             <div>
               <span className="text-[10px] text-[#71717a] block uppercase font-sans font-medium">24h High / Low</span>
               <span className="font-semibold text-white">
-                ${(currentMarket.markPrice * 1.025).toFixed(1)} / ${(currentMarket.markPrice * 0.975).toFixed(1)}
+                {high24h !== null && low24h !== null
+                  ? `$${high24h.toLocaleString(undefined, { maximumFractionDigits: 1 })} / $${low24h.toLocaleString(undefined, { maximumFractionDigits: 1 })}`
+                  : '—'}
               </span>
             </div>
 

@@ -145,7 +145,13 @@ export class KeeperService {
       return [];
     }
 
-    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
+    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS;
+    if (!keeperRecipient) {
+      // Fail closed: never infer/credit keeper bounty to a placeholder address.
+      console.warn('[KeeperService] KEEPER_ADDRESS is not configured. Failing closed (no candidates).');
+      this.lastError = 'Keeper address not configured (KEEPER_ADDRESS / NEXT_PUBLIC_KEEPER_ADDRESS).';
+      return [];
+    }
     const maintBps = BigInt(BTC_PERP_CONFIG.maintenanceMarginBps);
 
     for (const pos of activePositions) {
@@ -302,9 +308,15 @@ export class KeeperService {
    */
   start(intervalMs: number = 10000, signerAccount?: any): Promise<void> {
     if (this.isRunning) return Promise.resolve();
+    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS;
+    if (!keeperRecipient) {
+      // Fail closed: the keeper cannot operate without a real bounty recipient.
+      this.lastError = 'Keeper address not configured (KEEPER_ADDRESS / NEXT_PUBLIC_KEEPER_ADDRESS).';
+      console.error('[KeeperService]', this.lastError);
+      return Promise.reject(new Error(this.lastError));
+    }
     this.isRunning = true;
     this.shutdownRequested = false;
-    const keeperRecipient = process.env.KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '0x01';
 
     this.loopPromise = (async () => {
       while (this.isRunning && !this.shutdownRequested) {

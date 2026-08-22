@@ -78,14 +78,17 @@ export class PELLiquidityService {
 
     const navCents = BigInt(navRes.toString());
     const totalShares = BigInt(sharesRes.toString());
-    const lockedCollateralCents = BigInt(lockedRes.toString());
+    const poolMarginCents = BigInt(poolMarginRes.toString());
+    // get_locked_liquidity() returns PUBLIC locked + pool-custodied margin combined.
+    // The public locked bucket must EXCLUDE pool margin to avoid double counting
+    // (LPVaultState.lockedCollateralCents is the public vault-held USDC bucket only).
+    const lockedCollateralCents = BigInt(lockedRes.toString()) - poolMarginCents;
     const availableLiquidityCents = BigInt(availRes.toString());
     const utilizationBps = Number(utilRes.toString());
     const sharePriceE6 = BigInt(priceRes.toString());
     const treasuryCents = BigInt(treasuryRes.toString());
     const badDebtCents = BigInt(badDebtRes.toString());
     const poolReceivableCents = BigInt(poolReceivableRes.toString());
-    const poolMarginCents = BigInt(poolMarginRes.toString());
     const poolAssetsCents = BigInt(poolAssetsRes.toString());
     const pendingWithdrawalsCents = BigInt(pendingWithdrawalsRes.toString());
 

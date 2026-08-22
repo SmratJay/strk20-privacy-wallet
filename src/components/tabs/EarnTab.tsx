@@ -68,14 +68,19 @@ export const EarnTab: React.FC<EarnTabProps> = ({ walletAddress }) => {
   }, [walletAddress]);
 
   const navUsd = metrics ? Number(metrics.navCents) / 100 : 0;
-  const sharePriceUsd = metrics ? Number(metrics.sharePriceE6) / 1_000_000 : 0;
+  // On-chain get_share_price_e6 returns USD-per-raw-share * 1e12 (see lpVault.ts /
+  // pel_liquidity_vault.cairo). The UI displays "shares" in units of 10,000 raw shares
+  // ($1 = 1e6 raw shares = 100 displayed shares), so the per-displayed-share price is
+  // sharePriceE6 / 1e8. Using this directly (instead of a fabricated $1.00) keeps the
+  // displayed share price, LP value, and share count internally consistent.
+  const sharePriceUsd = metrics ? Number(metrics.sharePriceE6) / 1e8 : 0;
   const availableLiquidityUsd = metrics ? Number(metrics.availableLiquidityCents) / 100 : 0;
   const lockedCollateralUsd = metrics ? Number(metrics.lockedCollateralCents + metrics.poolMarginCents) / 100 : 0;
   const treasuryUsd = metrics ? Number(metrics.treasuryCents) / 100 : 0;
   const utilizationPct = metrics ? (metrics.utilizationBps / 100).toFixed(1) : "0.0";
 
   const userDepositValueUsd = metrics
-    ? (Number(userShares) * sharePriceUsd) / 10_000
+    ? (Number(userShares) / 10_000) * sharePriceUsd
     : 0;
   const userPoolSharePct = metrics && metrics.totalShares > 0n
     ? ((Number(userShares) / Number(metrics.totalShares)) * 100).toFixed(2)

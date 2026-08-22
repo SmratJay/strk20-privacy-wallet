@@ -142,6 +142,8 @@ export const PUBLIC_INPUT_LAYOUTS = {
     ['marketId', 'felt'],
     ['oraclePrice', 'felt'],
     ['keeper', 'felt'],
+    ['seizedCollateral', 'felt'],
+    ['badDebt', 'felt'],
   ],
 } as const;
 

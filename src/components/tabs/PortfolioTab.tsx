@@ -54,8 +54,9 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
           walletAddress ? pelLiquidityService.fetchLpShares(walletAddress) : Promise.resolve(0n),
         ]);
         if (cancelled) return;
-        const sharePriceUsd = Number(metrics.sharePriceE6) / 1_000_000;
-        const valueUsd = (Number(shares) * sharePriceUsd) / 10_000;
+        // On-chain get_share_price_e6 returns USD-per-raw-share * 1e12 (see lpVault.ts /
+        // pel_liquidity_vault.cairo). True LP value = shares * sharePriceE6 / 1e12.
+        const valueUsd = (Number(shares) * Number(metrics.sharePriceE6)) / 1_000_000_000_000;
         setLpValueUsd(valueUsd);
       } catch {
         if (!cancelled) setLpValueUsd(null); // vault unavailable -> fail closed, no fabricated value
