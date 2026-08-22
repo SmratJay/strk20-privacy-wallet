@@ -310,3 +310,67 @@ export async function requestWitnessEncryptionSignature(provider: any, chainId: 
   }
   return sig.join('|');
 }
+
+// ─── Authoritative Pending Payout Persistence ───────────────────────────────
+
+import { PendingPayoutRecord, PositionPayoutStatus } from './types';
+
+const PAYOUT_NAMESPACE = 'pel_pending_payouts_v3';
+
+function payoutStoreKey(walletAddress: string): string {
+  return `${PAYOUT_NAMESPACE}_${walletAddress.toLowerCase()}`;
+}
+
+export function loadPendingPayouts(walletAddress: string): PendingPayoutRecord[] {
+  const key = payoutStoreKey(walletAddress);
+  const raw = storageAvailable() ? localStorage.getItem(key) : memStore.get(key);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw, (_, v) =>
+      typeof v === 'string' && v.startsWith('__bigint__') ? BigInt(v.slice(10)) : v
+    );
+    return Array.isArray(parsed) ? (parsed as PendingPayoutRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePendingPayout(walletAddress: string, payout: PendingPayoutRecord): void {
+  const key = payoutStoreKey(walletAddress);
+  const existing = loadPendingPayouts(walletAddress).filter((p) => p.commitment !== payout.commitment);
+  existing.push(payout);
+  const serialised = JSON.stringify(existing, (_, v) =>
+    typeof v === 'bigint' ? `__bigint__${v.toString()}` : v
+  );
+  if (storageAvailable()) localStorage.setItem(key, serialised);
+  else memStore.set(key, serialised);
+}
+
+export function updatePendingPayoutStatus(
+  walletAddress: string,
+  commitment: string,
+  status: PositionPayoutStatus,
+  details?: { failureReason?: string; shieldedNoteCommitment?: string }
+): void {
+  const existing = loadPendingPayouts(walletAddress);
+  const target = existing.find((p) => p.commitment === commitment);
+  if (!target) return;
+  const updated: PendingPayoutRecord = {
+    ...target,
+    status,
+    failureReason: details?.failureReason ?? target.failureReason,
+    shieldedNoteCommitment: details?.shieldedNoteCommitment ?? target.shieldedNoteCommitment,
+    updatedAtMs: Date.now(),
+  };
+  savePendingPayout(walletAddress, updated);
+}
+
+export function clearPendingPayout(walletAddress: string, commitment: string): void {
+  const key = payoutStoreKey(walletAddress);
+  const remaining = loadPendingPayouts(walletAddress).filter((p) => p.commitment !== commitment);
+  const serialised = JSON.stringify(remaining, (_, v) =>
+    typeof v === 'bigint' ? `__bigint__${v.toString()}` : v
+  );
+  if (storageAvailable()) localStorage.setItem(key, serialised);
+  else memStore.set(key, serialised);
+}

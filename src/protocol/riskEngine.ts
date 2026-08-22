@@ -204,6 +204,48 @@ export class RiskEngine {
   }
 
   /**
+   * Authoritative liquidation waterfall matching Cairo PELPerpsCore & PELLiquidityVault
+   */
+  static getLiquidationSettlement(
+    lockedMarginCents: bigint,
+    pnlCents: bigint,
+    fundingCents: bigint = 0n,
+    feesCents: bigint = 0n,
+    keeperBountyBps: bigint | number = 200n
+  ): {
+    seizedCollateralCents: bigint;
+    badDebtCents: bigint;
+    traderLossCents: bigint;
+    keeperBountyCents: bigint;
+    lpShareCents: bigint;
+    insuranceShareCents: bigint;
+    treasuryShareCents: bigint;
+  } {
+    const margin = BigInt(lockedMarginCents);
+    const equity = calcEquityCents(margin, BigInt(pnlCents), BigInt(fundingCents), BigInt(feesCents));
+    const seizedCollateralCents = equity > 0n ? equity : 0n;
+    const badDebtCents = equity < 0n ? -equity : 0n;
+    const traderLossCents = margin > seizedCollateralCents ? margin - seizedCollateralCents : 0n;
+    const rawBounty = (seizedCollateralCents * BigInt(keeperBountyBps)) / 10000n;
+    const keeperBountyCents = rawBounty > 50000n ? 50000n : rawBounty;
+    const netSeized = seizedCollateralCents >= keeperBountyCents ? seizedCollateralCents - keeperBountyCents : 0n;
+    const lpRemnant = (netSeized * 7000n) / 10000n;
+    const insuranceShareCents = (netSeized * 2000n) / 10000n;
+    const treasuryShareCents = netSeized - lpRemnant - insuranceShareCents;
+    const lpShareCents = traderLossCents + lpRemnant;
+
+    return {
+      seizedCollateralCents,
+      badDebtCents,
+      traderLossCents,
+      keeperBountyCents,
+      lpShareCents,
+      insuranceShareCents,
+      treasuryShareCents,
+    };
+  }
+
+  /**
    * Calculate bad debt distribution & settlement waterfall
    */
   static getBadDebtWaterfall(

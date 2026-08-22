@@ -84,7 +84,8 @@ pub trait IPELPerpsCore<TContractState> {
 pub mod PELPerpsCore {
     use super::{IPELPerpsCore, MarketConfig, PositionRecord};
     use super::super::oracle_adapter::{IOracleAdapterDispatcher, IOracleAdapterDispatcherTrait};
-        use super::super::pel_liquidity_vault::{IPELLiquidityVaultDispatcher, IPELLiquidityVaultDispatcherTrait};
+    use super::super::pel_liquidity_vault::{IPELLiquidityVaultDispatcher, IPELLiquidityVaultDispatcherTrait};
+    use super::super::pel_insurance_reserve::{IPELInsuranceReserveDispatcher, IPELInsuranceReserveDispatcherTrait};
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
     use super::super::types::{u256_to_storage_key, u256_to_felt252};    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{
@@ -646,13 +647,16 @@ pub mod PELPerpsCore {
                 },
             };
 
-            // Layout: [ positionCommitment, positionNullifier, marketId, oraclePrice, keeper ]
-            assert(public_inputs.len() >= 5, 'MALFORMED_LIQ_PUBLIC_INPUTS');
+            // Layout: [ positionCommitment (0), positionNullifier (1), marketId (2), oraclePrice (3), keeper (4), seizedCollateral (5), badDebt (6) ]
+            assert(public_inputs.len() >= 7, 'MALFORMED_LIQ_PUBLIC_INPUTS');
             let position_commitment_key = u256_to_storage_key(*public_inputs.at(0));
             let position_nullifier_key = u256_to_storage_key(*public_inputs.at(1));
             let proof_market_id: felt252 = (*public_inputs.at(2)).low.into();
             let proof_oracle_price: u128 = (*public_inputs.at(3)).low;
             let proof_keeper: ContractAddress = u256_to_felt252(*public_inputs.at(4)).try_into().unwrap();
+            let seized_collateral: u128 = (*public_inputs.at(5)).low;
+            let bad_debt: u128 = (*public_inputs.at(6)).low;
+
             assert(proof_market_id == market_id, 'MARKET_ID_MISMATCH');
             assert(keeper_recipient == proof_keeper, 'KEEPER_RECIPIENT_MISMATCH');
 
@@ -665,6 +669,7 @@ pub mod PELPerpsCore {
             assert(pos.is_active, 'POSITION_NOT_ACTIVE');
             assert(pos.market_id == market_id, 'MARKET_ID_MISMATCH');
             assert(!self.used_nullifiers.read(position_nullifier_key), 'NULLIFIER_ALREADY_SPENT');
+            assert(seized_collateral <= pos.locked_margin, 'SEIZED_EXCEEDS_MARGIN');
 
             let now = get_block_timestamp();
             pos.is_active = false;
@@ -672,25 +677,23 @@ pub mod PELPerpsCore {
             self.positions.write(position_commitment_key, pos);
             self.used_nullifiers.write(position_nullifier_key, true);
 
-            // Liquidation Waterfall: 2% Keeper Bounty, remainder distributed to the LP /
-            // insurance / treasury revenue split (70/20/10) by the canonical vault.
-            let bounty_amount: u128 = (pos.locked_margin * 200_u128) / 10000_u128;
+            // Liquidation Waterfall: 2% Keeper Bounty computed on actual proof-bound seized collateral
+            let bounty_amount: u128 = if seized_collateral > 0_u128 {
+                (seized_collateral * 200_u128) / 10000_u128
+            } else {
+                0_u128
+            };
 
-            // V1: the LIQUIDATE circuit does not yet expose the trader's equity as a
-            // public input, so the on-chain insurance bad-debt deficit is 0 for
-            // liquidation. Deeply-underwater bad debt is absorbed on the CLOSE path
-            // (insurance.absorb_bad_debt) where the payout vs NAV shortfall IS
-            // observable. A future circuit upgrade exposing equity enables the full
-            // liquidation waterfall (see docs/LP_RISK_MODEL.md).
             let is_pool_custodied = pos.is_pool_custodied;
             let lp_vault = self.lp_vault_address.read();
             assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
             IPELLiquidityVaultDispatcher { contract_address: lp_vault }
                 .settle_liquidation(
                     pos.locked_margin,
+                    seized_collateral,
                     bounty_amount,
                     keeper_recipient,
-                    0_u128,
+                    bad_debt,
                     is_pool_custodied,
                 );
 
@@ -864,8 +867,9 @@ pub mod PELPerpsCore {
             assert(f != 0, 'ZERO_LP_VAULT_ADDRESS');
             let current = self.lp_vault_address.read();
             if current != 0.try_into().unwrap() {
-                let locked = IPELLiquidityVaultDispatcher { contract_address: current }.get_locked_liquidity();
-                assert(locked == 0_u128, 'ACTIVE_POSITIONS_EXIST');
+                let v = IPELLiquidityVaultDispatcher { contract_address: current };
+                assert(v.get_outstanding_liabilities() == 0_u128, 'ACTIVE_LIABILITIES_EXIST');
+                assert(v.get_total_lp_shares() == 0_u128, 'ACTIVE_LP_SHARES_EXIST');
             }
             self.lp_vault_address.write(lp_vault);
             self.emit(AdapterUpdated { new_adapter: lp_vault });
@@ -877,8 +881,14 @@ pub mod PELPerpsCore {
             assert(f != 0, 'ZERO_INSURANCE_ADDRESS');
             let current_vault = self.lp_vault_address.read();
             if current_vault != 0.try_into().unwrap() {
-                let locked = IPELLiquidityVaultDispatcher { contract_address: current_vault }.get_locked_liquidity();
-                assert(locked == 0_u128, 'ACTIVE_POSITIONS_EXIST');
+                let v = IPELLiquidityVaultDispatcher { contract_address: current_vault };
+                assert(v.get_outstanding_liabilities() == 0_u128, 'ACTIVE_LIABILITIES_EXIST');
+                assert(v.get_total_lp_shares() == 0_u128, 'ACTIVE_LP_SHARES_EXIST');
+            }
+            let current_ins = self.insurance_reserve_address.read();
+            if current_ins != 0.try_into().unwrap() {
+                let ins = IPELInsuranceReserveDispatcher { contract_address: current_ins };
+                assert(ins.get_insurance_balance() == 0_u128, 'INSURANCE_BALANCE_NOT_EMPTY');
             }
             self.insurance_reserve_address.write(insurance);
             self.emit(AdapterUpdated { new_adapter: insurance });

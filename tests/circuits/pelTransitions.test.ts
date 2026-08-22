@@ -213,10 +213,13 @@ describe('PEL LIQUIDATE circuit', () => {
     const c = commitment(side, q, e, m, f, nonce, secret);
     const n = nullifier(secret, c);
     const keeper = 12345n;
+    const seizedCollateral = s.equityIsNeg === 1n ? 0n : s.equityMag;
+    const badDebt = s.equityIsNeg === 1n ? s.equityMag : 0n;
 
     const input = {
       positionCommitment: c.toString(), positionNullifier: n.toString(),
       marketId: MARKET_ID.toString(), oraclePrice: oracle.toString(), keeper: keeper.toString(),
+      seizedCollateral: seizedCollateral.toString(), badDebt: badDebt.toString(),
       side: side.toString(), quantity: q.toString(), entryPrice: e.toString(),
       margin: m.toString(), funding: f.toString(), fees: fees.toString(),
       nonce: nonce.toString(), ownerSecret: secret.toString(),
@@ -228,6 +231,7 @@ describe('PEL LIQUIDATE circuit', () => {
     };
 
     const { proof, publicSignals } = await prove('pel_liquidate', input);
+    expect(publicSignals.length).toBe(7);
     expect(await snarkjs.groth16.verify(vkey('pel_liquidate'), publicSignals, proof)).toBe(true);
   });
 
@@ -240,10 +244,13 @@ describe('PEL LIQUIDATE circuit', () => {
     const c = commitment(side, q, e, m, f, nonce, secret);
     const n = nullifier(secret, c);
     const keeper = 12345n;
+    const seizedCollateral = s.equityIsNeg === 1n ? 0n : s.equityMag;
+    const badDebt = s.equityIsNeg === 1n ? s.equityMag : 0n;
 
     const input = {
       positionCommitment: c.toString(), positionNullifier: n.toString(),
       marketId: MARKET_ID.toString(), oraclePrice: oracle.toString(), keeper: keeper.toString(),
+      seizedCollateral: seizedCollateral.toString(), badDebt: badDebt.toString(),
       side: side.toString(), quantity: q.toString(), entryPrice: e.toString(),
       margin: m.toString(), funding: f.toString(), fees: fees.toString(),
       nonce: nonce.toString(), ownerSecret: secret.toString(),

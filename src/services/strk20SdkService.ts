@@ -413,17 +413,28 @@ export class Strk20SdkService {
     }
 
     // Step 2: read the AUTHORITATIVE payout from the on-chain PositionClosed event —
-    // never trust the frontend PnL estimate for the amount shielded.
+    // bound to expected recipient and proof commitment.
     let authoritativePayoutUsd: number | null = null;
     if (closeRes.status === 'SUCCESS') {
-      authoritativePayoutUsd = await this.readPayoutFromReceipt(closeRes.transactionHash);
+      authoritativePayoutUsd = await this.readPayoutFromReceipt(
+        closeRes.transactionHash,
+        undefined,
+        user.address
+      );
     }
 
     // Step 3: shield the authoritative payout into the STRK20 pool (real shielded note).
     let payoutShielded = false;
     if (closeRes.status === 'SUCCESS' && authoritativePayoutUsd !== null && authoritativePayoutUsd > 0) {
-      const shieldRes = await this.shield(user, authoritativePayoutUsd);
-      payoutShielded = shieldRes.transactionHash !== '';
+      try {
+        const shieldRes = await this.shield(user, authoritativePayoutUsd);
+        payoutShielded = shieldRes.transactionHash !== '';
+      } catch (err: any) {
+        // If shielding fails, the authoritative close transaction is still confirmed on-chain.
+        // Payout note is safely registered on-chain in PELLiquidityVault.
+        console.warn(`[STRK20] Payout shielding deferred: ${err?.message || err}`);
+        payoutShielded = false;
+      }
     }
 
     return {
@@ -438,10 +449,15 @@ export class Strk20SdkService {
 
   /**
    * Read the authoritative realized payout (USD) from the PELPerpsCore PositionClosed
-   * event of a close transaction. Returns null if the event cannot be located — in that
-   * case the caller MUST NOT shield a frontend-invented amount.
+   * event of a close transaction. Bound strictly to expected recipient and commitment (if provided).
+   * Returns null if the event cannot be located or is ambiguous (fail closed).
    */
-  private async readPayoutFromReceipt(txHash: string): Promise<number | null> {
+  async readPayoutFromReceipt(
+    txHash: string,
+    expectedCommitment?: string,
+    expectedRecipient?: string,
+    expectedNullifier?: string
+  ): Promise<number | null> {
     try {
       const { RpcProvider } = await import('starknet');
       const nodeUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL
@@ -450,17 +466,34 @@ export class Strk20SdkService {
       const receipt: any = await provider.getTransactionReceipt(txHash);
       const events: any[] = receipt?.events ?? [];
       const POSITION_CLOSED_SELECTOR = BigInt('0xa2200edb782bd44922650ba5c1d7d57084ee785323c1ff6bc4a28eace24108');
+
+      const matchingEvents: any[] = [];
       for (const ev of events) {
         const key = ev.keys?.[0];
         if (!key) continue;
         const eventKey = BigInt(key);
         // PositionClosed data payload: [commitment (0), nullifier (1), payout_amount (2), recipient (3), timestamp (4)]
-        if (eventKey === POSITION_CLOSED_SELECTOR && Array.isArray(ev.data) && ev.data.length >= 3) {
-          const payoutCents = BigInt(ev.data[2]);
-          return Number(payoutCents) / 100;
+        if (eventKey === POSITION_CLOSED_SELECTOR && Array.isArray(ev.data) && ev.data.length >= 4) {
+          if (expectedCommitment && BigInt(ev.data[0]) !== BigInt(expectedCommitment)) {
+            continue;
+          }
+          if (expectedNullifier && BigInt(ev.data[1]) !== BigInt(expectedNullifier)) {
+            continue;
+          }
+          if (expectedRecipient && BigInt(ev.data[3]) !== BigInt(expectedRecipient)) {
+            continue;
+          }
+          matchingEvents.push(ev);
         }
       }
-      return null;
+
+      // Fail closed on ambiguity: if not exactly 1 matching event found, do not guess
+      if (matchingEvents.length !== 1) {
+        return null;
+      }
+
+      const payoutCents = BigInt(matchingEvents[0].data[2]);
+      return Number(payoutCents) / 100;
     } catch {
       return null;
     }

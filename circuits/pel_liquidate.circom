@@ -9,7 +9,7 @@
 //   (e) notional = floor(q * markPrice / 1e8), maint = floor(notional * maintBps / 1e4);
 //   (f) equity <= maint  (the liquidation predicate, proved without revealing operands).
 //
-// Public inputs:  [ positionCommitment, positionNullifier, marketId, oraclePrice, keeper ]
+// Public inputs:  [ positionCommitment, positionNullifier, marketId, oraclePrice, keeper, seizedCollateral, badDebt ]
 // Private witness: side, quantity, entryPrice, margin, funding, fees, nonce, ownerSecret,
 //                  diffIsNeg, diffMag, pnlMag, pnlRem, notional, notionalRem, maint, maintRem,
 //                  equityIsNeg, equityMag
@@ -29,6 +29,8 @@ template PelLiquidate() {
     signal input marketId;
     signal input oraclePrice;
     signal input keeper;
+    signal input seizedCollateral;
+    signal input badDebt;
 
     signal input side;        // 0 = LONG, 1 = SHORT
     signal input quantity;    // sats
@@ -143,6 +145,25 @@ template PelLiquidate() {
 
     // (1 - equityIsNeg) implies magLeMaint == 1
     (1 - equityIsNeg) * (1 - magLeMaint) === 0;
+
+    // 12. Proof-bound outputs for seized collateral & bad debt:
+    //     if equity is positive (equityIsNeg == 0): seizedCollateral = equityMag, badDebt = 0
+    //     if equity is negative (equityIsNeg == 1): seizedCollateral = 0, badDebt = equityMag
+    signal computedSeized;
+    component scmux = Mux1();
+    scmux.c[0] <== equityMag;
+    scmux.c[1] <== 0;
+    scmux.s <== equityIsNeg;
+    computedSeized <== scmux.out;
+    seizedCollateral === computedSeized;
+
+    signal computedBadDebt;
+    component bdmux = Mux1();
+    bdmux.c[0] <== 0;
+    bdmux.c[1] <== equityMag;
+    bdmux.s <== equityIsNeg;
+    computedBadDebt <== bdmux.out;
+    badDebt === computedBadDebt;
 }
 
-component main { public [ positionCommitment, positionNullifier, marketId, oraclePrice, keeper ] } = PelLiquidate();
+component main { public [ positionCommitment, positionNullifier, marketId, oraclePrice, keeper, seizedCollateral, badDebt ] } = PelLiquidate();

@@ -72,7 +72,9 @@ describe('Authoritative Real Liquidation E2E (Audit Section 17 & 8)', () => {
       keeper: BigInt(keeperAddress),
     });
 
-    expect(liqProof.publicSignals.length).toBe(5);
+    expect(liqProof.publicSignals.length).toBe(7);
+    expect(liqProof.seizedCollateral).toBe(10000n); // $100.00 equity seized
+    expect(liqProof.badDebt).toBe(0n); // $0 bad debt
 
     // Verify proof validity cryptographically
     const isLiqProofValid = await pelCircuitService.verifyProof('LIQUIDATE', liqProof.proof, liqProof.publicSignals);
@@ -82,18 +84,30 @@ describe('Authoritative Real Liquidation E2E (Audit Section 17 & 8)', () => {
     const liqCall = starknetPerpsDispatcher.buildLiquidatePositionCall(
       keeperAddress,
       marketId,
-      liqProof.calldata || [5n, liqProof.commitment, liqProof.nullifier, 0x4254432d50455250n, crashPriceCents, BigInt(keeperAddress)]
+      liqProof.calldata || [7n, liqProof.commitment, liqProof.nullifier, 0x4254432d50455250n, crashPriceCents, BigInt(keeperAddress), 10000n, 0n]
     );
     expect(liqCall.entrypoint).toBe('liquidate_position');
     expect(liqCall.calldata[0]).toBe('0x4254432d50455250');
 
     // 5. Accounting Assertions:
-    // - 2% Keeper Bounty = .00 (4,000 cents)
-    // - Remainder to LP Pool NAV = ,960.00 (196,000 cents)
-    const expectedBountyCents = (marginCents * 200n) / 10000n;
-    const expectedRemainingCents = marginCents - expectedBountyCents;
-    expect(expectedBountyCents).toBe(4000n);
-    expect(expectedRemainingCents).toBe(196000n);
+    // - Trader Loss = $1,900.00 (190,000 cents) -> credited to LP NAV
+    // - Seized Collateral = $100.00 (10,000 cents)
+    // - 2% Keeper Bounty = $2.00 (200 cents) on seized collateral
+    // - Remnant = $98.00 (9,800 cents) split: 70% LP ($68.60), 20% Ins ($19.60), 10% Treasury ($9.80)
+    // - Total accounted for = 190,000 + 200 + 6,860 + 1,960 + 980 = 200,000 cents ($2,000.00)
+    const expectedBountyCents = (liqProof.seizedCollateral * 200n) / 10000n;
+    const netRemnantCents = liqProof.seizedCollateral - expectedBountyCents;
+    const lpShareCents = (netRemnantCents * 7000n) / 10000n;
+    const insuranceShareCents = (netRemnantCents * 2000n) / 10000n;
+    const treasuryShareCents = netRemnantCents - lpShareCents - insuranceShareCents;
+    const traderLossCents = marginCents - liqProof.seizedCollateral;
+
+    expect(expectedBountyCents).toBe(200n);
+    expect(traderLossCents).toBe(190000n);
+    expect(lpShareCents).toBe(6860n);
+    expect(insuranceShareCents).toBe(1960n);
+    expect(treasuryShareCents).toBe(980n);
+    expect(expectedBountyCents + lpShareCents + insuranceShareCents + treasuryShareCents + traderLossCents).toBe(marginCents);
 
     // Clean up witness after liquidation
     await deleteWitness(traderAddress, commitment, '');

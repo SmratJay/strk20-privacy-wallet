@@ -131,3 +131,25 @@ export const CALLDATA_SCHEMAS = {
   deposit_liquidity:        { expectedLength: 1, fields: ['amount'] },
   withdraw_liquidity_shares:{ expectedLength: 1, fields: ['shares'] },
 } as const;
+
+// ─── Payout Lifecycle & Note States ─────────────────────────────────────────
+
+export type PositionPayoutStatus =
+  | 'POSITION_OPEN'
+  | 'CLOSING'
+  | 'CLOSED_PENDING_SHIELD'
+  | 'PAYOUT_SHIELDING'
+  | 'PAYOUT_SHIELDED'
+  | 'PAYOUT_FAILED'
+  | 'PAYOUT_UNSHIELDED';
+
+export interface PendingPayoutRecord {
+  readonly commitment: string;
+  readonly positionTxHash: string;
+  readonly payoutAmountCents: bigint;
+  readonly recipient: string;
+  readonly status: PositionPayoutStatus;
+  readonly failureReason?: string;
+  readonly shieldedNoteCommitment?: string;
+  readonly updatedAtMs: number;
+}

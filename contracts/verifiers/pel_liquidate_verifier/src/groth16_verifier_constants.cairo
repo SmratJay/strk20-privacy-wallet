@@ -3,7 +3,7 @@
 use garaga::definitions::{E12D, G1Point, G2Line, G2Point, u288, u384};
 use garaga::groth16::Groth16VerifyingKey;
 
-pub const N_PUBLIC_INPUTS: usize = 5;
+pub const N_PUBLIC_INPUTS: usize = 7;
 
 pub const vk: Groth16VerifyingKey<u288> = Groth16VerifyingKey {
     alpha_beta_miller_loop_result: E12D {
@@ -122,88 +122,116 @@ pub const vk: Groth16VerifyingKey<u288> = Groth16VerifyingKey {
     },
 };
 
-pub const ic: [G1Point; 6] = [
+pub const ic: [G1Point; 8] = [
     G1Point {
         x: u384 {
-            limb0: 0x22c1797eba2778a2bbfeda6c,
-            limb1: 0x836469a120d0e5f8d65f1e4b,
-            limb2: 0x167e949aaf0df125,
+            limb0: 0x97f08e923d9286573ac560b2,
+            limb1: 0xd2a91204e3f9e28a13bce457,
+            limb2: 0x24e387bd71779417,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xec380ee183bd1dd9016d260e,
-            limb1: 0xc90e2ae40b3bac177a403bed,
-            limb2: 0x146094932fabf40c,
+            limb0: 0xf93685a7b828137a72f2863d,
+            limb1: 0xfa0b547fc1c6e0768012c1c,
+            limb2: 0x2e8c68f617a014f2,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0x178a85b4c38018c7a4ea6a64,
-            limb1: 0x982706b6f51d9488b6329661,
-            limb2: 0x1c9e54fce0fd2e5d,
+            limb0: 0x2a9be8e8dbe7a27f5e20c827,
+            limb1: 0xfc79c043b62ac24778a7aa59,
+            limb2: 0x16bfd2bca173ca3,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xbb6e9f45529e67e5ac41589e,
-            limb1: 0x11bb80b9ec54b5942206c4b6,
-            limb2: 0xac6860d4105c4b7,
+            limb0: 0xb0a9e6b26d0ee46a940d8e9d,
+            limb1: 0xf3215ccc4c19287e7f9bb0cc,
+            limb2: 0x26b90bdf4dd37938,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0xada9cddee56f77d58a1ed1ee,
-            limb1: 0x920f79a4edda2a71c1d33dd1,
-            limb2: 0x556269f047ecb08,
+            limb0: 0xb043683dffc92b44ca51b464,
+            limb1: 0x3a8bee66c69ee7f8aea5918c,
+            limb2: 0x2f97314d81412ed7,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0x13c2351e4ee8ee2b0bfc498c,
-            limb1: 0x8dabc96e8fbf64d968bca1f0,
-            limb2: 0x25e896ad2386eb55,
+            limb0: 0x86d91415d20b5a2b87951e63,
+            limb1: 0x5b72d4597da747ea62b37041,
+            limb2: 0x1f7abd6eeab6401c,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0x82c1e79830ac367284033d83,
-            limb1: 0x13c6a20366e2726aefd6748a,
-            limb2: 0x868c8e34f064cfe,
+            limb0: 0xb931007a8a43cfc1d850e1dc,
+            limb1: 0xd163caf5e6791881526d7480,
+            limb2: 0x25773edabb5be40d,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xbbff52b2dbf999fdc96620d1,
-            limb1: 0x5c278c639ad9f8704305dc3c,
-            limb2: 0x29e802889ea56d0,
+            limb0: 0xe098ec93b1304d13c4d06189,
+            limb1: 0x57d777c7d6cbe9644ff2f89c,
+            limb2: 0xa757844743a29d9,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0xbff99b2ae2d23ba8612d25f7,
-            limb1: 0x61d200f2c7478b9652bcab92,
-            limb2: 0x7c877cb2a702c74,
+            limb0: 0xec3795c8b9f6721cd346555f,
+            limb1: 0x4e8f339621a90a9e29629fa5,
+            limb2: 0x25244f4790d0f4ca,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0x11a5e8324801f846f4c14e3e,
-            limb1: 0x16c90fc446cc27903864afa9,
-            limb2: 0x1841bb76f6fd0a33,
+            limb0: 0x1f624feb0659f3ba1876e172,
+            limb1: 0x62fd565bbc095b12484ca1a5,
+            limb2: 0x22fe440013a3bb73,
             limb3: 0x0,
         },
     },
     G1Point {
         x: u384 {
-            limb0: 0x49e55d4bd88391b192c9d914,
-            limb1: 0xb7cc276854fc0d4eb28a7493,
-            limb2: 0x1904c2e5c26968f8,
+            limb0: 0xaeed09b8f3c4b5f9529ffa7c,
+            limb1: 0x7e135839df973a9a9e874080,
+            limb2: 0x24d30318db31f6da,
             limb3: 0x0,
         },
         y: u384 {
-            limb0: 0xbf4ea541c76a517a78493185,
-            limb1: 0x7906a959b0362f13398048dc,
-            limb2: 0xcb8fbd2cc546e0c,
+            limb0: 0xb505780744102862f9855317,
+            limb1: 0xc52697704a2e2d047f33d263,
+            limb2: 0x2938728c67942,
+            limb3: 0x0,
+        },
+    },
+    G1Point {
+        x: u384 {
+            limb0: 0x2efaa05d3584d7cf01ff6a33,
+            limb1: 0xa80e5445867525a558ccb627,
+            limb2: 0xc495bbf969712ce,
+            limb3: 0x0,
+        },
+        y: u384 {
+            limb0: 0x99a85ddb8d213219bf275e49,
+            limb1: 0x4b3e2c3bd2332ad837dc2e66,
+            limb2: 0x1657841fd57e7765,
+            limb3: 0x0,
+        },
+    },
+    G1Point {
+        x: u384 {
+            limb0: 0x436767ee7ea74e83930658e9,
+            limb1: 0xab2fb1d30e9c6d9fa34997c1,
+            limb2: 0x1abfddbaafb515b,
+            limb3: 0x0,
+        },
+        y: u384 {
+            limb0: 0x974ca845b37ec9617a880755,
+            limb1: 0x6e98feb2608dd9e768adf6e1,
+            limb2: 0x2c7f6191427426ef,
             limb3: 0x0,
         },
     },

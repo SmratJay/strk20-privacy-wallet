@@ -28,6 +28,7 @@ pub trait IPELInsuranceReserve<TContractState> {
     fn set_target_reserve(ref self: TContractState, target_cents: u128);
     fn set_authorized_caller(ref self: TContractState, caller: ContractAddress, is_authorized: bool);
     fn is_authorized_caller(self: @TContractState, caller: ContractAddress) -> bool;
+    fn can_migrate(self: @TContractState) -> bool;
 }
 
 #[starknet::contract]
@@ -211,6 +212,10 @@ pub mod PELInsuranceReserve {
 
         fn is_authorized_caller(self: @ContractState, caller: ContractAddress) -> bool {
             self.authorized_callers.read(caller)
+        }
+
+        fn can_migrate(self: @ContractState) -> bool {
+            self.insurance_balance.read() == 0_u128
         }
     }
 

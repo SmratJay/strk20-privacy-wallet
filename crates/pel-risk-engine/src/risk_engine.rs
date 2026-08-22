@@ -60,7 +60,7 @@ impl RiskEngine {
             let seized = if equity > 0 {
                 equity as u128
             } else {
-                position.margin_cents
+                0
             };
 
             let raw_bounty = (seized * KEEPER_BOUNTY_BPS) / BPS_DIVISOR;

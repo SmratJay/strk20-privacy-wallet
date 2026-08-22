@@ -126,6 +126,7 @@ pub trait IPELLiquidityVault<TContractState> {
     );
     fn settle_liquidation(
         ref self: TContractState,
+        position_margin_cents: u128,
         seized_collateral_cents: u128,
         keeper_bounty_cents: u128,
         keeper_recipient: ContractAddress,
@@ -151,6 +152,8 @@ pub trait IPELLiquidityVault<TContractState> {
     fn get_contract_token_balance(self: @TContractState) -> u256;
     fn withdraw_treasury(ref self: TContractState, amount_cents: u128);
     fn collect_pool_receivable(ref self: TContractState, amount_cents: u128);
+    fn get_outstanding_liabilities(self: @TContractState) -> u128;
+    fn can_migrate(self: @TContractState) -> bool;
 }
 
 #[starknet::contract]
@@ -800,11 +803,14 @@ pub mod PELLiquidityVault {
         }
 
         // Liquidation waterfall:
+        //   Full position margin released from locked/pool margin.
+        //   Trader loss (margin - seized) -> 100% LP NAV gain.
         //   seized margin -> keeper bounty -> 70% LP / 20% insurance / 10% treasury.
         //   insurance_deficit_cents (bad debt) -> insurance absorbs real USDC,
         //   remainder recorded as explicit bad debt.
         fn settle_liquidation(
             ref self: ContractState,
+            position_margin_cents: u128,
             seized_collateral_cents: u128,
             keeper_bounty_cents: u128,
             keeper_recipient: ContractAddress,
@@ -813,18 +819,26 @@ pub mod PELLiquidityVault {
         ) {
             self.assert_pel_core();
 
-            // Release the seized margin.
+            // 1. Release the full position margin from liabilities
             if is_pool_custodied {
                 let cur_margin = self.pool_margin_cents.read();
-                assert(cur_margin >= seized_collateral_cents, 'VAULT: INSUFF_POOL_MARGIN');
-                self.pool_margin_cents.write(cur_margin - seized_collateral_cents);
+                assert(cur_margin >= position_margin_cents, 'VAULT: INSUFF_POOL_MARGIN');
+                self.pool_margin_cents.write(cur_margin - position_margin_cents);
             } else {
                 let cur_locked = self.total_locked_collateral.read();
-                assert(cur_locked >= seized_collateral_cents, 'VAULT: INSUFF_LOCKED_MARGIN');
-                self.total_locked_collateral.write(cur_locked - seized_collateral_cents);
+                assert(cur_locked >= position_margin_cents, 'VAULT: INSUFF_LOCKED_MARGIN');
+                self.total_locked_collateral.write(cur_locked - position_margin_cents);
             }
 
-            // Enforce the bounded keeper bounty.
+            // 2. Counterparty (LP) gain from trader's realized loss
+            let trader_loss_cents: u128 = if position_margin_cents > seized_collateral_cents {
+                position_margin_cents - seized_collateral_cents
+            } else {
+                0_u128
+            };
+            self.lp_pool_nav.write(self.lp_pool_nav.read() + trader_loss_cents);
+
+            // 3. Enforce the bounded keeper bounty from the actual seized collateral
             let max_bounty = (seized_collateral_cents * KEEPER_BOUNTY_BPS) / 10000_u128;
             let bounded_bounty = if keeper_bounty_cents > KEEPER_BOUNTY_CAP_CENTS {
                 KEEPER_BOUNTY_CAP_CENTS
@@ -839,9 +853,8 @@ pub mod PELLiquidityVault {
                 self.unclaimed_bounties_total.write(self.unclaimed_bounties_total.read() + bounty);
             }
 
-            // Distribute the remnant across LP / insurance / treasury. Treasury takes
-            // the integer remainder so every cent is routed.
-            let net_seized = seized_collateral_cents - bounty;
+            // 4. Distribute the remnant of seized collateral across LP (70%), insurance (20%), and treasury (10%)
+            let net_seized = if seized_collateral_cents >= bounty { seized_collateral_cents - bounty } else { 0_u128 };
             let lp_share = (net_seized * LP_FEE_SHARE_BPS) / 10000_u128;
             let insurance_share = (net_seized * INSURANCE_FEE_SHARE_BPS) / 10000_u128;
             let treasury_share = net_seized - lp_share - insurance_share;
@@ -849,7 +862,7 @@ pub mod PELLiquidityVault {
             self.lp_pool_nav.write(self.lp_pool_nav.read() + lp_share);
             self.treasury_balance.write(self.treasury_balance.read() + treasury_share);
 
-            // Insurance holds REAL USDC: transfer it in before booking the contribution.
+            // 5. Insurance remnant deposit (real USDC transfer)
             let ins_addr = self.insurance_reserve.read();
             let mut insurance_absorbed_cents: u128 = 0_u128;
             if insurance_share > 0_u128 {
@@ -862,7 +875,7 @@ pub mod PELLiquidityVault {
                     .deposit_liquidation_remnant(insurance_share);
             }
 
-            // Bad debt absorption: insurance transfers REAL USDC back to the vault.
+            // 6. Bad debt absorption (insurance transfers real USDC back to the vault)
             if insurance_deficit_cents > 0_u128 {
                 assert(ins_addr != 0.try_into().unwrap(), 'VAULT: INS_NOT_CONFIGURED');
                 let absorbed = IPELInsuranceReserveDispatcher { contract_address: ins_addr }
@@ -882,7 +895,7 @@ pub mod PELLiquidityVault {
             self.emit(LiquidationSettled {
                 seized_cents: seized_collateral_cents,
                 bounty_cents: bounty,
-                lp_share_cents: lp_share,
+                lp_share_cents: lp_share + trader_loss_cents,
                 insurance_share_cents: insurance_share,
                 treasury_share_cents: treasury_share,
                 insurance_absorbed_cents: insurance_absorbed_cents,
@@ -1033,6 +1046,21 @@ pub mod PELLiquidityVault {
                 amount_cents,
                 new_pool_assets: self.pool_assets_cents.read(),
             });
+        }
+
+        fn get_outstanding_liabilities(self: @ContractState) -> u128 {
+            let locked = self.total_locked_collateral.read();
+            let pool_margin = self.pool_margin_cents.read();
+            let payouts = self.unclaimed_payouts_total.read();
+            let bounties = self.unclaimed_bounties_total.read();
+            let withdrawals = self.pending_withdrawals_total.read();
+            let treasury = self.treasury_balance.read();
+            let bad_debt = self.bad_debt_total.read();
+            locked + pool_margin + payouts + bounties + withdrawals + treasury + bad_debt
+        }
+
+        fn can_migrate(self: @ContractState) -> bool {
+            self.get_outstanding_liabilities() == 0_u128 && self.total_lp_shares.read() == 0_u128
         }
     }
 

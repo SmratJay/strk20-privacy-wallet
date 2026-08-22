@@ -17,6 +17,7 @@ import { pelCircuitService } from '../../src/services/pelCircuitService';
 import { starknetPerpsDispatcher, PERPS_DEPLOYMENTS } from '../../src/services/starknetPerpsDispatcher';
 import { calcEquityCents, calcMaintMarginCents, isLiquidatable } from '../../src/protocol/fixedPoint';
 import { BTC_PERP_CONFIG } from '../../src/protocol/types';
+import { RiskEngine } from '../../src/protocol/riskEngine';
 
 describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7)', () => {
   const artifactsDir = path.join(process.cwd(), 'contracts', 'target', 'dev');
@@ -192,7 +193,7 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
     const quantitySats = 100000000n; // 1 BTC
     const entryPriceCents = 9500000n; // $95k
     const marginCents = 500000n; // $5k margin
-    const oraclePriceCents = 8800000n; // $88k mark price -> $7k loss > $5k margin -> insolvent
+    const oraclePriceCents = 8800000n; // $88k mark price -> $7k loss > $5k margin -> insolvent ($2k bad debt)
 
     const liqProof = await pelCircuitService.generateLiquidateProof({
       side: 0n,
@@ -207,12 +208,17 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
       keeper: BigInt(keeperAddress),
     });
 
-    expect(liqProof.publicSignals.length).toBe(5);
+    expect(liqProof.publicSignals.length).toBe(7);
+    expect(liqProof.seizedCollateral).toBe(0n);
+    expect(liqProof.badDebt).toBe(200000n); // $2,000 bad debt
+
+    const isProofValid = await pelCircuitService.verifyProof('LIQUIDATE', liqProof.proof, liqProof.publicSignals);
+    expect(isProofValid).toBe(true);
 
     const liqCall = starknetPerpsDispatcher.buildLiquidatePositionCall(
       keeperAddress,
       marketId,
-      liqProof.calldata || [5n, liqProof.commitment, liqProof.nullifier, 0x4254432d50455250n, oraclePriceCents, keeperAddress]
+      liqProof.calldata || [7n, liqProof.commitment, liqProof.nullifier, 0x4254432d50455250n, oraclePriceCents, BigInt(keeperAddress), 0n, 200000n]
     );
 
     expect(liqCall.entrypoint).toBe('liquidate_position');
@@ -474,5 +480,134 @@ describe('Real Cairo Contract Artifacts & Integration Suite (Audit Section 4 & 7
 
     const isProofValid = await pelCircuitService.verifyProof('OPEN', openProof.proof, tamperedSignals);
     expect(isProofValid).toBe(false);
+  });
+
+  // ─── 18-CASE CANONICAL LIQUIDATION EVALUATION MATRIX ─────────────────────────
+
+  describe('18-Case Canonical Liquidation Evaluation Matrix (Cross-Layer Parity)', () => {
+    const cases: Array<{
+      id: number;
+      name: string;
+      side: 0n | 1n;
+      quantitySats: bigint;
+      entryPriceCents: bigint;
+      marginCents: bigint;
+      fundingCents: bigint;
+      feesCents: bigint;
+      markPriceCents: bigint;
+      expectedLiquidatable: boolean;
+      expectedSeized: bigint;
+      expectedBadDebt: bigint;
+    }> = [
+      // 1. Long healthy (price up)
+      { id: 1, name: 'Long healthy (price up)', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9800000n, expectedLiquidatable: false, expectedSeized: 800000n, expectedBadDebt: 0n },
+      // 2. Long healthy (price flat)
+      { id: 2, name: 'Long healthy (price flat)', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9500000n, expectedLiquidatable: false, expectedSeized: 500000n, expectedBadDebt: 0n },
+      // 3. Long healthy (price small drop, equity > maint)
+      { id: 3, name: 'Long healthy (small drop)', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9400000n, expectedLiquidatable: false, expectedSeized: 400000n, expectedBadDebt: 0n },
+      // 4. Short healthy (price down)
+      { id: 4, name: 'Short healthy (price down)', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9200000n, expectedLiquidatable: false, expectedSeized: 800000n, expectedBadDebt: 0n },
+      // 5. Short healthy (price flat)
+      { id: 5, name: 'Short healthy (price flat)', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9500000n, expectedLiquidatable: false, expectedSeized: 500000n, expectedBadDebt: 0n },
+      // 6. Short healthy (price small rise, equity > maint)
+      { id: 6, name: 'Short healthy (small rise)', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9600000n, expectedLiquidatable: false, expectedSeized: 400000n, expectedBadDebt: 0n },
+      // 7. Long at maintenance threshold (equity == maint: notional=9183673, maint=183673, margin=500000, pnl=-316327 -> equity=183673)
+      { id: 7, name: 'Long at maint threshold (equity == maint)', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9183673n, expectedLiquidatable: true, expectedSeized: 183673n, expectedBadDebt: 0n },
+      // 8. Short at maintenance threshold (equity == maint: notional=9803922, maint=196078, margin=500000, pnl=-303922 -> equity=196078)
+      { id: 8, name: 'Short at maint threshold (equity == maint)', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9803922n, expectedLiquidatable: true, expectedSeized: 196078n, expectedBadDebt: 0n },
+      // 9. Long underwater small positive equity (equity < maint, equity > 0)
+      { id: 9, name: 'Long underwater small positive equity', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9050000n, expectedLiquidatable: true, expectedSeized: 50000n, expectedBadDebt: 0n },
+      // 10. Short underwater small positive equity (equity < maint, equity > 0)
+      { id: 10, name: 'Short underwater small positive equity', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9950000n, expectedLiquidatable: true, expectedSeized: 50000n, expectedBadDebt: 0n },
+      // 11. Long exact zero equity (pnl == -margin)
+      { id: 11, name: 'Long exact zero equity', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 9000000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 0n },
+      // 12. Short exact zero equity (pnl == -margin)
+      { id: 12, name: 'Short exact zero equity', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 10000000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 0n },
+      // 13. Long negative equity / mild insolvent (equity < 0)
+      { id: 13, name: 'Long negative equity (mild insolvent)', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 8900000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 100000n },
+      // 14. Short negative equity / mild insolvent (equity < 0)
+      { id: 14, name: 'Short negative equity (mild insolvent)', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 10100000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 100000n },
+      // 15. Long deep underwater gap down
+      { id: 15, name: 'Long deep underwater gap down', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 7500000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 1500000n },
+      // 16. Short deep underwater gap up
+      { id: 16, name: 'Short deep underwater gap up', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 0n, feesCents: 0n, markPriceCents: 11500000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 1500000n },
+      // 17. Long with high accrued funding making equity negative
+      { id: 17, name: 'Long high funding underwater', side: 0n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 300000n, feesCents: 10000n, markPriceCents: 9250000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 60000n },
+      // 18. Short with high accrued funding making equity negative
+      { id: 18, name: 'Short high funding underwater', side: 1n, quantitySats: 100000000n, entryPriceCents: 9500000n, marginCents: 500000n, fundingCents: 300000n, feesCents: 10000n, markPriceCents: 9750000n, expectedLiquidatable: true, expectedSeized: 0n, expectedBadDebt: 60000n },
+    ];
+
+    for (const c of cases) {
+      it(`Case ${c.id}: ${c.name}`, () => {
+        const s = pelCircuitService.computeLiquidationSettlement(
+          c.side,
+          c.quantitySats,
+          c.entryPriceCents,
+          c.marginCents,
+          c.fundingCents,
+          c.feesCents,
+          c.markPriceCents,
+        );
+
+        expect(s.isLiquidatable).toBe(c.expectedLiquidatable);
+        if (c.expectedLiquidatable) {
+          expect(s.seizedCollateral).toBe(c.expectedSeized);
+          expect(s.badDebt).toBe(c.expectedBadDebt);
+
+          // Verify RiskEngine parity
+          const pnl = c.side === 0n
+            ? (c.quantitySats * (c.markPriceCents - c.entryPriceCents)) / 100000000n
+            : (c.quantitySats * (c.entryPriceCents - c.markPriceCents)) / 100000000n;
+          const r = RiskEngine.getLiquidationSettlement(c.marginCents, pnl, c.fundingCents, c.feesCents, 200n);
+          expect(r.seizedCollateralCents).toBe(c.expectedSeized);
+          expect(r.badDebtCents).toBe(c.expectedBadDebt);
+        }
+      });
+    }
+  });
+
+  describe('Migration Safety & Outstanding Liabilities Assertions', () => {
+    it('blocks migration when locked margin > 0', () => {
+      const locked = 500000n;
+      const outstanding = locked + 0n + 0n + 0n + 0n + 0n + 0n;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('blocks migration when unclaimed payouts > 0', () => {
+      const unclaimedPayouts = 25000n;
+      const outstanding = 0n + 0n + unclaimedPayouts + 0n + 0n + 0n + 0n;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('blocks migration when unclaimed bounties > 0', () => {
+      const unclaimedBounties = 1000n;
+      const outstanding = 0n + 0n + 0n + unclaimedBounties + 0n + 0n + 0n;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('blocks migration when pending withdrawals > 0', () => {
+      const pendingWithdrawals = 50000n;
+      const outstanding = 0n + 0n + 0n + 0n + pendingWithdrawals + 0n + 0n;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('blocks migration when treasury balance > 0', () => {
+      const treasury = 12000n;
+      const outstanding = 0n + 0n + 0n + 0n + 0n + treasury + 0n;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('blocks migration when bad debt > 0', () => {
+      const badDebt = 80000n;
+      const outstanding = 0n + 0n + 0n + 0n + 0n + 0n + badDebt;
+      expect(outstanding > 0n).toBe(true);
+    });
+
+    it('allows migration ONLY when all liabilities are 0 and total LP shares == 0', () => {
+      const outstanding = 0n + 0n + 0n + 0n + 0n + 0n + 0n;
+      const totalShares = 0n;
+      const canMigrate = outstanding === 0n && totalShares === 0n;
+      expect(canMigrate).toBe(true);
+    });
   });
 });

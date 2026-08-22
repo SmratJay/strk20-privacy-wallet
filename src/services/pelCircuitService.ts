@@ -221,6 +221,7 @@ export function computeLiquidationSettlement(
   diffIsNeg: bigint; diffMag: bigint; pnlMag: bigint; pnlRem: bigint;
   equityIsNeg: bigint; equityMag: bigint; notional: bigint; notionalRem: bigint;
   maint: bigint; maintRem: bigint; equity: bigint; isLiquidatable: boolean;
+  seizedCollateral: bigint; badDebt: bigint;
 } {
   const delta = side === 0n ? markPriceCents - entryPriceCents : entryPriceCents - markPriceCents;
   const [diffIsNeg, diffMag] = decomposeSigned(delta);
@@ -235,7 +236,9 @@ export function computeLiquidationSettlement(
   const maint = (notional * 200n) / 10000n;
   const maintRem = (notional * 200n) % 10000n;
   const isLiquidatable = equityIsNeg === 1n || equityMag <= maint;
-  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, notional, notionalRem, maint, maintRem, equity, isLiquidatable };
+  const seizedCollateral = equityIsNeg === 1n ? 0n : equityMag;
+  const badDebt = equityIsNeg === 1n ? equityMag : 0n;
+  return { diffIsNeg, diffMag, pnlMag, pnlRem, equityIsNeg, equityMag, notional, notionalRem, maint, maintRem, equity, isLiquidatable, seizedCollateral, badDebt };
 }
 
 const WASM_DIR = path.join(process.cwd(), 'circuits', 'build');
@@ -386,7 +389,7 @@ export async function generateFundProof(w: FundWitness): Promise<ProvenTransitio
   return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, newCommitment, fundingPayment: s.fundingPayment, newMargin: s.newMargin, newFunding: s.newFunding, calldata };
 }
 
-export async function generateLiquidateProof(w: LiquidateWitness): Promise<ProvenTransition> {
+export async function generateLiquidateProof(w: LiquidateWitness): Promise<ProvenTransition & { seizedCollateral: bigint; badDebt: bigint }> {
   const commitment_ = await computePositionCommitment(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.nonce, w.ownerSecret);
   const nullifier_ = await computeNullifier(w.ownerSecret, commitment_);
   const s = computeLiquidationSettlement(w.side, w.quantitySats, w.entryPriceCents, w.marginCents, w.fundingCents, w.feesCents, w.markPriceCents);
@@ -394,6 +397,7 @@ export async function generateLiquidateProof(w: LiquidateWitness): Promise<Prove
   const input = {
     positionCommitment: commitment_.toString(), positionNullifier: nullifier_.toString(),
     marketId: MARKET_ID.toString(), oraclePrice: w.markPriceCents.toString(), keeper: w.keeper.toString(),
+    seizedCollateral: s.seizedCollateral.toString(), badDebt: s.badDebt.toString(),
     side: w.side.toString(), quantity: w.quantitySats.toString(), entryPrice: w.entryPriceCents.toString(),
     margin: w.marginCents.toString(), funding: w.fundingCents.toString(), fees: w.feesCents.toString(),
     nonce: w.nonce.toString(), ownerSecret: w.ownerSecret.toString(),
@@ -412,7 +416,7 @@ export async function generateLiquidateProof(w: LiquidateWitness): Promise<Prove
 
   const calldata = await generateGaragaCalldata('LIQUIDATE', proof, publicSignals);
 
-  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, calldata };
+  return { proof, publicSignals, commitment: commitment_, nullifier: nullifier_, seizedCollateral: s.seizedCollateral, badDebt: s.badDebt, calldata };
 }
 
 export async function verifyProof(proofType: 'OPEN' | 'CLOSE' | 'UPDATE' | 'FUND' | 'LIQUIDATE', proof: unknown, publicSignals: string[]): Promise<boolean> {
