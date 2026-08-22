@@ -74,9 +74,11 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
     }, 0);
   }, [balances, tokenPrices]);
 
-  // 2. Calculate Public Balance Value
+  // 2. Calculate Public Balance Value (excludes tokens whose balance could not be
+  // fetched — an unreachable RPC must never count as a $0 balance)
   const publicCashUsd = useMemo(() => {
     return balances.reduce((acc, b) => {
+      if (b.publicBalanceAvailable === false) return acc;
       const price = tokenPrices[b.token.symbol] || 0;
       const amount = Number(b.publicBalance) / 10 ** b.token.decimals;
       return acc + amount * price;

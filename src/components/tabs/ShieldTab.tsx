@@ -3,9 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Info, AlertCircle, Loader2 } from 'lucide-react';
 import { TokenInfo, NOTE_MATURITY_BLOCKS } from '@/config/tokens';
-import { ShieldedBalance, privacyService } from '@/services/privacyService';
+import { ShieldedBalance } from '@/services/privacyService';
 import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
 import { useNetwork } from '@/context/NetworkContext';
+import { strk20SdkService, getStrk20ViewingKey } from '@/services/strk20SdkService';
+import { checkStrk20OperatorStatus, operatorStatusLabel, Strk20OperatorStatus } from '@/services/strk20OperatorHealth';
 
 interface ShieldTabProps {
   balances: ShieldedBalance[];
@@ -19,6 +21,13 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'IDLE' | 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED'>('IDLE');
   const [error, setError] = useState<string | null>(null);
+  const [operatorStatus, setOperatorStatus] = useState<Strk20OperatorStatus | null>(null);
+
+  // Real STRK20 shield requires the operator proving + discovery services. Report
+  // honest availability (HEALTHY / UNCONFIGURED / UNAVAILABLE) before allowing a deposit.
+  useEffect(() => {
+    checkStrk20OperatorStatus().then(setOperatorStatus).catch(() => setOperatorStatus(null));
+  }, []);
 
   // Sync selected token when network changes
   useEffect(() => {
@@ -28,6 +37,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
 
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
   const publicBal = currentBalance ? currentBalance.publicBalance : 0n;
+  const operatorReady = !!operatorStatus?.healthy;
 
   const handleMax = () => {
     if (publicBal > 0n) {
@@ -53,21 +63,45 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
       return;
     }
 
+    // The canonical shield path is the REAL STRK20 SDK deposit (approve(pool) ->
+    // pool.deposit -> encrypted note). A raw public ERC-20 transfer to the pool address
+    // is NOT a valid shield and would strand the USDC with no claimable note.
+    if (!operatorReady) {
+      setError(
+        `STRK20 operator services are not ready (${operatorStatus ? operatorStatusLabel(operatorStatus) : 'CHECKING'}). ` +
+          'Shielding requires NEXT_PUBLIC_STRK20_PROVER_URL and NEXT_PUBLIC_STRK20_DISCOVERY_URL to point at running ' +
+          'services (see infra/strk20-operator). No funds were moved.'
+      );
+      return;
+    }
+
     setError(null);
     setStep('SHIELDING');
 
     try {
-      const { txHash } = await privacyService.executeShield(
-        wallet.walletAccount,
-        selectedToken,
-        amountBigInt,
-        (currentStep: any) => setStep(currentStep),
-        currentNetwork.poolAddress,
-        currentNetwork.id
+      const account = wallet.walletAccount?.signer
+        ? wallet.walletAccount
+        : wallet.rawWallet?.account || (window as any)?.starknet?.account;
+      if (!account?.address) {
+        throw new Error('STRK20 requires the wallet account — please reconnect your wallet.');
+      }
+      const address = account.address;
+      const amountUsd = Number(amountBigInt) / 10 ** selectedToken.decimals;
+
+      const viewingKey = await getStrk20ViewingKey(account);
+      setStep('PROVING');
+
+      const res = await strk20SdkService.shield(
+        { account, address, viewingKey },
+        amountUsd
       );
 
+      if (res.status !== 'SUCCESS') {
+        throw new Error(`Shield was not confirmed on-chain (status: ${res.status}). No note was created.`);
+      }
+
       setStep('SUBMITTED');
-      onSuccess(txHash, selectedToken, amount);
+      onSuccess(res.transactionHash, selectedToken, amount);
       setAmount('');
       setTimeout(() => setStep('IDLE'), 3000);
     } catch (err: any) {
@@ -146,6 +180,25 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
           </div>
         </div>
 
+        {/* STRK20 Operator Readiness */}
+        <div className={`p-3 text-[11px] border text-xs space-y-1 ${
+          operatorReady
+            ? 'bg-emerald-500/5 border-emerald-500/30 text-emerald-300'
+            : 'bg-amber-500/5 border-amber-500/30 text-amber-300'
+        }`}>
+          <div className="flex items-center gap-1.5 font-bold uppercase text-[10px]">
+            <span className={`w-1.5 h-1.5 rounded-full ${operatorReady ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+            <span>STRK20 Operator: {operatorStatus ? operatorStatusLabel(operatorStatus) : 'CHECKING'}</span>
+          </div>
+          {!operatorReady && (
+            <p className="text-[10px] opacity-90">
+              Real shielding requires the operator proving + discovery services
+              (NEXT_PUBLIC_STRK20_PROVER_URL / NEXT_PUBLIC_STRK20_DISCOVERY_URL). Until they are
+              configured and reachable, no USDC will be sent and no note will be created.
+            </p>
+          )}
+        </div>
+
         {/* Informational Box */}
         <div className="p-3 bg-zinc-900/40 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
           <div className="flex items-center gap-1.5 font-bold text-white uppercase text-[10px]">
@@ -153,10 +206,10 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
             <span>How Shielding Works:</span>
           </div>
           <p>
-            1. Your wallet approves and deposits tokens into the STRK20 Privacy Pool contract.
+            1. Your wallet approves USDC and the STRK20 pool records an encrypted note owned by your viewing key.
           </p>
           <p>
-            2. The protocol generates an encrypted UTXO note owned by your ephemeral private key.
+            2. The operator prover generates the validity proof and the note becomes spendable on-chain.
           </p>
           <p className="text-amber-400">
             3. Note matures in ~{NOTE_MATURITY_BLOCKS} blocks for maximum anonymity set depth.
@@ -185,16 +238,16 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
           {step === 'SHIELDING' && (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Step 2/3: Depositing into Privacy Pool...</span>
+              <span>Step 2/3: Building STRK20 shielded deposit...</span>
             </>
           )}
           {step === 'PROVING' && (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Step 3/3: Generating Stwo ZK Witness...</span>
+              <span>Step 3/3: Generating Stwo ZK Witness & Submitting...</span>
             </>
           )}
-          {step === 'SUBMITTED' && <span>✓ Deposit Confirmed!</span>}
+          {step === 'SUBMITTED' && <span>✓ Note Submitted — verify via discovery</span>}
           {step === 'IDLE' && <span>Shield Tokens (Deposit)</span>}
         </button>
       </form>

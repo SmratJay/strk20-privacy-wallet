@@ -107,7 +107,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       '0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91',
     rpcUrls: [
       'https://api.cartridge.gg/x/starknet/sepolia',
-      'https://free-rpc.nethermind.io/sepolia-juno',
+      process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia',
     ],
     avnuBaseUrl: 'https://starknet.api.avnu.fi',
     explorerUrl: 'https://sepolia.voyager.online',

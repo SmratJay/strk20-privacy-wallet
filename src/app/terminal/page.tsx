@@ -40,6 +40,7 @@ import { privacyService, ShieldedBalance, PrivacyTransaction } from '@/services/
 import { TokenInfo } from '@/config/tokens';
 import { useToast } from '@/components/Toast';
 import { useNetwork } from '@/context/NetworkContext';
+import { constants } from 'starknet';
 
 function TerminalContent() {
   const { showToast } = useToast();
@@ -66,6 +67,7 @@ function TerminalContent() {
     currentNetwork.tokens.map((token) => ({
       token,
       publicBalance: 0n,
+      publicBalanceAvailable: true,
       shieldedBalance: 0n,
       pendingNotesCount: 0,
       privacyApiSupported: false,
@@ -150,6 +152,7 @@ function TerminalContent() {
         currentNetwork.tokens.map((token) => ({
           token,
           publicBalance: 0n,
+          publicBalanceAvailable: true,
           shieldedBalance: 0n,
           pendingNotesCount: 0,
           privacyApiSupported: false,
@@ -176,6 +179,32 @@ function TerminalContent() {
   useEffect(() => {
     refreshBalances();
   }, [refreshBalances]);
+
+  // Auto-sync the app network to the connected wallet's chain. The whole deployed
+  // protocol (STRK20 pool, PEL contracts, test USDC) is Sepolia-only; without this,
+  // a Sepolia-connected user would have their balances queried against Mainnet and
+  // see fabricated zeros.
+  useEffect(() => {
+    if (!wallet.isConnected || !wallet.chainId) return;
+    try {
+      const raw = String(wallet.chainId);
+      const chainBig = typeof wallet.chainId === 'bigint'
+        ? wallet.chainId
+        : BigInt(raw.startsWith('0x') || raw.startsWith('0X') ? raw : '0x' + raw);
+      const wantSepolia = chainBig === BigInt(constants.StarknetChainId.SN_SEPOLIA);
+      setNetworkId(wantSepolia ? 'sepolia' : 'mainnet');
+    } catch {
+      // Ignore unparseable chainId; keep the current app network.
+    }
+  }, [wallet.isConnected, wallet.chainId, setNetworkId]);
+
+  // Auto-refresh balances so newly received funds (e.g. Sepolia USDC) appear without
+  // a manual refresh.
+  useEffect(() => {
+    if (!wallet.isConnected) return;
+    const t = setInterval(refreshBalances, 12000);
+    return () => clearInterval(t);
+  }, [refreshBalances, wallet.isConnected]);
 
   const handleTxSuccess = (tx: PrivacyTransaction) => {
     const updated = [tx, ...transactions];

@@ -137,9 +137,13 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
 
               <div className="text-right">
                 <div className="text-xs font-bold text-zinc-200">
-                  {formatTokenAmount(b.publicBalance, b.token.decimals)} {b.token.symbol}
+                  {b.publicBalanceAvailable
+                    ? `${formatTokenAmount(b.publicBalance, b.token.decimals)} ${b.token.symbol}`
+                    : '— (RPC unavailable)'}
                 </div>
-                <div className="text-[9px] text-zinc-600 uppercase">[ PUBLIC ]</div>
+                <div className="text-[9px] text-zinc-600 uppercase">
+                  {b.publicBalanceAvailable ? '[ PUBLIC ]' : '[ OFFLINE — NOT A ZERO ]'}
+                </div>
               </div>
             </div>
           ))}

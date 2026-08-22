@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             ) : (
               <button
-                onClick={() => wallet.connect()}
+                onClick={() => wallet.connectWallet()}
                 disabled={wallet.isConnecting}
                 className="px-4 py-1.5 border border-orrange-500 bg-orrange-500 hover:bg-orrange-400 text-black font-mono text-xs font-black tracking-wider uppercase transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
               >
@@ -322,7 +322,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </a>
                   <button
                     onClick={() => {
-                      wallet.disconnect();
+                      wallet.disconnectWallet();
                       setWalletDropdownOpen(false);
                     }}
                     className="w-full flex items-center gap-2 px-2 py-1.5 text-rose-400 hover:bg-rose-500/10 transition-colors"

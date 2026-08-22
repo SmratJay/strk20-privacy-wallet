@@ -48,6 +48,8 @@ export interface ShieldedBalance {
   shieldedBalance: bigint;
   pendingNotesCount: number;
   privacyApiSupported: boolean;
+  /** false when the RPC could not be reached for this token — UI must show "—", never a fabricated 0. */
+  publicBalanceAvailable: boolean;
 }
 
 export interface PrivacyTransaction {
@@ -105,12 +107,14 @@ export class PrivacyService {
   /**
    * Fetch ERC-20 balance using raw callContract (bypasses ABI parsing quirks).
    * Tries each RPC in fallback chain until one succeeds.
+   * Returns `{ balance, ok }` — `ok=false` means EVERY RPC was unreachable/errored,
+   * so the caller must NOT treat the balance as a real 0 (honest display).
    */
   private async fetchERC20Balance(
     tokenAddress: string,
     accountAddress: string,
     rpcUrls: string[]
-  ): Promise<bigint> {
+  ): Promise<{ balance: bigint; ok: boolean }> {
     const selector = hash.getSelectorFromName('balanceOf');
     const calldata = [num.toHex(accountAddress)];
 
@@ -124,17 +128,17 @@ export class PrivacyService {
         });
         // Cairo 2 returns [low, high] for u256
         if (Array.isArray(result) && result.length >= 2) {
-          return uint256.uint256ToBN({ low: result[0], high: result[1] });
+          return { balance: uint256.uint256ToBN({ low: result[0], high: result[1] }), ok: true };
         }
         if (Array.isArray(result) && result.length === 1) {
-          return BigInt(result[0]);
+          return { balance: BigInt(result[0]), ok: true };
         }
-        return 0n;
+        console.warn(`RPC ${nodeUrl} returned unexpected balanceOf shape for ${tokenAddress}:`, result);
       } catch (err: any) {
         console.warn(`RPC ${nodeUrl} failed for balanceOf ${tokenAddress}:`, err?.message);
       }
     }
-    return 0n;
+    return { balance: 0n, ok: false };
   }
 
   /**
@@ -157,14 +161,16 @@ export class PrivacyService {
 
     for (const token of tokens) {
       let publicBalance = 0n;
+      let publicBalanceAvailable = true;
       let shieldedBalance = 0n;
       let pendingNotesCount = 0;
 
       // 1. Fetch live public ERC-20 balance on-chain
-      try {
-        publicBalance = await this.fetchERC20Balance(token.address, accountAddress, rpcUrls);
-      } catch (err) {
-        console.warn(`Could not fetch public balance for ${token.symbol}:`, err);
+      const pub = await this.fetchERC20Balance(token.address, accountAddress, rpcUrls);
+      publicBalance = pub.balance;
+      publicBalanceAvailable = pub.ok;
+      if (!pub.ok) {
+        console.warn(`Could not fetch public balance for ${token.symbol} (all RPCs unreachable).`);
       }
 
       // 2. Fetch shielded balance:
@@ -191,6 +197,7 @@ export class PrivacyService {
       results.push({
         token,
         publicBalance,
+        publicBalanceAvailable,
         shieldedBalance,
         pendingNotesCount,
         privacyApiSupported: true, // Universal support via in-browser Umbra client
@@ -229,9 +236,7 @@ export class PrivacyService {
   ): Promise<{ txHash: string }> {
     if (!walletAccount) throw new Error('Wallet not connected');
 
-    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
     const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
-    const u256Amount = uint256.bnToUint256(amountBigInt);
 
     // 1. Ready Wallet native route
     if (typeof walletAccount.strk20Shield === 'function') {
@@ -248,37 +253,17 @@ export class PrivacyService {
       return { txHash };
     }
 
-    // 2. Braavos / Argent X Universal Umbra Client Route:
-    // Transfer tokens directly to the STRK20 Privacy Pool contract address on-chain
-    onStepChange?.('SHIELDING');
-    const transferCall = {
-      contractAddress: token.address,
-      entrypoint: 'transfer',
-      calldata: [targetPoolAddress, u256Amount.low, u256Amount.high],
-    };
-
-    const executor = walletAccount.account || walletAccount;
-    const tx = await executor.execute([transferCall]);
-    const txHash = tx?.transaction_hash || tx?.hash || tx?.transactionHash;
-
-    // Generate Encrypted UTXO Note in client-side vault
-    onStepChange?.('PROVING');
-    if (address && txHash) {
-      vaultService.addNote(
-        address,
-        networkId,
-        token.address,
-        token.symbol,
-        amountBigInt,
-        txHash,
-        undefined,
-        undefined,
-        targetPoolAddress
-      );
-    }
-
-    onStepChange?.('SUBMITTED');
-    return { txHash };
+    // 2. Braavos / Argent X path — FAIL CLOSED. A plain public ERC-20 `transfer` to the
+    // pool contract address does NOT create a shielded note (no deposit, no owner, no
+    // way to unshield) — it would park the user's USDC in the pool's balance forever.
+    // The only correct shield for these wallets is the real STRK20 SDK path
+    // (strk20SdkService.shield), which requires the operator proving + discovery
+    // services. Never silently "shield" via a raw transfer.
+    throw new Error(
+      'STRK20_SHIELD_UNAVAILABLE: This wallet does not expose a native STRK20 shield API. ' +
+        'Use strk20SdkService.shield (requires NEXT_PUBLIC_STRK20_PROVER_URL + NEXT_PUBLIC_STRK20_DISCOVERY_URL). ' +
+        'No funds were moved.'
+    );
   }
 
   /**

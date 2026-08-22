@@ -28,10 +28,29 @@ import { CompliancePassportModal } from '@/components/CompliancePassportModal';
 
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { useRouter } from 'next/navigation';
+import { constants } from 'starknet';
+import { useNetwork } from '@/context/NetworkContext';
 
 export default function Home() {
   const router = useRouter();
   const wallet = useStarknetWallet();
+  const { setNetworkId } = useNetwork();
+
+  // Auto-sync the app network to the connected wallet's chain so balances are
+  // always queried against the network the user actually funded (the deployed
+  // protocol is Sepolia-only).
+  React.useEffect(() => {
+    if (!wallet.isConnected || !wallet.chainId) return;
+    const raw = String(wallet.chainId);
+    try {
+      const chainBig = typeof wallet.chainId === 'bigint'
+        ? wallet.chainId
+        : BigInt(raw.startsWith('0x') || raw.startsWith('0X') ? raw : '0x' + raw);
+      setNetworkId(chainBig === BigInt(constants.StarknetChainId.SN_SEPOLIA) ? 'sepolia' : 'mainnet');
+    } catch {
+      // Ignore unparseable chainId; keep the current app network.
+    }
+  }, [wallet.isConnected, wallet.chainId, setNetworkId]);
 
   // Modal visibility states
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
