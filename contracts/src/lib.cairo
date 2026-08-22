@@ -2,6 +2,8 @@ pub mod types;
 pub mod test_usdc;
 pub mod oracle_adapter;
 pub mod strk20_adapter;
+pub mod pel_insurance_reserve;
+pub mod pel_liquidity_vault;
 pub mod stwo_verifier;
 pub mod groth16_verifier;
 pub mod pel_perps_core;

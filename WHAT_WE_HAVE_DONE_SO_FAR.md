@@ -1033,3 +1033,39 @@
 
 #### 🔵 [NEXT] — On-chain verification
 * Circuits are proven/verified off-chain (snarkjs). Next: on-chain Groth16 verifier (Garaga) + Cairo contract rewrite to store commitments + verify proofs on-chain, then frontend wiring, snforge tests, redeploy.
+
+---
+
+## 📅 Saturday, August 22, 2026 — 10:35:00 IST
+
+### 🏦 PEL Liquidity & Counterparty System Architecture Complete (Whitepaper v1.0)
+
+#### 🔴 [BIG CHANGE] — Cairo Counterparty Subsystems (`contracts/src/`)
+* `contracts/src/pel_liquidity_vault.cairo` — Full `PELLiquidityVault` contract in Cairo implementing proportional LP shares (`SHARE_SCALE = 1e6`), virtual bootstrap anti-inflation math, available liquidity calculations with 50% locked margin reserve buffer, 1-hour withdrawal cooldown, withdrawal queue, and core settlement hooks (`settle_trader_pnl`, `settle_funding`, `settle_liquidation`).
+* `contracts/src/pel_insurance_reserve.cairo` — Dedicated tail-risk insurance fund contract in Cairo tracking `insurance_balance`, fee inflows (20% trading fees, liquidation remnants), and senior bad debt absorption waterfall.
+* `contracts/src/lib.cairo` — Exported `pel_liquidity_vault` and `pel_insurance_reserve` modules.
+* **Verification:** `scarb build` compiles with 0 errors and 0 warnings.
+
+#### 🔴 [BIG CHANGE] — Off-Chain Rust Risk Engine & Stress Simulator (`crates/pel-risk-engine/`)
+* Built self-contained Rust package `crates/pel-risk-engine/`:
+  * `src/risk_engine.rs` — Canonical integer math for PnL, equity, maintenance margin, utilization, share pricing, and bad debt waterfall matching Cairo laws.
+  * `src/keeper.rs` — Autonomous, idempotent liquidation scanner and proof orchestrator.
+  * `src/simulator.rs` — 14-scenario market shock simulator (BTC +/-1%, +/-5%, +/-20%, flash crashes, high utilization, winning/losing runs, insurance depletion).
+  * `src/golden_vectors.rs` — Deterministic golden test vectors validating exact agreement with Cairo arithmetic.
+
+#### 🔴 [BIG CHANGE] — TypeScript Protocol Services & Terminal LP Dashboard (`src/`)
+* `src/protocol/lpVault.ts` — Canonical LP Vault engine, share pricing math, reserve calculations, and risk capacity validation.
+* `src/services/pelLiquidityService.ts` — Client RPC service for querying pool metrics, share balances, and generating deposit/withdrawal calls.
+* `src/components/tabs/EarnTab.tsx` — Upgraded into a premier Cyberpunk LP Counterparty Dashboard with real-time pool metrics (Pool NAV, Share Price, Utilization gauge, Available Liquidity, Insurance Reserve), transparent disclosures (**No Fake Yield**), interactive Deposit & Withdrawal modals, and queue tracking.
+
+#### 🔴 [BIG CHANGE] — Complete Architecture Documentation & Verification Suites
+* Created 4 authoritative protocol specification documents in `docs/`:
+  * `docs/LP_ARCHITECTURE.md` — Complete subsystem decomposition and contract interfaces.
+  * `docs/LP_ECONOMIC_MODEL.md` — Economic counterparty symmetry, share pricing, and fee routing.
+  * `docs/LP_RISK_MODEL.md` — Risk capacity limits, open interest caps, and liquidation waterfall.
+  * `docs/LP_SECURITY_MODEL.md` — Security attack analysis and invariant defenses.
+* Created comprehensive test suites:
+  * `tests/protocol/lpVault.test.ts` — Unit tests for share pricing, virtual bootstrap, late depositor fairness, and reserve buffers (5/5 passing).
+  * `tests/adversarial/lpVaultAdversarial.test.ts` — Zero-share minting, reserve draining, and net directional skew manipulation attacks (3/3 passing).
+  * `tests/integration/PEL_LP_VAULT.test.ts` — Full economic counterparty lifecycle (1/1 passing).
+* **Next.js Production Build:** `npm run build` compiles with 0 TypeScript/ESLint errors.
