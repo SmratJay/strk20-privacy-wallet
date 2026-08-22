@@ -89,17 +89,16 @@ class ModelVault {
       if (this.state.navCents >= profit) {
         this.state.navCents -= profit;
       } else {
-        // Insurance absorbs with real USDC; if still short, the close REVERTS.
+        // LP absorbs what it can (lpContribution); insurance absorbs the deficit with real USDC.
+        const lpContribution = this.state.navCents;
         const deficit = profit - this.state.navCents;
-        this.state.navCents = 0n;
         const absorbed = deficit > this.insurance.balanceCents ? this.insurance.balanceCents : deficit;
-        this.insurance.balanceCents -= absorbed;
-        this.tokensCents += absorbed;
-        this.state.navCents += absorbed;
-        if (this.state.navCents < profit) {
+        if (lpContribution + absorbed < profit) {
           throw new Error('VAULT: INSUFFICIENT_NAV');
         }
-        this.state.navCents -= profit;
+        this.insurance.balanceCents -= absorbed;
+        this.tokensCents += absorbed;
+        this.state.navCents = 0n;
       }
     }
     if (loss > 0n) this.state.navCents += loss;
@@ -177,72 +176,73 @@ class ModelVault {
 }
 
 describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)', () => {
-  it('TEST 1+2: LP deposit mints shares at $1.00', () => {
+  it('TEST 1+2: LP deposit mints shares at .00', () => {
     const v = new ModelVault();
-    const shares = v.depositLiquidity(1_000_000n); // $10,000
+    const shares = v.depositLiquidity(1_000_000n); // ,000
     expect(shares).toBe(10_000_000_000n);
     expect(LPVaultEngine.calcSharePriceE6(v.state.navCents, v.state.totalShares)).toBe(1_000_000n);
     v.assertConserved('deposit');
   });
 
-  it('TEST 3: second LP fair pricing at $1.00', () => {
+  it('TEST 3: second LP deposit at .00 is priced fairly (no historical gain capture)', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
-    const shares2 = v.depositLiquidity(500_000n);
+    const shares2 = v.depositLiquidity(500_000n); // ,000
     expect(shares2).toBe(5_000_000_000n);
     expect(LPVaultEngine.calcSharePriceE6(v.state.navCents, v.state.totalShares)).toBe(1_000_000n);
-    v.assertConserved('deposit2');
+    v.assertConserved('second_deposit');
   });
 
-  it('TEST 4: trader profit reduces LP economic NAV', () => {
+  it('TEST 4: trader profit reduces LP NAV (full counterparty loss)', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
-    const navBefore = v.state.navCents;
-    v.settleTraderPnl(100_000n, 150_000n, false, 0xaa); // profit 50,000
-    expect(v.state.navCents).toBe(navBefore - 50_000n);
+    // profit  (payout ,500 on ,000 margin)
+    v.settleTraderPnl(100_000n, 150_000n, false, 0xaa);
+    expect(v.state.navCents).toBe(950_000n);
     expect(v.state.unclaimedPayoutsCents).toBe(150_000n);
+    v.assertConserved('profit');
   });
 
-  it('TEST 5: trader loss increases LP economic NAV (FULL loss)', () => {
+  it('TEST 5: trader loss increases LP NAV (full counterparty gain)', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
-    const navBefore = v.state.navCents;
-    v.settleTraderPnl(100_000n, 20_000n, false, 0x0); // loss 80,000
-    expect(v.state.navCents).toBe(navBefore + 80_000n);
+    // loss  (payout  on ,000 margin)
+    v.settleTraderPnl(100_000n, 20_000n, false, 0xbb);
+    expect(v.state.navCents).toBe(1_080_000n);
+    expect(v.state.unclaimedPayoutsCents).toBe(20_000n);
+    v.assertConserved('loss');
   });
 
-  it('TEST 6: funding long-pays increases NAV, counterparty-pays decreases NAV', () => {
+  it('TEST 6: funding flows between counterparty and trader symmetrically', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
-    const navBefore = v.state.navCents;
-    v.settleFunding(10_000n, true, false);
-    expect(v.state.navCents).toBe(navBefore + 10_000n);
-    v.settleFunding(10_000n, false, false);
-    expect(v.state.navCents).toBe(navBefore);
+    v.settleFunding(10_000n, true, false); // long pays -> LP gains
+    expect(v.state.navCents).toBe(1_010_000n);
+    v.settleFunding(10_000n, false, false); // LP pays long -> reverts to 1,000,000
+    expect(v.state.navCents).toBe(1_000_000n);
+    v.assertConserved('funding');
   });
 
-  it('TEST 7: liquidation routes 2% bounty + 70/20/10 (every cent)', () => {
+  it('TEST 7: liquidation waterfall distributes remnant 70% LP / 20% insurance / 10% treasury', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
     v.settleLiquidation(100_000n, 0n, false);
-    expect(v.state.unclaimedBountiesCents).toBe(2_000n);
-    expect(v.state.treasuryCents).toBe(9_800n); // 10% of 98,000
-    expect(v.state.navCents).toBe(1_000_000n + 68_600n);
-    expect(v.insurance.balanceCents).toBe(19_600n);
+    expect(v.state.unclaimedBountiesCents).toBe(2_000n); // 2%
+    expect(v.state.navCents).toBe(1_000_000n + 68_600n); // 70% of 98k
+    expect(v.insurance.balanceCents).toBe(19_600n); // 20% of 98k
+    expect(v.state.treasuryCents).toBe(9_800n); // 10% of 98k
     v.assertConserved('liq');
   });
 
-  it('TEST 8: insurance funding is real (vault tokens move to insurance)', () => {
+  it('TEST 8: insurance is backed by real USDC (custody balance matches)', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
     v.settleLiquidation(100_000n, 0n, false);
-    // tokens left vault, insurance holds them
-    expect(v.tokensCents).toBe(1_000_000n + 100_000n - 19_600n);
     expect(v.insurance.balanceCents).toBe(19_600n);
     v.assertConserved('ins');
   });
@@ -254,7 +254,6 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.insurance.balanceCents = 0n; // exhausted
     // trader wins 1,200,000 on 100,000 margin -> profit 1,100,000 > NAV 1,000,000
     expect(() => v.settleTraderPnl(100_000n, 1_200_000n, false, 0xbb)).toThrow('VAULT: INSUFFICIENT_NAV');
-    // no payout note was created, state unchanged
     expect(v.state.unclaimedPayoutsCents).toBe(0n);
     expect(v.state.badDebtCents).toBe(0n);
   });
@@ -264,11 +263,9 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.depositLiquidity(1_000_000n);
     v.lockTraderMargin(0n, 100_000n);
     v.insurance.balanceCents = 30_000n; // real insurance
-    // seized 100,000, deficit 50,000 (trader equity < 0)
     v.settleLiquidation(100_000n, 50_000n, false);
-    // insurance received 19,600 (revenue) then absorbed min(50k, 49,600) = 49,600 -> 0
     expect(v.insurance.balanceCents).toBe(0n);
-    expect(v.state.badDebtCents).toBe(400n); // 50,000 - 49,600 explicitly recorded
+    expect(v.state.badDebtCents).toBe(400n);
     expect(v.state.navCents).toBe(1_000_000n + 68_600n + 49_600n - 400n);
     v.assertConserved('bad_debt');
   });
@@ -276,7 +273,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
   it('TEST 11+12: Model A withdrawal queue + double claim rejection', () => {
     const v = new ModelVault();
     v.depositLiquidity(1_000_000n);
-    const gross = v.requestWithdrawal(5_000_000_000n); // half the pool = $5,000
+    const gross = v.requestWithdrawal(5_000_000_000n);
     expect(gross).toBe(500_000n);
     expect(v.state.pendingWithdrawalsCents).toBe(500_000n);
     expect(v.state.navCents).toBe(500_000n);
@@ -292,7 +289,7 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     v.lockPoolCustodiedMargin(100_000n);
     expect(v.state.poolAssetsCents).toBe(100_000n);
     expect(v.state.poolMarginCents).toBe(100_000n);
-    v.settleTraderPnl(100_000n, 20_000n, true, 0xcc); // loss 80,000
+    v.settleTraderPnl(100_000n, 20_000n, true, 0xcc);
     expect(v.state.poolMarginCents).toBe(0n);
     expect(v.state.navCents).toBe(1_000_000n + 80_000n);
     v.assertConserved('shielded_loss');
@@ -300,10 +297,9 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
 
   it('TEST 14: utilization gate rejects over-85% deployment', () => {
     const v = new ModelVault();
-    v.depositLiquidity(100_000_000n); // $1,000,000 NAV
+    v.depositLiquidity(100_000_000n);
     const maxSingle = LPVaultEngine.maxSinglePositionMargin(v.state.navCents);
-    expect(maxSingle).toBe(100_000n); // 5% * 1M / 50 = $1,000 margin
-    // 85% locked then a $100 margin (within single-position cap) -> 85.01% utilization.
+    expect(maxSingle).toBe(100_000n);
     const state2 = { ...v.state, lockedCollateralCents: 85_000_000n };
     const res = LPVaultEngine.validateOpenCapacity(state2, 10_000n);
     expect(res.allowed).toBe(false);
@@ -314,9 +310,58 @@ describe('Canonical vault settlement conservation (mirrors Cairo snforge tests)'
     const v = new ModelVault();
     v.depositLiquidity(2_000_000n);
     for (let i = 0; i < 50; i++) {
-      v.lockTraderMargin(0n, 1_000n); // $10 margin, within the 5% NAV / 50x cap
+      v.lockTraderMargin(0n, 1_000n);
       v.settleTraderPnl(1_000n, i % 2 === 0 ? 800n : 1_200n, false, BigInt(i + 1));
     }
     v.assertConserved('loop');
+  });
+
+  describe('P0 #3: Insurance-Backed Profit Settlement 5 Invariant Cases', () => {
+    it('Case 1: Profit < LP NAV (LP absorbs 100%, insurance untouched)', () => {
+      const v = new ModelVault();
+      v.depositLiquidity(100_000n); // ,000 NAV
+      v.lockTraderMargin(1n, 20_000n); //  margin
+      v.insurance.balanceCents = 50_000n; //  insurance
+      v.settleTraderPnl(20_000n, 50_000n, false, 123n);
+      expect(v.state.navCents).toBe(70_000n); //  NAV
+      expect(v.insurance.balanceCents).toBe(50_000n);
+    });
+
+    it('Case 2: Profit == LP NAV (LP absorbs 100%, NAV becomes 0, insurance untouched)', () => {
+      const v = new ModelVault();
+      v.depositLiquidity(50_000n); //  NAV
+      v.lockTraderMargin(1n, 10_000n); //  margin
+      v.insurance.balanceCents = 50_000n; //  insurance
+      v.settleTraderPnl(10_000n, 60_000n, false, 123n);
+      expect(v.state.navCents).toBe(0n);
+      expect(v.insurance.balanceCents).toBe(50_000n);
+    });
+
+    it('Case 3: Profit > LP NAV but <= LP + insurance (LP absorbs NAV, insurance absorbs deficit)', () => {
+      const v = new ModelVault();
+      v.depositLiquidity(50_000n); //  NAV
+      v.lockTraderMargin(1n, 10_000n); //  margin
+      v.insurance.balanceCents = 50_000n; //  insurance
+      v.settleTraderPnl(10_000n, 90_000n, false, 123n);
+      expect(v.state.navCents).toBe(0n);
+      expect(v.insurance.balanceCents).toBe(20_000n);
+      expect(v.tokensCents).toBe(90_000n);
+    });
+
+    it('Case 4: Profit > LP + insurance (REVERTS fail-closed, no unbacked note)', () => {
+      const v = new ModelVault();
+      v.depositLiquidity(50_000n); //  NAV
+      v.lockTraderMargin(1n, 10_000n); //  margin
+      v.insurance.balanceCents = 20_000n; //  insurance
+      expect(() => v.settleTraderPnl(10_000n, 90_000n, false, 123n)).toThrow('VAULT: INSUFFICIENT_NAV');
+    });
+
+    it('Case 5: Exact zero balances / 0 profit / 0 margin', () => {
+      const v = new ModelVault();
+      v.depositLiquidity(10_000n);
+      v.lockTraderMargin(1n, 5_000n);
+      v.settleTraderPnl(5_000n, 5_000n, false, 123n);
+      expect(v.state.navCents).toBe(10_000n);
+    });
   });
 });

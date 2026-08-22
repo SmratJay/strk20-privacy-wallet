@@ -84,8 +84,7 @@ pub trait IPELPerpsCore<TContractState> {
 pub mod PELPerpsCore {
     use super::{IPELPerpsCore, MarketConfig, PositionRecord};
     use super::super::oracle_adapter::{IOracleAdapterDispatcher, IOracleAdapterDispatcherTrait};
-    use super::super::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
-    use super::super::pel_liquidity_vault::{IPELLiquidityVaultDispatcher, IPELLiquidityVaultDispatcherTrait};
+        use super::super::pel_liquidity_vault::{IPELLiquidityVaultDispatcher, IPELLiquidityVaultDispatcherTrait};
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
     use super::super::types::{u256_to_storage_key, u256_to_felt252};    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{
@@ -334,13 +333,11 @@ pub mod PELPerpsCore {
             //    cap). Otherwise the legacy STRK20Adapter path is used.
             let is_pool_custodied = false;
             let lp_vault = self.lp_vault_address.read();
-            if lp_vault != 0.try_into().unwrap() {
-                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
-                    .lock_trader_margin(collateral_owner, margin_nullifier_key, proof_margin);
-            } else {
-                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-                strk20.lock_shielded_margin(collateral_owner, margin_nullifier_key, proof_margin);
-            }
+            assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
+            let insurance = self.insurance_reserve_address.read();
+            assert(insurance != 0.try_into().unwrap(), 'INSURANCE_NOT_CONFIGURED');
+            IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                .lock_trader_margin(collateral_owner, margin_nullifier_key, proof_margin);
 
             // 5. Store Active Position Record
             let now = get_block_timestamp();
@@ -417,10 +414,11 @@ pub mod PELPerpsCore {
             //    risk gates (utilization + single-position cap) as the public path.
             let is_pool_custodied = true;
             let lp_vault = self.lp_vault_address.read();
-            if lp_vault != 0.try_into().unwrap() {
-                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
-                    .lock_pool_custodied_margin(margin_nullifier_key, proof_margin);
-            }
+            assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
+            let insurance = self.insurance_reserve_address.read();
+            assert(insurance != 0.try_into().unwrap(), 'INSURANCE_NOT_CONFIGURED');
+            IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                .lock_pool_custodied_margin(margin_nullifier_key, proof_margin);
 
             // 4. Store Active Position Record. The margin is pool-custodied (in-pool
             //    collateral recorded by the bridge) — no ERC20 transfer is pulled here.
@@ -602,13 +600,9 @@ pub mod PELPerpsCore {
 
             let is_pool_custodied = pos.is_pool_custodied;
             let lp_vault = self.lp_vault_address.read();
-            if lp_vault != 0.try_into().unwrap() {
-                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
-                    .settle_funding(funding_amount, is_long_pays, is_pool_custodied);
-            } else {
-                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-                strk20.collect_funding_payment(old_nullifier_key, funding_amount, is_long_pays);
-            }
+            assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
+            IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                .settle_funding(funding_amount, is_long_pays, is_pool_custodied);
 
             self.emit(PositionFunded {
                 commitment: old_commitment_key,
@@ -690,25 +684,15 @@ pub mod PELPerpsCore {
             // liquidation waterfall (see docs/LP_RISK_MODEL.md).
             let is_pool_custodied = pos.is_pool_custodied;
             let lp_vault = self.lp_vault_address.read();
-            if lp_vault != 0.try_into().unwrap() {
-                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
-                    .settle_liquidation(
-                        pos.locked_margin,
-                        bounty_amount,
-                        keeper_recipient,
-                        0_u128,
-                        is_pool_custodied,
-                    );
-            } else {
-                let remaining_amount: u128 = pos.locked_margin - bounty_amount;
-                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-                strk20.seize_liquidation_collateral(
-                    position_nullifier_key,
-                    keeper_recipient,
+            assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
+            IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                .settle_liquidation(
+                    pos.locked_margin,
                     bounty_amount,
-                    remaining_amount,
+                    keeper_recipient,
+                    0_u128,
+                    is_pool_custodied,
                 );
-            }
 
             self.emit(PositionLiquidated {
                 commitment: position_commitment_key,
@@ -765,14 +749,14 @@ pub mod PELPerpsCore {
             self.used_nullifiers.write(final_nullifier_key, true);
 
             // Compute exact profit above locked margin for LP accounting
-            let profit_amount: u128 = if payout_amount > pos.locked_margin {
+            let _profit_amount: u128 = if payout_amount > pos.locked_margin {
                 payout_amount - pos.locked_margin
             } else {
                 0_u128
             };
 
             // Trader loss (locked_margin - payout) is routed to the LP counterparty NAV.
-            let loss_amount: u128 = if pos.locked_margin > payout_amount {
+            let _loss_amount: u128 = if pos.locked_margin > payout_amount {
                 pos.locked_margin - payout_amount
             } else {
                 0_u128
@@ -782,35 +766,15 @@ pub mod PELPerpsCore {
             // position margin, credits/debits LP NAV by the full PnL (no 70/20/10 split
             // on trader PnL), and registers the recipient-bound payout note.
             let lp_vault = self.lp_vault_address.read();
-            if lp_vault != 0.try_into().unwrap() {
-                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
-                    .settle_trader_pnl(
-                        pos.locked_margin,
-                        payout_amount,
-                        payout_note_commitment_key,
-                        recipient,
-                        pos.is_pool_custodied,
-                    );
-            } else {
-                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-
-                // Release the trader payout. Skipped when payout == 0: a fully-lost position
-                // has no claimable payout; its entire margin is a loss to the counterparty.
-                if payout_amount > 0 {
-                    strk20.release_shielded_payout(
-                        payout_note_commitment_key,
-                        recipient,
-                        payout_amount,
-                        profit_amount,
-                    );
-                }
-
-                // Route residual locked margin (trader loss) to the LP counterparty NAV so no
-                // margin is ever stranded inside total_locked_collateral.
-                if loss_amount > 0 {
-                    strk20.collect_insurance_contribution(final_nullifier_key, loss_amount);
-                }
-            }
+            assert(lp_vault != 0.try_into().unwrap(), 'LP_VAULT_NOT_CONFIGURED');
+            IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                .settle_trader_pnl(
+                    pos.locked_margin,
+                    payout_amount,
+                    payout_note_commitment_key,
+                    recipient,
+                    pos.is_pool_custodied,
+                );
 
             self.emit(PositionClosed {
                 commitment: position_commitment_key,

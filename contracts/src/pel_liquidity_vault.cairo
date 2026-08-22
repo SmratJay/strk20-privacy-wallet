@@ -580,21 +580,22 @@ pub mod PELLiquidityVault {
             self: @ContractState
         ) -> (u256, u128, u128, u128, u128, u128, u128, bool) {
             let token_balance = self.get_contract_token_balance();
+            let tokens_cents = self.token_balance_cents();
+            let pool_assets = self.pool_assets_cents.read();
             let locked = self.total_locked_collateral.read();
+            let pool_margin = self.pool_margin_cents.read();
             let lp_nav = self.lp_pool_nav.read();
             let payouts = self.unclaimed_payouts_total.read();
             let bounties = self.unclaimed_bounties_total.read();
             let withdrawals = self.pending_withdrawals_total.read();
             let treasury = self.treasury_balance.read();
-            // bad_debt is a recorded deficit liability: it keeps the balance sheet honest
-            // (uncovered liquidation deficits are borne by LP NAV with no token movement).
             let bad_debt = self.bad_debt_total.read();
 
-            let total_liabilities_cents = locked + lp_nav + payouts + bounties + withdrawals + treasury + bad_debt;
-            let total_liabilities_token_units: u256 = (total_liabilities_cents * TOKEN_DECIMAL_MULTIPLIER).into();
-            let is_solvent = token_balance >= total_liabilities_token_units;
+            let total_assets_cents = tokens_cents + pool_assets;
+            let total_liabilities_cents = locked + pool_margin + lp_nav + payouts + bounties + withdrawals + treasury + bad_debt;
+            let is_solvent = total_assets_cents >= total_liabilities_cents;
 
-            (token_balance, locked, lp_nav, payouts, bounties, withdrawals, treasury, is_solvent)
+            (token_balance, locked + pool_margin, lp_nav, payouts, bounties, withdrawals, treasury, is_solvent)
         }
 
         // ─── CORE SETTLEMENT (PELPerpsCore only — admin has NO settlement authority) ──
@@ -722,17 +723,16 @@ pub mod PELLiquidityVault {
                 if nav >= profit_cents {
                     nav = nav - profit_cents;
                 } else {
-                    // LP cannot cover the profit. Insurance absorbs the deficit with
-                    // REAL USDC; if the combined backing is still insufficient the close
-                    // REVERTS (fail-closed) — an unbacked payout note is never created.
+                    // LP absorbs what it can (lp_contribution = nav).
+                    // Insurance absorbs the remaining deficit with REAL USDC.
+                    // If combined LP + insurance backing is insufficient, the close REVERTS.
+                    let lp_contribution = nav;
                     let deficit = profit_cents - nav;
-                    nav = 0_u128;
                     let absorbed = self.absorb_bad_debt(deficit);
-                    nav = nav + absorbed;
-                    if nav < profit_cents {
+                    if lp_contribution + absorbed < profit_cents {
                         core::panic_with_felt252('VAULT: INSUFFICIENT_NAV');
                     }
-                    nav = nav - profit_cents;
+                    nav = 0_u128;
                 }
             }
             if loss_cents > 0_u128 {
