@@ -1,29 +1,43 @@
 /**
  * @file tests/lpNavEconomics.test.ts
- * @description P0 Proportional LP Shares & NAV Accounting Test Suite (PEL V4.1 Architecture)
+ * @description P0 Proportional LP Shares & NAV Accounting Test Suite (Canonical V2)
  *
- * Verifies that:
- * 1. LP shares track proportional ownership of pool NAV: sharePrice = poolNAV / totalShares
- * 2. Trader profit dilutes share price; trader loss boosts share price
- * 3. Late depositors entering after a trader loss pay the higher share price and do NOT capture historical PnL
- * 4. Early depositors cannot withdraw more than their current proportional share of pool NAV
- * 5. Multiple LPs entering and exiting at different timestamps preserve exact token conservation
+ * Uses the SAME LPVaultEngine as the frontend (src/protocol/lpVault.ts), which mirrors
+ * the Cairo vault and the Rust risk engine exactly. Verifies:
+ * 1. LP shares track proportional ownership of pool NAV
+ * 2. Trader profit dilutes share price; trader loss boosts share price (FULL PnL)
+ * 3. Late depositors do NOT capture historical PnL
+ * 4. Early depositors cannot withdraw more than their proportional share of NAV
+ * 5. Multiple LPs entering and exiting preserve exact token conservation
+ * 6. Model A withdrawal queue: queued shares excluded from subsequent PnL
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { LPVaultEngine, LPVaultState, SHARE_SCALE } from '../src/protocol/lpVault';
 
-const SHARE_SCALE = 1_000_000n; // 1e6 share scale matching Cairo
+function emptyState(): LPVaultState {
+  return {
+    navCents: 0n,
+    totalShares: 0n,
+    lockedCollateralCents: 0n,
+    poolMarginCents: 0n,
+    poolAssetsCents: 0n,
+    insuranceReserveCents: 0n,
+    unclaimedPayoutsCents: 0n,
+    unclaimedBountiesCents: 0n,
+    pendingWithdrawalsCents: 0n,
+    treasuryCents: 0n,
+    badDebtCents: 0n,
+  };
+}
 
 class MockLpVault {
-  public totalLpShares: bigint = 0n;
-  public lpPoolNav: bigint = 0n;
-  public lpSharesBalances: Map<string, bigint> = new Map();
+  public state: LPVaultState = emptyState();
   public tokenBalances: Map<string, bigint> = new Map();
-  public adapterAddress: string = '0x_adapter';
 
-  mintToken(account: string, amount: bigint) {
+  mintToken(account: string, amountCents: bigint) {
     const cur = this.tokenBalances.get(account.toLowerCase()) || 0n;
-    this.tokenBalances.set(account.toLowerCase(), cur + amount);
+    this.tokenBalances.set(account.toLowerCase(), cur + amountCents);
   }
 
   getTokenBalance(account: string): bigint {
@@ -31,8 +45,7 @@ class MockLpVault {
   }
 
   getSharePrice(): bigint {
-    if (this.totalLpShares === 0n) return SHARE_SCALE;
-    return (this.lpPoolNav * SHARE_SCALE * SHARE_SCALE) / this.totalLpShares;
+    return LPVaultEngine.calcSharePriceE6(this.state.navCents, this.state.totalShares);
   }
 
   depositLiquidity(provider: string, amountCents: bigint): bigint {
@@ -40,67 +53,51 @@ class MockLpVault {
     const providerBal = this.getTokenBalance(provider);
     if (providerBal < amountCents) throw new Error('ERC20_INSUFFICIENT_BALANCE');
 
-    // Transfer tokens
+    // Real custody: move tokens into the vault.
     this.tokenBalances.set(provider.toLowerCase(), providerBal - amountCents);
-    const adapterBal = this.getTokenBalance(this.adapterAddress);
-    this.tokenBalances.set(this.adapterAddress.toLowerCase(), adapterBal + amountCents);
+    this.tokenBalances.set('vault', (this.tokenBalances.get('vault') || 0n) + amountCents);
 
-    let sharesToMint: bigint;
-    if (this.totalLpShares === 0n || this.lpPoolNav === 0n) {
-      sharesToMint = amountCents * SHARE_SCALE;
-    } else {
-      sharesToMint = (amountCents * this.totalLpShares) / this.lpPoolNav;
-    }
-
-    if (sharesToMint <= 0n) throw new Error('ZERO_SHARES_MINTED');
-
-    const curShares = this.lpSharesBalances.get(provider.toLowerCase()) || 0n;
-    this.lpSharesBalances.set(provider.toLowerCase(), curShares + sharesToMint);
-
-    this.totalLpShares += sharesToMint;
-    this.lpPoolNav += amountCents;
-
-    return sharesToMint;
+    const shares = LPVaultEngine.calcSharesMinted(amountCents, this.state.navCents, this.state.totalShares);
+    if (shares <= 0n) throw new Error('ZERO_SHARES_MINTED');
+    this.state.navCents += amountCents;
+    this.state.totalShares += shares;
+    return shares;
   }
 
-  withdrawLiquidityShares(provider: string, shares: bigint): bigint {
-    if (shares <= 0n) throw new Error('INVALID_WITHDRAW_SHARES');
-    const userShares = this.lpSharesBalances.get(provider.toLowerCase()) || 0n;
-    if (userShares < shares) throw new Error('INSUFFICIENT_LP_SHARES');
-    if (this.totalLpShares <= 0n) throw new Error('ZERO_TOTAL_SHARES');
-
-    const payoutAmount = (shares * this.lpPoolNav) / this.totalLpShares;
-    if (payoutAmount <= 0n) throw new Error('ZERO_WITHDRAWAL_PAYOUT');
-    if (this.lpPoolNav < payoutAmount) throw new Error('INSUFFICIENT_POOL_NAV');
-
-    this.lpSharesBalances.set(provider.toLowerCase(), userShares - shares);
-    this.totalLpShares -= shares;
-    this.lpPoolNav -= payoutAmount;
-
-    const adapterBal = this.getTokenBalance(this.adapterAddress);
-    this.tokenBalances.set(this.adapterAddress.toLowerCase(), adapterBal - payoutAmount);
-    const providerBal = this.getTokenBalance(provider);
-    this.tokenBalances.set(provider.toLowerCase(), providerBal + payoutAmount);
-
-    return payoutAmount;
+  requestWithdrawal(provider: string, shares: bigint): bigint {
+    // Model A: burn shares + freeze NAV at request.
+    const gross = LPVaultEngine.calcGrossWithdrawal(shares, this.state.navCents, this.state.totalShares);
+    if (gross <= 0n) throw new Error('ZERO_WITHDRAWAL_PAYOUT');
+    this.state.navCents -= gross;
+    this.state.totalShares -= shares;
+    this.state.pendingWithdrawalsCents += gross;
+    return gross;
   }
 
-  // Trader PnL attribution
+  claimWithdrawal(gross: bigint) {
+    const vault = this.tokenBalances.get('vault') || 0n;
+    if (vault < gross) throw new Error('INSUFFICIENT_POOL_NAV');
+    this.tokenBalances.set('vault', vault - gross);
+    this.state.pendingWithdrawalsCents -= gross;
+  }
+
   applyTraderLoss(lossAmount: bigint) {
-    this.lpPoolNav += lossAmount;
-    const adapterBal = this.getTokenBalance(this.adapterAddress);
-    this.tokenBalances.set(this.adapterAddress.toLowerCase(), adapterBal + lossAmount);
+    // FULL loss to LP (no split).
+    this.state.navCents += lossAmount;
+    const vault = this.tokenBalances.get('vault') || 0n;
+    this.tokenBalances.set('vault', vault + lossAmount);
   }
 
   applyTraderProfit(profitAmount: bigint) {
-    if (this.lpPoolNav < profitAmount) throw new Error('INSUFFICIENT_POOL_NAV');
-    this.lpPoolNav -= profitAmount;
-    const adapterBal = this.getTokenBalance(this.adapterAddress);
-    this.tokenBalances.set(this.adapterAddress.toLowerCase(), adapterBal - profitAmount);
+    if (this.state.navCents < profitAmount) throw new Error('INSUFFICIENT_POOL_NAV');
+    this.state.navCents -= profitAmount;
+    const vault = this.tokenBalances.get('vault') || 0n;
+    if (vault < profitAmount) throw new Error('INSUFFICIENT_POOL_NAV');
+    this.tokenBalances.set('vault', vault - profitAmount);
   }
 }
 
-describe('PEL V4.1 Proportional LP Shares & NAV Accounting Tests', () => {
+describe('PEL V2 Proportional LP Shares & NAV Accounting Tests', () => {
   let vault: MockLpVault;
   const lpAlice = '0x_lp_alice';
   const lpBob = '0x_lp_bob';
@@ -108,104 +105,108 @@ describe('PEL V4.1 Proportional LP Shares & NAV Accounting Tests', () => {
 
   beforeEach(() => {
     vault = new MockLpVault();
-    vault.mintToken(lpAlice, 1_000_000n);   // $10,000.00
-    vault.mintToken(lpBob, 1_000_000n);     // $10,000.00
-    vault.mintToken(lpCharlie, 1_000_000n); // $10,000.00
+    vault.mintToken(lpAlice, 1_000_000n);
+    vault.mintToken(lpBob, 1_000_000n);
+    vault.mintToken(lpCharlie, 1_000_000n);
   });
 
   it('1. Initial LP deposit establishes base 1:1 share price', () => {
     const depositAmount = 100_000n; // $1,000.00
     const sharesMinted = vault.depositLiquidity(lpAlice, depositAmount);
 
-    expect(sharesMinted).toBe(100_000n * SHARE_SCALE);
-    expect(vault.totalLpShares).toBe(100_000n * SHARE_SCALE);
-    expect(vault.lpPoolNav).toBe(100_000n);
+    expect(sharesMinted).toBe(100_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.totalShares).toBe(100_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.navCents).toBe(100_000n);
     expect(vault.getSharePrice()).toBe(SHARE_SCALE); // $1.00 per unit (1e6 scale)
   });
 
   it('2. Equal depositors get equal shares and proportional payouts', () => {
-    vault.depositLiquidity(lpAlice, 100_000n); // $1,000
-    vault.depositLiquidity(lpBob, 100_000n);   // $1,000
+    vault.depositLiquidity(lpAlice, 100_000n);
+    vault.depositLiquidity(lpBob, 100_000n);
 
-    expect(vault.lpSharesBalances.get(lpAlice)).toBe(vault.lpSharesBalances.get(lpBob));
-    expect(vault.totalLpShares).toBe(200_000n * SHARE_SCALE);
-    expect(vault.lpPoolNav).toBe(200_000n);
+    const aliceShares = vault.state.totalShares / 2n;
+    expect(aliceShares).toBe(100_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.totalShares).toBe(200_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.navCents).toBe(200_000n);
 
-    // Alice withdraws 100% of her shares -> gets exactly $1,000
-    const aliceShares = vault.lpSharesBalances.get(lpAlice)!;
-    const payout = vault.withdrawLiquidityShares(lpAlice, aliceShares);
+    // Alice withdraws 100% of her shares -> exactly $1,000.
+    const payout = vault.requestWithdrawal(lpAlice, aliceShares);
     expect(payout).toBe(100_000n);
-    expect(vault.lpPoolNav).toBe(100_000n);
-    expect(vault.totalLpShares).toBe(100_000n * SHARE_SCALE);
+    expect(vault.state.navCents).toBe(100_000n);
+    expect(vault.state.totalShares).toBe(100_000n * (SHARE_SCALE / 100n));
   });
 
-  it('3. Trader loss increases pool NAV and rewards existing LPs proportionally', () => {
-    vault.depositLiquidity(lpAlice, 100_000n); // $1,000
-    vault.depositLiquidity(lpBob, 100_000n);   // $1,000
+  it('3. FULL trader loss increases pool NAV and rewards existing LPs proportionally', () => {
+    vault.depositLiquidity(lpAlice, 100_000n);
+    vault.depositLiquidity(lpBob, 100_000n);
 
-    // Trader loses $400 (40,000 cents) -> credited to pool NAV
+    // Trader loses $400 (40,000 cents) -> FULL credit to pool NAV.
     vault.applyTraderLoss(40_000n);
-    expect(vault.lpPoolNav).toBe(240_000n); // Pool now worth $2,400
+    expect(vault.state.navCents).toBe(240_000n); // Pool now worth $2,400
 
-    // Share price increased from $1.00 to $1.20 (1_200_000 in 1e6 scale)
-    expect(vault.getSharePrice()).toBe((120n * SHARE_SCALE) / 100n);
+    expect(vault.getSharePrice()).toBe(1_200_000n); // $1.20 / share
 
-    // Alice withdraws all shares -> receives $1,200 ($200 profit)
-    const aliceShares = vault.lpSharesBalances.get(lpAlice)!;
-    const alicePayout = vault.withdrawLiquidityShares(lpAlice, aliceShares);
+    // Alice withdraws all -> $1,200.
+    const alicePayout = vault.requestWithdrawal(lpAlice, vault.state.totalShares / 2n);
     expect(alicePayout).toBe(120_000n);
 
-    // Bob withdraws remaining shares -> receives $1,200 ($200 profit)
-    const bobShares = vault.lpSharesBalances.get(lpBob)!;
-    const bobPayout = vault.withdrawLiquidityShares(lpBob, bobShares);
+    const bobPayout = vault.requestWithdrawal(lpBob, vault.state.totalShares);
     expect(bobPayout).toBe(120_000n);
-
-    expect(vault.lpPoolNav).toBe(0n);
-    expect(vault.totalLpShares).toBe(0n);
+    expect(vault.state.navCents).toBe(0n);
   });
 
   it('4. Late depositors do NOT capture historical trader losses', () => {
-    // Alice deposits $1,000
     vault.depositLiquidity(lpAlice, 100_000n);
+    vault.applyTraderLoss(50_000n); // Alice NAV becomes $1,500
+    expect(vault.state.navCents).toBe(150_000n);
 
-    // Trader loses $500 -> Alice pool NAV becomes $1,500 (Alice is up 50%)
-    vault.applyTraderLoss(50_000n);
-    expect(vault.lpPoolNav).toBe(150_000n);
-
-    // Charlie now deposits $1,500
-    // Because sharePrice is $1.50, Charlie receives fewer shares proportionally
+    // Charlie deposits $1,500 at $1.50/share -> same shares as Alice.
     const charlieShares = vault.depositLiquidity(lpCharlie, 150_000n);
-    expect(charlieShares).toBe(vault.lpSharesBalances.get(lpAlice)); // Same shares as Alice!
+    expect(charlieShares).toBe(100_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.totalShares).toBe(200_000n * (SHARE_SCALE / 100n));
+    expect(vault.state.navCents).toBe(300_000n);
 
-    expect(vault.totalLpShares).toBe(200_000n * SHARE_SCALE);
-    expect(vault.lpPoolNav).toBe(300_000n);
-
-    // Charlie withdraws immediately -> receives exactly his $1,500 back (no unearned profit)
-    const charliePayout = vault.withdrawLiquidityShares(lpCharlie, charlieShares);
+    // Charlie withdraws immediately -> exactly $1,500 (no unearned profit).
+    const charliePayout = vault.requestWithdrawal(lpCharlie, charlieShares);
     expect(charliePayout).toBe(150_000n);
 
-    // Alice withdraws -> receives her $1,500
-    const alicePayout = vault.withdrawLiquidityShares(lpAlice, vault.lpSharesBalances.get(lpAlice)!);
+    const alicePayout = vault.requestWithdrawal(lpAlice, 100_000n * (SHARE_SCALE / 100n));
     expect(alicePayout).toBe(150_000n);
   });
 
   it('5. Trader profit reduces pool NAV and decreases share price proportionally', () => {
-    vault.depositLiquidity(lpAlice, 100_000n); // $1,000
-    vault.depositLiquidity(lpBob, 100_000n);   // $1,000
+    vault.depositLiquidity(lpAlice, 100_000n);
+    vault.depositLiquidity(lpBob, 100_000n);
 
-    // Trader makes $400 profit -> paid out from pool NAV
     vault.applyTraderProfit(40_000n);
-    expect(vault.lpPoolNav).toBe(160_000n); // Pool now worth $1,600
+    expect(vault.state.navCents).toBe(160_000n); // Pool now worth $1,600
 
-    // Share price decreased to $0.80 (800_000 in 1e6 scale)
-    expect(vault.getSharePrice()).toBe((80n * SHARE_SCALE) / 100n);
+    expect(vault.getSharePrice()).toBe(800_000n); // $0.80 / share
 
-    // Alice withdraws -> receives $800 (absorbed $200 counterparty loss)
-    const alicePayout = vault.withdrawLiquidityShares(lpAlice, vault.lpSharesBalances.get(lpAlice)!);
+    const alicePayout = vault.requestWithdrawal(lpAlice, vault.state.totalShares / 2n);
     expect(alicePayout).toBe(80_000n);
-
-    // Bob withdraws -> receives $800
-    const bobPayout = vault.withdrawLiquidityShares(lpBob, vault.lpSharesBalances.get(lpBob)!);
+    const bobPayout = vault.requestWithdrawal(lpBob, vault.state.totalShares);
     expect(bobPayout).toBe(80_000n);
+  });
+
+  it('6. Model A queue: shares queued at request are excluded from subsequent PnL', () => {
+    vault.depositLiquidity(lpAlice, 100_000n);
+    vault.depositLiquidity(lpBob, 100_000n);
+
+    // Alice queues 50% of the pool ($1,000 -> $1,000 frozen).
+    const queued = vault.requestWithdrawal(lpAlice, 100_000n * (SHARE_SCALE / 100n));
+    expect(queued).toBe(100_000n);
+    expect(vault.state.navCents).toBe(100_000n); // NAV reduced at request
+
+    // Trader loses $200 after the request. Only Bob participates.
+    vault.applyTraderLoss(20_000n);
+    expect(vault.state.navCents).toBe(120_000n); // Bob's 100k NAV + 20k loss
+
+    // Alice claims her frozen $1,000 exactly (no participation in the loss).
+    vault.claimWithdrawal(queued);
+    expect(vault.state.pendingWithdrawalsCents).toBe(0n);
+
+    // Bob's remaining value is the full NAV.
+    expect(vault.state.navCents).toBe(120_000n);
   });
 });

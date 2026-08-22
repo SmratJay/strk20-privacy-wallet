@@ -1069,3 +1069,40 @@
   * `tests/adversarial/lpVaultAdversarial.test.ts` — Zero-share minting, reserve draining, and net directional skew manipulation attacks (3/3 passing).
   * `tests/integration/PEL_LP_VAULT.test.ts` — Full economic counterparty lifecycle (1/1 passing).
 * **Next.js Production Build:** `npm run build` compiles with 0 TypeScript/ESLint errors.
+
+---
+
+## 📅 Saturday, August 22, 2026 — 11:55:00 IST
+
+### 🔗 PEL Liquidity Counterparty Full Protocol Integration (Mission Accomplished)
+
+#### 🔴 [BIG CHANGE] — Cairo Core <-> LP Vault Economic Wiring (`contracts/src/`)
+* `contracts/src/pel_perps_core.cairo` — Wired directly to canonical `PELLiquidityVault` and `PELInsuranceReserve`:
+  * Added `set_lp_vault` and `set_insurance_reserve` admin setters and getters.
+  * In `open_position`, routes margin lock to `vault.lock_trader_margin` with public token transfer.
+  * In `open_position_shielded`, routes shielded pool collateral to `vault.lock_pool_custodied_margin` (pool receivable).
+  * In `close_position`, computes exact trader PnL and calls `vault.settle_trader_pnl` (100% counterparty PnL to LP NAV; registers payout note for winner).
+  * In `fund_position`, calls `vault.settle_funding` (reallocates funding between longs and shorts / LP counterparty).
+  * In `liquidate_position`, calls `vault.settle_liquidation` (2% keeper bounty, 70% LP NAV, 20% insurance fund, 10% treasury).
+* `contracts/src/pel_liquidity_vault.cairo` (V2.0) — Canonical custody & balance-sheet invariant:
+  * Global conservation: $\text{vault\_tokens} + \text{pool\_assets} == \text{locked} + \text{pool\_margin} + \text{NAV} + \text{payouts} + \text{bounties} + \text{withdrawals} + \text{treasury} + \text{bad\_debt}$.
+  * Model A withdrawal queue: shares burned and NAV debited at request time so pending withdrawals do not participate in subsequent market PnL.
+  * Strict access control: settlement methods restricted solely to authorized `PELPerpsCore`.
+* `contracts/src/pel_insurance_reserve.cairo` (V2.0) — Physical USDC custody reserve with token balance assertions.
+* `contracts/src/erc20.cairo` — Generic `IERC20` dispatcher interface replacing test token dependencies.
+* **Cairo Build:** `scarb build` compiles with 0 warnings.
+
+#### 🔴 [BIG CHANGE] — Off-Chain Rust Risk Engine & Keeper Hardening (`crates/pel-risk-engine/`)
+* `src/simulator.rs` — Extended with 17 canonical integer fixed-point market stress scenarios (BTC $\pm 1\%$, $\pm 5\%$, $\pm 20\%$, $\pm 40\%$, flash crash, short squeeze, high utilization, winning/losing runs, insurance depletion, LP withdrawal run, one-sided OI, liquidation cascade).
+* `src/keeper.rs` — Implemented `KeeperExecutionLedger` with persistent JSON storage surviving process restarts.
+* `src/golden_vectors.rs` — Cross-language golden test vectors aligning Rust, Cairo, and TypeScript.
+
+#### 🔴 [BIG CHANGE] — TypeScript Protocol & Production UI Honesty (`src/`)
+* `src/services/pelLiquidityService.ts` — Upgraded with runtime fail-closed `assertConfigured()` requiring explicit `lpVaultAddress`, `insuranceReserveAddress`, and `treasuryAddress`.
+* `src/services/starknetPerpsDispatcher.ts` — Updated with `validateLpDeployment()` and explicit addresses in `PERPS_DEPLOYMENTS.sepolia`.
+* `src/components/tabs/EarnTab.tsx` — Production-honest UI with `LOADING` / `UNAVAILABLE` / `READY` states; real wallet transaction execution for deposits and withdrawals; 0 fabricated timeouts.
+* `scripts/lp_devnet_e2e.ts` — Real Starknet devnet script executing the full economic cycle.
+
+#### ✅ Verification & Test Results
+* **Vitest Suite:** 29 test files passed (29/29), 260 tests passed (260/260), 0 failures.
+* **Next.js Production Build:** `npm run build` succeeds with 0 errors (`✓ Generating static pages (6/6)`).

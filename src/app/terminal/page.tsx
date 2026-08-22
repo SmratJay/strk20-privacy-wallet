@@ -293,7 +293,7 @@ function TerminalContent() {
             )}
 
             {activeTab === 'EARN' && (
-              <EarnTab walletAddress={wallet.address || ''} balances={balances} />
+              <EarnTab walletAddress={wallet.address || ''} />
             )}
 
             {activeTab === 'SHIELD' && (

@@ -47,6 +47,7 @@ pub struct PositionRecord {
     pub updated_at: u64,
     pub last_funding_timestamp: u64,     // Canonical on-chain funding anchor timestamp
     pub is_active: bool,
+    pub is_pool_custodied: bool,         // true = STRK20 pool-custodied (shielded) margin
 }
 
 pub fn u256_to_storage_key(x: u256) -> felt252 {

@@ -67,7 +67,7 @@ pub trait ISTRK20Adapter<TContractState> {
 #[starknet::contract]
 pub mod STRK20Adapter {
     use super::ISTRK20Adapter;
-    use super::super::test_usdc::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use super::super::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{
         StoragePointerReadAccess, StoragePointerWriteAccess,

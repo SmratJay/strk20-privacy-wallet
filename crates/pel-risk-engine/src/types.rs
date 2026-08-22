@@ -1,20 +1,27 @@
 use serde::{Deserialize, Serialize};
 
+// ─── Canonical unit system (MUST match contracts/src/pel_liquidity_vault.cairo) ───
 pub const QTY_SCALE: u128 = 100_000_000;      // 1e8 sats = 1 BTC
-pub const SHARE_SCALE: u128 = 1_000_000;       // 1e6 LP share precision
+pub const SHARE_SCALE: u128 = 1_000_000;       // 1e6 LP share precision (1 USD = 1e6 shares)
+pub const TOKEN_DECIMAL_MULTIPLIER: u128 = 10_000; // 1 cent = 10,000 micro-USDC (6 decimals)
 pub const BPS_DIVISOR: u128 = 10_000;
 pub const MAX_LEVERAGE: u16 = 50;
 pub const MAINTENANCE_MARGIN_BPS: u128 = 200;  // 2.0%
 pub const TAKER_FEE_BPS: u128 = 7;             // 0.07%
 pub const MAKER_FEE_BPS: u128 = 2;             // 0.02%
 pub const KEEPER_BOUNTY_BPS: u128 = 200;       // 2.0%
-pub const KEEPER_BOUNTY_CAP_CENTS: u128 = 50_000; // .00 cap
+pub const KEEPER_BOUNTY_CAP_CENTS: u128 = 50_000; // $500.00 cap
+
+// Protocol REVENUE split (liquidation remnants & fees). Trader PnL itself is 100%
+// counterparty PnL (full loss to LP / full profit paid by LP) — NO split on PnL.
 pub const LP_FEE_SHARE_BPS: u128 = 7_000;      // 70%
 pub const INSURANCE_FEE_SHARE_BPS: u128 = 2_000; // 20%
 pub const TREASURY_FEE_SHARE_BPS: u128 = 1_000;  // 10%
+
 pub const MAX_GROSS_OI_RATIO_E2: u128 = 200;   // 2.0x NAV
 pub const MAX_NET_OI_RATIO_E2: u128 = 50;      // 0.5x NAV
 pub const MAX_UTILIZATION_BPS: u16 = 8500;     // 85%
+pub const MAX_SINGLE_POSITION_BPS: u128 = 500; // 5% NAV single-position notional cap
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
@@ -45,6 +52,7 @@ pub struct PoolState {
     pub unclaimed_payouts_cents: u128,
     pub unclaimed_bounties_cents: u128,
     pub pending_withdrawals_cents: u128,
+    pub treasury_cents: u128,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +64,7 @@ pub struct LiquidationResult {
     pub keeper_bounty_cents: u128,
     pub lp_gain_cents: u128,
     pub insurance_gain_cents: u128,
+    pub treasury_gain_cents: u128,
     pub bad_debt_cents: u128,
 }
 
@@ -70,5 +79,18 @@ pub struct SolvencyReport {
     pub gross_oi_cents: u128,
     pub net_oi_cents: i64,
     pub insurance_balance_cents: u128,
+    pub treasury_balance_cents: u128,
     pub is_solvent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareGoldenVector {
+    pub label: &'static str,
+    pub nav_cents: u128,
+    pub total_shares: u128,
+    pub deposit_cents: u128,
+    pub shares_out: u128,
+    pub share_price_e6: u128,
+    pub withdraw_shares: u128,
+    pub withdraw_cents: u128,
 }

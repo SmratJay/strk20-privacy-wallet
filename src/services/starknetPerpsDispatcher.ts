@@ -20,6 +20,11 @@ export interface DeploymentConfig {
   liquidateVerifierAddress: string;
   stwoVerifierAddress: string;
   collateralTokenAddress: string;
+  // Canonical LP counterparty integration (P0). The LP vault is the economic
+  // counterparty; insurance and treasury are its real sub-components.
+  lpVaultAddress: string;
+  insuranceReserveAddress: string;
+  treasuryAddress: string;
 }
 
 export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
@@ -39,6 +44,9 @@ export const PERPS_DEPLOYMENTS: Record<'sepolia', DeploymentConfig> = {
     liquidateVerifierAddress: process.env.NEXT_PUBLIC_LIQUIDATE_VERIFIER_SEPOLIA || '',
     stwoVerifierAddress: process.env.NEXT_PUBLIC_STWO_VERIFIER_SEPOLIA || '0x4a750f879b518129e9c2a3152c806238ce48ed7200a8f9de01fb789f0c1cdde',
     collateralTokenAddress: process.env.NEXT_PUBLIC_TEST_USDC_SEPOLIA || '0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343',
+    lpVaultAddress: process.env.NEXT_PUBLIC_LP_VAULT_SEPOLIA || '',
+    insuranceReserveAddress: process.env.NEXT_PUBLIC_LP_INSURANCE_SEPOLIA || '',
+    treasuryAddress: process.env.NEXT_PUBLIC_LP_TREASURY_SEPOLIA || '',
   },
 };
 
@@ -96,6 +104,32 @@ export function validateCanonicalCollateral(config: DeploymentConfig): string[] 
 /** Full deployment config validation: verifiers + canonical collateral. */
 export function validateDeploymentConfig(config: DeploymentConfig): string[] {
   return [...validateVerifierAddresses(config), ...validateCanonicalCollateral(config)];
+}
+
+/**
+ * Validate the canonical LP counterparty deployment (vault / insurance / treasury).
+ * FAIL-CLOSED: no component may guess another component's address. If any LP
+ * deployment address is absent, the LP subsystem is NOT deployable.
+ */
+export function validateLpDeployment(config: DeploymentConfig): string[] {
+  const problems: string[] = [];
+  const entries: Array<[string, string]> = [
+    ['lpVaultAddress', config.lpVaultAddress],
+    ['insuranceReserveAddress', config.insuranceReserveAddress],
+    ['treasuryAddress', config.treasuryAddress],
+  ];
+  for (const [name, addr] of entries) {
+    const normalized = addr?.toLowerCase() ?? '';
+    if (!normalized || normalized === '0x0') {
+      problems.push(`${name} is unset or zero — LP counterparty FAILS CLOSED`);
+    }
+  }
+  // The vault must never be inferred as the STRK20 adapter (a previous bug).
+  if (config.lpVaultAddress && config.strk20AdapterAddress &&
+      config.lpVaultAddress.toLowerCase() === config.strk20AdapterAddress.toLowerCase()) {
+    problems.push('lpVaultAddress MUST NOT equal strk20AdapterAddress');
+  }
+  return problems;
 }
 
 export interface ExecutionResult {
@@ -428,6 +462,48 @@ export class StarknetPerpsDispatcher {
       contractAddress: config.strk20AdapterAddress,
       entrypoint: 'claim_keeper_bounty',
       calldata: [keeperAddress],
+    };
+  }
+
+  // ─── CANONICAL LP VAULT CALLS (PELLiquidityVault = the counterparty) ───────
+
+  buildVaultDepositCall(amountCents: bigint, network: 'sepolia' = 'sepolia'): Call[] {
+    const config = PERPS_DEPLOYMENTS[network];
+    const vault = config.lpVaultAddress;
+    if (!vault) throw new Error('LP_VAULT_NOT_CONFIGURED');
+    return [
+      this.buildApproveCall(vault, amountCents, config.collateralTokenAddress, network),
+      { contractAddress: vault, entrypoint: 'deposit_liquidity', calldata: [amountCents.toString()] },
+    ];
+  }
+
+  buildVaultRequestWithdrawalCall(shares: bigint, network: 'sepolia' = 'sepolia'): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    if (!config.lpVaultAddress) throw new Error('LP_VAULT_NOT_CONFIGURED');
+    return {
+      contractAddress: config.lpVaultAddress,
+      entrypoint: 'request_withdrawal',
+      calldata: [shares.toString()],
+    };
+  }
+
+  buildVaultClaimWithdrawalCall(requestId: bigint, network: 'sepolia' = 'sepolia'): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    if (!config.lpVaultAddress) throw new Error('LP_VAULT_NOT_CONFIGURED');
+    return {
+      contractAddress: config.lpVaultAddress,
+      entrypoint: 'claim_withdrawal',
+      calldata: [requestId.toString()],
+    };
+  }
+
+  buildVaultClaimPayoutCall(payoutNullifier: bigint, noteCommitment: bigint, network: 'sepolia' = 'sepolia'): Call {
+    const config = PERPS_DEPLOYMENTS[network];
+    if (!config.lpVaultAddress) throw new Error('LP_VAULT_NOT_CONFIGURED');
+    return {
+      contractAddress: config.lpVaultAddress,
+      entrypoint: 'claim_payout_note',
+      calldata: [payoutNullifier.toString(), noteCommitment.toString()],
     };
   }
 

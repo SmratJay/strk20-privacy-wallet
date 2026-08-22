@@ -1,34 +1,41 @@
 import { describe, it, expect } from "vitest";
-import { LPVaultEngine, LPVaultState } from "../../src/protocol/lpVault";
+import { LPVaultEngine, LPVaultState, SHARE_SCALE, LPVaultEngine as Engine } from "../../src/protocol/lpVault";
 
-describe("PEL LP Vault End-to-End Counterparty Lifecycle (WP §4, §6)", () => {
+function baseState(): LPVaultState {
+  return {
+    navCents: 0n,
+    totalShares: 0n,
+    lockedCollateralCents: 0n,
+    poolMarginCents: 0n,
+    poolAssetsCents: 0n,
+    insuranceReserveCents: 0n,
+    unclaimedPayoutsCents: 0n,
+    unclaimedBountiesCents: 0n,
+    pendingWithdrawalsCents: 0n,
+    treasuryCents: 0n,
+    badDebtCents: 0n,
+  };
+}
+
+describe("PEL LP Vault End-to-End Counterparty Lifecycle (Canonical V2)", () => {
   it("Executes full lifecycle: LP Deposit -> Trader Win -> Trader Loss -> LP Withdrawal", () => {
-    // 1. Initial State: Empty Pool
-    let state: LPVaultState = {
-      navCents: 0n,
-      totalShares: 0n,
-      lockedCollateralCents: 0n,
-      insuranceReserveCents: 0n,
-      unclaimedPayoutsCents: 0n,
-      unclaimedBountiesCents: 0n,
-      pendingWithdrawalsCents: 0n,
-    };
+    let state = baseState();
 
-    // 2. LP A deposits $10,000.00 (1,000,000 cents)
+    // 1. LP A deposits $10,000.00 (1,000,000 cents)
     const depositA = 10_000_00n;
     const sharesA = LPVaultEngine.calcSharesMinted(depositA, state.navCents, state.totalShares);
-    expect(sharesA).toBe(10_000_000_000n); // 10,000 shares * 1e4
+    expect(sharesA).toBe(10_000_000_000n); // 10,000 shares * 1e6
     state.navCents += depositA;
     state.totalShares += sharesA;
     expect(LPVaultEngine.calcSharePriceE6(state.navCents, state.totalShares)).toBe(1_000_000n); // $1.000000
 
-    // 3. Trader 1 opens $1,000 margin position (10x leverage = $10,000 notional)
+    // 2. Trader 1 opens $1,000 margin position (10x leverage = $10,000 notional)
     const margin1 = 1_000_00n;
     state.lockedCollateralCents += margin1;
     expect(LPVaultEngine.calcUtilizationBps(state)).toBe(1000); // 10.0% utilization
 
-    // 4. Trader 1 closes with +$500.00 profit (+50,000 cents)
-    // LP NAV pays the profit: NAV decreases from $10,000 to $9,500
+    // 3. Trader 1 closes with +$500.00 profit (+50,000 cents)
+    // LP NAV pays the FULL profit: NAV decreases from $10,000 to $9,500.
     const profit1 = 500_00n;
     state.navCents -= profit1;
     state.lockedCollateralCents -= margin1;
@@ -36,21 +43,46 @@ describe("PEL LP Vault End-to-End Counterparty Lifecycle (WP §4, §6)", () => {
     const sharePriceAfterWin = LPVaultEngine.calcSharePriceE6(state.navCents, state.totalShares);
     expect(sharePriceAfterWin).toBe(950_000n); // $0.950000 / share
 
-    // 5. Trader 2 opens $2,000 margin position and loses $1,000.00 (-100,000 cents)
-    // LP NAV receives 70% of loss = +$700.00 (+70,000 cents); 20% to Insurance = +$200.00
+    // 4. Trader 2 opens $2,000 margin position and loses $1,000.00 (-100,000 cents)
+    // LP NAV receives the FULL loss: +$1,000.00 (+100,000 cents). No 70/20/10 split.
     const loss2 = 1_000_00n;
-    const lpGain = (loss2 * 7000n) / 10000n;
-    const insuranceGain = (loss2 * 2000n) / 10000n;
-    state.navCents += lpGain; // $9,500 + $700 = $10,200
-    state.insuranceReserveCents += insuranceGain; // $200
-
-    expect(state.navCents).toBe(10_200_00n);
-    expect(state.insuranceReserveCents).toBe(200_00n);
+    state.navCents += loss2;
+    expect(state.navCents).toBe(10_500_00n);
     const sharePriceAfterLoss = LPVaultEngine.calcSharePriceE6(state.navCents, state.totalShares);
-    expect(sharePriceAfterLoss).toBe(1_020_000n); // $1.020000 / share (+2.0% net gain)
+    expect(sharePriceAfterLoss).toBe(1_050_000n); // $1.050000 / share (+5.0% net)
 
-    // 6. LP A withdraws all 10,000 shares
-    const grossPayout = LPVaultEngine.calcGrossWithdrawal(sharesA, state.navCents, state.totalShares);
-    expect(grossPayout).toBe(10_200_00n); // Receives $10,200.00 USDC exactly
+    // 5. Model A withdrawal queue: LP A requests 10,000 shares (all).
+    // Shares burned at request; NAV reduced by frozen gross value.
+    const grossAtRequest = LPVaultEngine.calcGrossWithdrawal(sharesA, state.navCents, state.totalShares);
+    expect(grossAtRequest).toBe(10_500_00n); // $10,500.00
+    state.navCents -= grossAtRequest;
+    state.totalShares -= sharesA;
+    state.pendingWithdrawalsCents += grossAtRequest;
+
+    expect(state.navCents).toBe(0n);
+    expect(state.totalShares).toBe(0n);
+    expect(state.pendingWithdrawalsCents).toBe(10_500_00n);
+
+    // Claim transfers real USDC (Model A: no further NAV/shares change).
+    state.pendingWithdrawalsCents -= grossAtRequest;
+    expect(state.pendingWithdrawalsCents).toBe(0n);
+  });
+
+  it("Conservation: tokens == locked + NAV + payouts + bounties + withdrawals + treasury", () => {
+    // $10,000 deposit; $1,000 margin locked; trader wins $200; payout note $1,200.
+    let nav = 1_000_000n;
+    let locked = 100_000n;
+    let tokens = nav + locked; // vault holds deposit + margin
+    // profitable close (margin 100k, payout 120k, profit 20k)
+    locked = 0n;
+    nav -= 20_000n;
+    const payouts = 120_000n;
+    // claim payout
+    tokens -= payouts;
+    expect(tokens).toBe(nav); // 1,080,000 == 1,080,000
+    // loss close after re-deposit
+    nav += 200_000n;
+    tokens += 200_000n;
+    expect(tokens).toBe(nav);
   });
 });

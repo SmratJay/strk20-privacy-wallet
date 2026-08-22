@@ -33,7 +33,7 @@ impl RiskEngine {
         }
     }
 
-    /// Calculate trader equity: E = m + PnL - f - fees
+    /// Calculate trader equity: E = m + PnL - funding - fees
     pub fn calc_equity_cents(margin_cents: u128, pnl_cents: i64, funding_accrued_cents: i64, fee_cents: u128) -> i64 {
         let m = margin_cents as i64;
         let fees = fee_cents as i64;
@@ -67,8 +67,11 @@ impl RiskEngine {
             let keeper_bounty = raw_bounty.min(KEEPER_BOUNTY_CAP_CENTS);
             let net_seized = if seized >= keeper_bounty { seized - keeper_bounty } else { 0 };
 
+            // Revenue split (liquidation remnant) — every cent has a destination:
+            // 70% LP / 20% insurance / 10% treasury (treasury takes the remainder).
             let lp_gain = (net_seized * LP_FEE_SHARE_BPS) / BPS_DIVISOR;
             let insurance_gain = (net_seized * INSURANCE_FEE_SHARE_BPS) / BPS_DIVISOR;
+            let treasury_gain = net_seized - lp_gain - insurance_gain;
 
             let bad_debt = if equity < 0 { (-equity) as u128 } else { 0 };
 
@@ -80,6 +83,7 @@ impl RiskEngine {
                 keeper_bounty_cents: keeper_bounty,
                 lp_gain_cents: lp_gain,
                 insurance_gain_cents: insurance_gain,
+                treasury_gain_cents: treasury_gain,
                 bad_debt_cents: bad_debt,
             }
         } else {
@@ -91,21 +95,29 @@ impl RiskEngine {
                 keeper_bounty_cents: 0,
                 lp_gain_cents: 0,
                 insurance_gain_cents: 0,
+                treasury_gain_cents: 0,
                 bad_debt_cents: 0,
             }
         }
     }
 
-    /// Calculate pool share price in 1e6 scale: SharePrice = (NAV * 1e6) / totalShares
+    // ─── CANONICAL LP SHARE MATH ─────────────────────────────────────────────
+    // MUST match contracts/src/pel_liquidity_vault.cairo and src/protocol/lpVault.ts
+    // exactly (verified by executable golden vectors):
+    //   bootstrap: 1 cent -> SHARE_SCALE/100 = 10,000 shares (1 USD = 1e6 shares)
+    //   sharePriceE6 = NAV_cents * SHARE_SCALE * 10_000 / total_shares
+    //   grossWithdrawal = shares * NAV / total_shares
+
+    /// Calculate pool share price in 1e6 fixed-point USD per share.
     pub fn calc_share_price_e6(nav_cents: u128, total_shares: u128) -> u128 {
         if total_shares == 0 {
             SHARE_SCALE
         } else {
-            (nav_cents * SHARE_SCALE) / total_shares
+            (nav_cents * SHARE_SCALE * 10_000) / total_shares
         }
     }
 
-    /// Calculate shares minted for deposit: shares = (amount * totalShares) / NAV
+    /// Calculate shares minted for a deposit (canonical bootstrap + proportional).
     pub fn calc_shares_minted(amount_cents: u128, nav_cents: u128, total_shares: u128) -> u128 {
         if total_shares == 0 || nav_cents == 0 {
             amount_cents * (SHARE_SCALE / 100)
@@ -114,7 +126,7 @@ impl RiskEngine {
         }
     }
 
-    /// Calculate gross withdrawal payout: payout = (shares * NAV) / totalShares
+    /// Calculate gross withdrawal payout in cents.
     pub fn calc_gross_withdrawal(shares: u128, nav_cents: u128, total_shares: u128) -> u128 {
         if total_shares == 0 {
             0
@@ -123,67 +135,87 @@ impl RiskEngine {
         }
     }
 
-    /// Calculate available withdrawable liquidity ensuring 50% locked margin reserve
+    /// Available liquidity = NAV - counterparty reserve buffer (50% of locked margin).
+    /// Derived from the canonical conservation identity
+    /// (tokens == locked + NAV + payouts + bounties + withdrawals + treasury), so
+    /// obligations cancel and available == NAV - reserve_buffer.
     pub fn calc_available_liquidity(
         nav_cents: u128,
         locked_collateral_cents: u128,
-        unclaimed_payouts_cents: u128,
-        unclaimed_bounties_cents: u128,
-        pending_withdrawals_cents: u128,
     ) -> u128 {
         let reserve_buffer = (locked_collateral_cents * 5000) / BPS_DIVISOR;
-        let total_senior = reserve_buffer + unclaimed_payouts_cents + unclaimed_bounties_cents + pending_withdrawals_cents;
-        if nav_cents > total_senior {
-            nav_cents - total_senior
+        if nav_cents > reserve_buffer {
+            nav_cents - reserve_buffer
         } else {
             0
         }
     }
 
-    /// Check capacity for opening a new position: Gross OI, Net OI, Utilization
+    /// Utilization in basis points: (locked margin) / NAV, capped at 10_000.
+    pub fn calc_utilization_bps(nav_cents: u128, locked_collateral_cents: u128) -> u16 {
+        if nav_cents == 0 {
+            if locked_collateral_cents > 0 { 10_000 } else { 0 }
+        } else {
+            let ratio = (locked_collateral_cents * 10_000) / nav_cents;
+            ratio.min(10_000) as u16
+        }
+    }
+
+    /// Conservative single-position cap on margin: margin * MAX_LEVERAGE <= 5% NAV.
+    /// Guarantees position notional <= 5% NAV for any leverage <= MAX_LEVERAGE.
+    pub fn max_single_position_margin(nav_cents: u128) -> u128 {
+        (nav_cents * MAX_SINGLE_POSITION_BPS) / (10_000 * (MAX_LEVERAGE as u128))
+    }
+
+    /// Check capacity for opening a new position: utilization + single-position cap.
+    /// Off-chain advisory mirror of the vault's authoritative on-chain gates
+    /// (contracts/src/pel_liquidity_vault.cairo). Gross/net notional OI remain
+    /// monitoring-only for V1 until the OPEN circuit exposes notional publicly.
     pub fn check_open_capacity(
         pool: &PoolState,
-        positions: &[Position],
-        new_quantity_sats: u128,
-        new_side: Side,
-        oracle_price_cents: u128,
+        _positions: &[Position],
+        new_margin_cents: u128,
+        _new_quantity_sats: u128,
+        _new_side: Side,
+        _oracle_price_cents: u128,
     ) -> Result<(), &'static str> {
-        let mut gross_oi: u128 = 0;
-        let mut long_oi: u128 = 0;
-        let mut short_oi: u128 = 0;
-
-        for p in positions.iter().filter(|p| p.is_active) {
-            let notional = (p.quantity_sats * oracle_price_cents) / QTY_SCALE;
-            gross_oi += notional;
-            match p.side {
-                Side::Long => long_oi += notional,
-                Side::Short => short_oi += notional,
-            }
+        if new_margin_cents > Self::max_single_position_margin(pool.nav_cents) {
+            return Err("SINGLE_POSITION_CAP_EXCEEDED");
         }
 
-        let new_notional = (new_quantity_sats * oracle_price_cents) / QTY_SCALE;
-        gross_oi += new_notional;
-        match new_side {
-            Side::Long => long_oi += new_notional,
-            Side::Short => short_oi += new_notional,
-        }
-
-        let net_oi = if long_oi >= short_oi {
-            (long_oi - short_oi) as i64
-        } else {
-            -((short_oi - long_oi) as i64)
-        };
-
-        let max_gross_oi = (pool.nav_cents * MAX_GROSS_OI_RATIO_E2) / 100;
-        if gross_oi > max_gross_oi {
-            return Err("MARKET_GROSS_OI_EXCEEDED");
-        }
-
-        let max_net_oi = (pool.nav_cents * MAX_NET_OI_RATIO_E2) / 100;
-        if (net_oi.abs() as u128) > max_net_oi {
-            return Err("MARKET_NET_OI_EXCEEDED");
+        let util_after = Self::calc_utilization_bps(
+            pool.nav_cents,
+            pool.locked_collateral_cents + new_margin_cents,
+        );
+        if util_after > MAX_UTILIZATION_BPS {
+            return Err("UTILIZATION_LIMIT_EXCEEDED");
         }
 
         Ok(())
+    }
+
+    /// Full solvency report for a pool (off-chain mirror of vault snapshots).
+    pub fn build_solvency_report(
+        pool: &PoolState,
+        gross_oi_cents: u128,
+        net_oi_cents: i64,
+        is_solvent: bool,
+    ) -> SolvencyReport {
+        SolvencyReport {
+            nav_cents: pool.nav_cents,
+            total_shares: pool.total_shares,
+            share_price_e6: Self::calc_share_price_e6(pool.nav_cents, pool.total_shares),
+            available_liquidity_cents: Self::calc_available_liquidity(
+                pool.nav_cents,
+                pool.locked_collateral_cents,
+            ),
+            locked_collateral_cents: pool.locked_collateral_cents,
+            utilization_bps: Self::calc_utilization_bps(pool.nav_cents, pool.locked_collateral_cents),
+            gross_oi_cents,
+            net_oi_cents,
+            insurance_balance_cents: pool.insurance_reserve_cents,
+            treasury_balance_cents: pool.treasury_cents,
+            is_solvent,
+        }
     }
 }

@@ -72,6 +72,12 @@ pub trait IPELPerpsCore<TContractState> {
     );
     fn pause_market(ref self: TContractState, market_id: felt252);
     fn resume_market(ref self: TContractState, market_id: felt252);
+
+    // Canonical LP counterparty configuration (P0 integration).
+    fn set_lp_vault(ref self: TContractState, lp_vault: ContractAddress);
+    fn set_insurance_reserve(ref self: TContractState, insurance: ContractAddress);
+    fn get_lp_vault_address(self: @TContractState) -> ContractAddress;
+    fn get_insurance_reserve_address(self: @TContractState) -> ContractAddress;
 }
 
 #[starknet::contract]
@@ -79,6 +85,7 @@ pub mod PELPerpsCore {
     use super::{IPELPerpsCore, MarketConfig, PositionRecord};
     use super::super::oracle_adapter::{IOracleAdapterDispatcher, IOracleAdapterDispatcherTrait};
     use super::super::strk20_adapter::{ISTRK20AdapterDispatcher, ISTRK20AdapterDispatcherTrait};
+    use super::super::pel_liquidity_vault::{IPELLiquidityVaultDispatcher, IPELLiquidityVaultDispatcherTrait};
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
     use super::super::types::{u256_to_storage_key, u256_to_felt252};    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{
@@ -92,6 +99,11 @@ pub mod PELPerpsCore {
         oracle_adapter: ContractAddress,
         strk20_adapter: ContractAddress,
         bridge: ContractAddress, // authorized PELPerpsSTRK20Bridge (STRK20-collateral path)
+
+        // Canonical LP counterparty integration (P0). When configured, ALL economic
+        // settlement (margin lock, PnL, funding, liquidation) routes to the vault.
+        lp_vault_address: ContractAddress,
+        insurance_reserve_address: ContractAddress,
 
         // Dedicated Groth16 Verifiers per circuit
         open_verifier: ContractAddress,
@@ -316,9 +328,19 @@ pub mod PELPerpsCore {
             // 3. Checks-Effects: Mark Nullifier Consumed
             self.used_nullifiers.write(margin_nullifier_key, true);
 
-            // 4. Lock Shielded Margin in STRK20 Vault from verified collateral owner
-            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.lock_shielded_margin(collateral_owner, margin_nullifier_key, proof_margin);
+            // 4. Lock margin in the canonical counterparty. When the LP vault is
+            //    configured, the vault pulls REAL USDC from the trader (public custody)
+            //    and enforces the protocol risk gates (utilization + single-position
+            //    cap). Otherwise the legacy STRK20Adapter path is used.
+            let is_pool_custodied = false;
+            let lp_vault = self.lp_vault_address.read();
+            if lp_vault != 0.try_into().unwrap() {
+                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                    .lock_trader_margin(collateral_owner, margin_nullifier_key, proof_margin);
+            } else {
+                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
+                strk20.lock_shielded_margin(collateral_owner, margin_nullifier_key, proof_margin);
+            }
 
             // 5. Store Active Position Record
             let now = get_block_timestamp();
@@ -331,6 +353,7 @@ pub mod PELPerpsCore {
                 updated_at: now,
                 last_funding_timestamp: now,
                 is_active: true,
+                is_pool_custodied,
             });
 
             self.emit(PositionOpened { collateral_owner, commitment: commitment_key, market_id, margin_amount: proof_margin, timestamp: now });
@@ -389,6 +412,16 @@ pub mod PELPerpsCore {
             // 3. Checks-Effects: Mark Nullifier Consumed
             self.used_nullifiers.write(margin_nullifier_key, true);
 
+            // 4. Record the pool-custodied margin in the canonical vault (receivable
+            //    backed by the STRK20 pool's real USDC). The vault enforces the same
+            //    risk gates (utilization + single-position cap) as the public path.
+            let is_pool_custodied = true;
+            let lp_vault = self.lp_vault_address.read();
+            if lp_vault != 0.try_into().unwrap() {
+                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                    .lock_pool_custodied_margin(margin_nullifier_key, proof_margin);
+            }
+
             // 4. Store Active Position Record. The margin is pool-custodied (in-pool
             //    collateral recorded by the bridge) — no ERC20 transfer is pulled here.
             let now = get_block_timestamp();
@@ -401,6 +434,7 @@ pub mod PELPerpsCore {
                 updated_at: now,
                 last_funding_timestamp: now,
                 is_active: true,
+                is_pool_custodied,
             });
 
             // Pseudonymous STRK20 identity key (felt) that opened the position via the bridge.
@@ -460,6 +494,7 @@ pub mod PELPerpsCore {
                 updated_at:             now,
                 last_funding_timestamp: old_pos.last_funding_timestamp,
                 is_active:              true,
+                is_pool_custodied:      old_pos.is_pool_custodied,
             });
 
             self.emit(PositionUpdated { old_commitment: old_commitment_key, old_nullifier: old_nullifier_key, new_commitment: new_commitment_key, timestamp: now });
@@ -562,10 +597,18 @@ pub mod PELPerpsCore {
                 updated_at:             now,
                 last_funding_timestamp: new_funding_timestamp,
                 is_active:              true,
+                is_pool_custodied:      pos.is_pool_custodied,
             });
 
-            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.collect_funding_payment(old_nullifier_key, funding_amount, is_long_pays);
+            let is_pool_custodied = pos.is_pool_custodied;
+            let lp_vault = self.lp_vault_address.read();
+            if lp_vault != 0.try_into().unwrap() {
+                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                    .settle_funding(funding_amount, is_long_pays, is_pool_custodied);
+            } else {
+                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
+                strk20.collect_funding_payment(old_nullifier_key, funding_amount, is_long_pays);
+            }
 
             self.emit(PositionFunded {
                 commitment: old_commitment_key,
@@ -635,17 +678,37 @@ pub mod PELPerpsCore {
             self.positions.write(position_commitment_key, pos);
             self.used_nullifiers.write(position_nullifier_key, true);
 
-            // Liquidation Waterfall: 2% Keeper Bounty, remainder to LP pool NAV
+            // Liquidation Waterfall: 2% Keeper Bounty, remainder distributed to the LP /
+            // insurance / treasury revenue split (70/20/10) by the canonical vault.
             let bounty_amount: u128 = (pos.locked_margin * 200_u128) / 10000_u128;
-            let remaining_amount: u128 = pos.locked_margin - bounty_amount;
 
-            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
-            strk20.seize_liquidation_collateral(
-                position_nullifier_key,
-                keeper_recipient,
-                bounty_amount,
-                remaining_amount,
-            );
+            // V1: the LIQUIDATE circuit does not yet expose the trader's equity as a
+            // public input, so the on-chain insurance bad-debt deficit is 0 for
+            // liquidation. Deeply-underwater bad debt is absorbed on the CLOSE path
+            // (insurance.absorb_bad_debt) where the payout vs NAV shortfall IS
+            // observable. A future circuit upgrade exposing equity enables the full
+            // liquidation waterfall (see docs/LP_RISK_MODEL.md).
+            let is_pool_custodied = pos.is_pool_custodied;
+            let lp_vault = self.lp_vault_address.read();
+            if lp_vault != 0.try_into().unwrap() {
+                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                    .settle_liquidation(
+                        pos.locked_margin,
+                        bounty_amount,
+                        keeper_recipient,
+                        0_u128,
+                        is_pool_custodied,
+                    );
+            } else {
+                let remaining_amount: u128 = pos.locked_margin - bounty_amount;
+                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
+                strk20.seize_liquidation_collateral(
+                    position_nullifier_key,
+                    keeper_recipient,
+                    bounty_amount,
+                    remaining_amount,
+                );
+            }
 
             self.emit(PositionLiquidated {
                 commitment: position_commitment_key,
@@ -715,23 +778,38 @@ pub mod PELPerpsCore {
                 0_u128
             };
 
-            let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
+            // Canonical settlement: the LP vault is the counterparty. It releases the
+            // position margin, credits/debits LP NAV by the full PnL (no 70/20/10 split
+            // on trader PnL), and registers the recipient-bound payout note.
+            let lp_vault = self.lp_vault_address.read();
+            if lp_vault != 0.try_into().unwrap() {
+                IPELLiquidityVaultDispatcher { contract_address: lp_vault }
+                    .settle_trader_pnl(
+                        pos.locked_margin,
+                        payout_amount,
+                        payout_note_commitment_key,
+                        recipient,
+                        pos.is_pool_custodied,
+                    );
+            } else {
+                let strk20 = ISTRK20AdapterDispatcher { contract_address: self.strk20_adapter.read() };
 
-            // Release the trader payout. Skipped when payout == 0: a fully-lost position
-            // has no claimable payout; its entire margin is a loss to the counterparty.
-            if payout_amount > 0 {
-                strk20.release_shielded_payout(
-                    payout_note_commitment_key,
-                    recipient,
-                    payout_amount,
-                    profit_amount,
-                );
-            }
+                // Release the trader payout. Skipped when payout == 0: a fully-lost position
+                // has no claimable payout; its entire margin is a loss to the counterparty.
+                if payout_amount > 0 {
+                    strk20.release_shielded_payout(
+                        payout_note_commitment_key,
+                        recipient,
+                        payout_amount,
+                        profit_amount,
+                    );
+                }
 
-            // Route residual locked margin (trader loss) to the LP counterparty NAV so no
-            // margin is ever stranded inside total_locked_collateral.
-            if loss_amount > 0 {
-                strk20.collect_insurance_contribution(final_nullifier_key, loss_amount);
+                // Route residual locked margin (trader loss) to the LP counterparty NAV so no
+                // margin is ever stranded inside total_locked_collateral.
+                if loss_amount > 0 {
+                    strk20.collect_insurance_contribution(final_nullifier_key, loss_amount);
+                }
             }
 
             self.emit(PositionClosed {
@@ -812,6 +890,32 @@ pub mod PELPerpsCore {
             assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             self.market_paused.write(market_id, false);
             self.emit(MarketResumed { market_id });
+        }
+
+        // ─── CANONICAL LP COUNTERPARTY CONFIGURATION (P0) ───────────────────
+
+        fn set_lp_vault(ref self: ContractState, lp_vault: ContractAddress) {
+            assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
+            let f: felt252 = lp_vault.try_into().unwrap();
+            assert(f != 0, 'ZERO_LP_VAULT_ADDRESS');
+            self.lp_vault_address.write(lp_vault);
+            self.emit(AdapterUpdated { new_adapter: lp_vault });
+        }
+
+        fn set_insurance_reserve(ref self: ContractState, insurance: ContractAddress) {
+            assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
+            let f: felt252 = insurance.try_into().unwrap();
+            assert(f != 0, 'ZERO_INSURANCE_ADDRESS');
+            self.insurance_reserve_address.write(insurance);
+            self.emit(AdapterUpdated { new_adapter: insurance });
+        }
+
+        fn get_lp_vault_address(self: @ContractState) -> ContractAddress {
+            self.lp_vault_address.read()
+        }
+
+        fn get_insurance_reserve_address(self: @ContractState) -> ContractAddress {
+            self.insurance_reserve_address.read()
         }
     }
 }

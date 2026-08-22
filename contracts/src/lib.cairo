@@ -1,4 +1,5 @@
 pub mod types;
+pub mod erc20;
 pub mod test_usdc;
 pub mod oracle_adapter;
 pub mod strk20_adapter;
