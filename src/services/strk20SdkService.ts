@@ -449,22 +449,15 @@ export class Strk20SdkService {
       const provider = new RpcProvider({ nodeUrl });
       const receipt: any = await provider.getTransactionReceipt(txHash);
       const events: any[] = receipt?.events ?? [];
+      const POSITION_CLOSED_SELECTOR = BigInt('0xa2200edb782bd44922650ba5c1d7d57084ee785323c1ff6bc4a28eace24108');
       for (const ev of events) {
         const key = ev.keys?.[0];
         if (!key) continue;
-        const selector = BigInt(key).toString(16);
-        // PELPerpsCore PositionClosed event selector is derived from
-        // starknet_keccak("PositionClosed"). We match by decoding the event shape:
-        // keys = [selector, commitment, nullifier], data = [payout_amount, recipient, timestamp]
-        // To avoid a fragile hardcoded selector we verify by payload shape: data length >= 3
-        // and the first data word parses as a plausible cents payout.
-        if (Array.isArray(ev.data) && ev.data.length >= 3) {
-          const payoutCents = BigInt(ev.data[0]);
-          // Payouts are denominated in cents; anything >= 1 cent and <= 1e12 cents is
-          // a plausible payout (defensive bounds, not an accounting decision).
-          if (payoutCents >= 1n && payoutCents <= 10n ** 14n) {
-            return Number(payoutCents) / 100;
-          }
+        const eventKey = BigInt(key);
+        // PositionClosed data payload: [commitment (0), nullifier (1), payout_amount (2), recipient (3), timestamp (4)]
+        if (eventKey === POSITION_CLOSED_SELECTOR && Array.isArray(ev.data) && ev.data.length >= 3) {
+          const payoutCents = BigInt(ev.data[2]);
+          return Number(payoutCents) / 100;
         }
       }
       return null;

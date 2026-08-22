@@ -862,6 +862,11 @@ pub mod PELPerpsCore {
             assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             let f: felt252 = lp_vault.try_into().unwrap();
             assert(f != 0, 'ZERO_LP_VAULT_ADDRESS');
+            let current = self.lp_vault_address.read();
+            if current != 0.try_into().unwrap() {
+                let locked = IPELLiquidityVaultDispatcher { contract_address: current }.get_locked_liquidity();
+                assert(locked == 0_u128, 'ACTIVE_POSITIONS_EXIST');
+            }
             self.lp_vault_address.write(lp_vault);
             self.emit(AdapterUpdated { new_adapter: lp_vault });
         }
@@ -870,6 +875,11 @@ pub mod PELPerpsCore {
             assert(get_caller_address() == self.admin.read(), 'UNAUTHORIZED_ADMIN');
             let f: felt252 = insurance.try_into().unwrap();
             assert(f != 0, 'ZERO_INSURANCE_ADDRESS');
+            let current_vault = self.lp_vault_address.read();
+            if current_vault != 0.try_into().unwrap() {
+                let locked = IPELLiquidityVaultDispatcher { contract_address: current_vault }.get_locked_liquidity();
+                assert(locked == 0_u128, 'ACTIVE_POSITIONS_EXIST');
+            }
             self.insurance_reserve_address.write(insurance);
             self.emit(AdapterUpdated { new_adapter: insurance });
         }

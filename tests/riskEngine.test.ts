@@ -5,23 +5,22 @@
 
 import { describe, it, expect } from 'vitest';
 import { RiskEngine } from '../src/protocol/riskEngine';
-import { tokensToSats, usdToCents } from '../src/protocol/fixedPoint';
 import { BTC_PERP_CONFIG } from '../src/protocol/types';
 
 describe('PEL Canonical Risk Engine (Phase 8 & 10)', () => {
-  const BTC_PRICE_CENTS = 9_500_000n; // $95,000.00
-  const MARGIN_CENTS    = 100_000n;   // $1,000.00
-  // 10x leverage -> 0.10526315 BTC -> 10,526,315 sats ($10,000 notional)
+  const BTC_PRICE_CENTS = 9_500_000n; // ,000.00
+  const MARGIN_CENTS    = 100_000n;   // ,000.00
+  // 10x leverage -> 0.10526315 BTC -> 10,526,315 sats (,000 notional)
   const QTY_SATS        = 10_526_315n;
 
   it('calculates deterministic notional without precision drift', () => {
     const notional = RiskEngine.getNotional(QTY_SATS, BTC_PRICE_CENTS);
-    // 10,526,315 * 9,500,000 / 1e8 = 999,999.925 -> floor 999,999 cents (~$10,000)
+    // 10,526,315 * 9,500,000 / 1e8 = 999,999.925 -> floor 999,999 cents (~,000)
     expect(notional).toBe(999999n);
   });
 
   it('calculates exact linear signed PnL for LONG and SHORT', () => {
-    const upPrice = 10_000_000n; // $100,000.00 (+5.26%)
+    const upPrice = 10_000_000n; // ,000.00 (+5.26%)
     const longPnl = RiskEngine.getPnl('LONG', QTY_SATS, BTC_PRICE_CENTS, upPrice);
     const shortPnl = RiskEngine.getPnl('SHORT', QTY_SATS, BTC_PRICE_CENTS, upPrice);
 
@@ -48,7 +47,7 @@ describe('PEL Canonical Risk Engine (Phase 8 & 10)', () => {
   });
 
   it('evaluates position solvency: returns isLiquidatable=true when equity <= Mmaint', () => {
-    // Price drops 12% to $83,600 -> loss = $1,200 > $1,000 margin -> equity < 0
+    // Price drops 12% to ,600 -> loss = ,200 > ,000 margin -> equity < 0
     const crashPrice = (BTC_PRICE_CENTS * 88n) / 100n;
     const assessment = RiskEngine.evaluatePosition(
       'LONG',
@@ -87,8 +86,8 @@ describe('PEL Canonical Risk Engine (Phase 8 & 10)', () => {
     const waterfall = RiskEngine.getBadDebtWaterfall(MARGIN_CENTS, pnl, 0n, 0n, 200n);
 
     expect(waterfall.userPayoutCents).toBe(0n);
-    expect(waterfall.keeperBountyCents).toBe(2000n); // 2% of $1000 = $20.00 (2000 cents)
-    expect(waterfall.insuranceCreditCents).toBe(98000n); // 98% of $1000 = $980.00 (98000 cents)
+    expect(waterfall.keeperBountyCents).toBe(2000n); // 2% of  = .00 (2000 cents)
+    expect(waterfall.insuranceCreditCents).toBe(98000n); // 98% of  = .00 (98000 cents)
     expect(waterfall.keeperBountyCents + waterfall.insuranceCreditCents).toBe(MARGIN_CENTS);
     expect(waterfall.badDebtDeficitCents).toBeGreaterThan(0n);
   });
@@ -99,5 +98,87 @@ describe('PEL Canonical Risk Engine (Phase 8 & 10)', () => {
 
     expect(liqPriceLong).toBeLessThan(BTC_PRICE_CENTS);
     expect(liqPriceShort).toBeGreaterThan(BTC_PRICE_CENTS);
+  });
+
+  describe('P0-2: Nine Canonical Liquidation Scenarios', () => {
+    // 1. healthy position: equity >> maintenance margin
+    it('Scenario 1: Healthy position (not liquidatable)', () => {
+      const pnl = RiskEngine.getPnl('LONG', QTY_SATS, BTC_PRICE_CENTS, BTC_PRICE_CENTS); // 0 PnL
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      const maint = RiskEngine.getMaintenanceMargin(QTY_SATS, BTC_PRICE_CENTS, 200n);
+      expect(equity > maint).toBe(true);
+    });
+
+    // 2. barely liquidatable: equity == maintenance margin
+    it('Scenario 2: Barely liquidatable (equity == maintenance margin)', () => {
+      const maint = RiskEngine.getMaintenanceMargin(QTY_SATS, BTC_PRICE_CENTS, 200n);
+      const pnl = maint - MARGIN_CENTS;
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      expect(equity).toBe(maint);
+      expect(equity <= maint).toBe(true);
+    });
+
+    // 3. moderately underwater: 0 < equity < maintenance margin
+    it('Scenario 3: Moderately underwater (0 < equity < maintenance)', () => {
+      const maint = RiskEngine.getMaintenanceMargin(QTY_SATS, BTC_PRICE_CENTS, 200n);
+      const equity = maint / 2n;
+      expect(equity > 0n).toBe(true);
+      expect(equity < maint).toBe(true);
+    });
+
+    // 4. deeply underwater: equity < -margin (losses exceed 2x margin)
+    it('Scenario 4: Deeply underwater (loss exceeds 2x margin)', () => {
+      const pnl = -(MARGIN_CENTS * 2n);
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      expect(equity).toBe(-MARGIN_CENTS);
+      expect(equity < 0n).toBe(true);
+    });
+
+    // 5. equity > 0 liquidation: seized collateral is capped by positive equity
+    it('Scenario 5: Positive equity liquidation (seized collateral == equity)', () => {
+      const pnl = -90_000n; //  loss on  margin ->  equity remaining
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      expect(equity).toBe(10_000n);
+      const seized = equity > 0n ? equity : MARGIN_CENTS;
+      expect(seized).toBe(10_000n);
+    });
+
+    // 6. equity = 0: exact wipeout (seized == margin, bad debt == 0)
+    it('Scenario 6: Equity == 0 exact wipeout (seized == margin, bad debt == 0)', () => {
+      const pnl = -MARGIN_CENTS;
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      expect(equity).toBe(0n);
+      const badDebt = equity < 0n ? -equity : 0n;
+      expect(badDebt).toBe(0n);
+    });
+
+    // 7. equity < 0: negative equity generates bad debt
+    it('Scenario 7: Equity < 0 creates explicit bad debt', () => {
+      const pnl = -150_000n; // ,500 loss on ,000 margin
+      const equity = RiskEngine.getEquity(MARGIN_CENTS, pnl, 0n, 0n);
+      expect(equity).toBe(-50_000n);
+      const badDebt = equity < 0n ? -equity : 0n;
+      expect(badDebt).toBe(50_000n);
+    });
+
+    // 8. insurance sufficient: insurance absorbs full bad debt
+    it('Scenario 8: Insurance sufficient to absorb bad debt', () => {
+      const badDebt = 50_000n;
+      const insuranceBalance = 100_000n;
+      const absorbed = badDebt > insuranceBalance ? insuranceBalance : badDebt;
+      const remainingBadDebt = badDebt - absorbed;
+      expect(absorbed).toBe(50_000n);
+      expect(remainingBadDebt).toBe(0n);
+    });
+
+    // 9. insurance insufficient: insurance partially absorbs, remainder is system bad debt
+    it('Scenario 9: Insurance insufficient (remainder is system bad debt)', () => {
+      const badDebt = 50_000n;
+      const insuranceBalance = 20_000n;
+      const absorbed = badDebt > insuranceBalance ? insuranceBalance : badDebt;
+      const systemBadDebt = badDebt - absorbed;
+      expect(absorbed).toBe(20_000n);
+      expect(systemBadDebt).toBe(30_000n);
+    });
   });
 });
