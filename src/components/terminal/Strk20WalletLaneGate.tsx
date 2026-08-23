@@ -9,9 +9,14 @@ import { WalletApiStatus } from '@/services/strk20WalletApiService';
  * Renders honest state before a Shield / Private Send / Unshield form is usable:
  *   CONNECT_WALLET / WRONG_NETWORK / PRIVACY_WALLET_REQUIRED / READY.
  */
-export const Strk20WalletLaneGate: React.FC<{ status: WalletApiStatus | null; checking?: boolean }> = ({
+export const Strk20WalletLaneGate: React.FC<{
+  status: WalletApiStatus | null;
+  checking?: boolean;
+  onConnect?: () => void;
+}> = ({
   status,
   checking,
+  onConnect,
 }) => {
   if (checking || !status) {
     return (
@@ -24,14 +29,24 @@ export const Strk20WalletLaneGate: React.FC<{ status: WalletApiStatus | null; ch
   switch (status.state) {
     case 'CONNECT_WALLET':
       return (
-        <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2">
-          <Wallet className="w-4 h-4 shrink-0 text-orrange-400" />
-          <div>
-            <span className="font-bold text-white uppercase">Connect a Starknet wallet</span>
-            <p className="text-zinc-400 mt-0.5">
-              Connect a Starknet wallet to use private STRK20 shield / send / unshield.
-            </p>
+        <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <Wallet className="w-4 h-4 shrink-0 text-orrange-400 mt-0.5" />
+            <div>
+              <span className="font-bold text-white uppercase">Connect a Starknet wallet</span>
+              <p className="text-zinc-400 mt-0.5 text-[11px]">
+                Connect a Starknet wallet to use private STRK20 shield / send / unshield.
+              </p>
+            </div>
           </div>
+          {onConnect && (
+            <button
+              onClick={onConnect}
+              className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 text-black font-mono font-bold text-xs uppercase tracking-wider shrink-0 transition-all cursor-pointer"
+            >
+              Connect
+            </button>
+          )}
         </div>
       );
     case 'WRONG_NETWORK':
@@ -49,15 +64,25 @@ export const Strk20WalletLaneGate: React.FC<{ status: WalletApiStatus | null; ch
       );
     case 'PRIVACY_WALLET_REQUIRED':
       return (
-        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200 flex items-start gap-2">
-          <ShieldAlert className="w-4 h-4 shrink-0" />
-          <div>
-            <span className="font-bold uppercase">Privacy wallet required</span>
-            <p className="text-rose-200/80 mt-0.5">
-              A privacy-enabled Starknet wallet (Wallet API ≥ 0.10, e.g. Ready) is required for
-              STRK20. No funds were moved.
-            </p>
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+            <div>
+              <span className="font-bold uppercase text-rose-300">Privacy wallet required</span>
+              <p className="text-rose-200/80 mt-0.5 text-[11px]">
+                A privacy-enabled Starknet wallet (Wallet API ≥ 0.10, e.g. Ready) is required for
+                STRK20.
+              </p>
+            </div>
           </div>
+          {onConnect && (
+            <button
+              onClick={onConnect}
+              className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/50 text-rose-200 font-mono font-bold text-xs uppercase tracking-wider shrink-0 transition-all cursor-pointer"
+            >
+              Switch
+            </button>
+          )}
         </div>
       );
     case 'READY':

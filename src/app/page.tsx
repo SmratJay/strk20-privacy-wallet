@@ -21,10 +21,10 @@ import { LandingHero } from '@/components/landing/LandingHero';
 import { ProblemSectorCards } from '@/components/landing/ProblemSectorCards';
 import { MoatArchitectureSection } from '@/components/landing/MoatArchitectureSection';
 
-// Compliance Modals
 import { PublishAddressModal } from '@/components/PublishAddressModal';
 import { AuditorExportModal } from '@/components/AuditorExportModal';
 import { CompliancePassportModal } from '@/components/CompliancePassportModal';
+import { ConnectWalletModal } from '@/components/ConnectWalletModal';
 
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { useRouter } from 'next/navigation';
@@ -182,6 +182,19 @@ export default function Home() {
         isOpen={isPassportModalOpen}
         onClose={() => setIsPassportModalOpen(false)}
         walletAddress={wallet.address || ''}
+      />
+
+      {/* Connect Wallet Modal */}
+      <ConnectWalletModal
+        isOpen={wallet.isConnectModalOpen}
+        onClose={wallet.closeConnectModal}
+        supportedWallets={wallet.supportedWallets}
+        otherWallets={wallet.otherWallets}
+        isConnecting={wallet.isConnecting}
+        connectingWalletId={wallet.connectingWalletId}
+        connectionError={wallet.error}
+        onSelectWallet={wallet.connectWallet}
+        onRescan={wallet.rescan}
       />
     </div>
   );

@@ -84,8 +84,14 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
 
         {/* Private Balance Access Gate */}
         {!connected ? (
-          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
-            Connect a Starknet wallet to view private STRK20 balances.
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between gap-3">
+            <span className="text-zinc-400">Connect a Starknet wallet to view private STRK20 balances.</span>
+            <button
+              onClick={() => (wallet?.openConnectModal ? wallet.openConnectModal() : wallet?.connectWallet())}
+              className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer shrink-0"
+            >
+              Connect
+            </button>
           </div>
         ) : accessDenied ? (
           <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">

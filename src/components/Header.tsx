@@ -19,7 +19,8 @@ import {
   Layers,
   TrendingUp,
   Copy,
-  Check
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 import { useNetwork } from '@/context/NetworkContext';
@@ -402,6 +403,17 @@ export const Header: React.FC<HeaderProps> = ({
                       <span>Explorer Record</span>
                     </span>
                   </a>
+
+                  <button
+                    onClick={() => {
+                      wallet.openConnectModal?.();
+                      setWalletDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-zinc-300 hover:bg-zinc-900 hover:text-orrange-400 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                    <span>Switch Wallet</span>
+                  </button>
 
                   <div className="h-px bg-zinc-900 my-1" />
 

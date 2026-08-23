@@ -153,7 +153,11 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({
         </span>
       </div>
 
-      <Strk20WalletLaneGate status={status} checking={checking} />
+      <Strk20WalletLaneGate
+        status={status}
+        checking={checking}
+        onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
+      />
 
       {ready && (
         <form onSubmit={handleShield} className="space-y-4">

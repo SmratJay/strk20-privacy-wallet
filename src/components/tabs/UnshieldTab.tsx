@@ -170,7 +170,11 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
         </span>
       </div>
 
-      <Strk20WalletLaneGate status={status} checking={checking} />
+      <Strk20WalletLaneGate
+        status={status}
+        checking={checking}
+        onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
+      />
 
       {ready && (
         <form onSubmit={handleUnshield} className="space-y-4">

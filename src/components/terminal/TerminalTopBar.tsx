@@ -14,7 +14,8 @@ import {
   ArrowRight,
   Home,
   Copy,
-  Check
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import Link from 'next/link';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
@@ -344,6 +345,17 @@ export const TerminalTopBar: React.FC<TerminalTopBarProps> = ({ wallet, onSearch
                   <span>View on Voyager</span>
                 </span>
               </a>
+
+              <button
+                onClick={() => {
+                  wallet.openConnectModal?.();
+                  setWalletDropdownOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-orrange-400 transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Switch Wallet</span>
+              </button>
 
               <div className="h-px bg-zinc-900 my-1" />
 
