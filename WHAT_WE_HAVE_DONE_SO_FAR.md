@@ -1139,3 +1139,43 @@
 
 #### 📝 Documentation
 * `README.md` — Updated LP (§13), insurance/bad-debt waterfall (§14), LIQUIDATE proof-bound outputs (§7–11), test commands (§16–17), and real-network status (§26) to match the canonical `PELLiquidityVault` architecture.
+
+---
+
+## 📅 Sunday, August 23, 2026
+
+### 🔴 [BIG CHANGE] — Generic STRK20 Wallet API lane (Shield / Private Send / Unshield / Private Balance)
+
+Two intentionally separate STRK20 lanes now exist:
+
+- **LANE A — Generic STRK20 wallet UX** (privacy wallet → Wallet API): Shield, Private Send, Unshield, private balances all run through the user's privacy-enabled wallet. The wallet owns viewing keys, notes, and SNIP-36 proof generation.
+- **LANE B — PEL private perps** (raw SDK → ComputeAndInvoke → PEL bridge → PEL Core): unchanged; still requires the operator proving/discovery stack.
+
+#### 🔴 [BIG CHANGE] — New `src/services/strk20WalletApiService.ts`
+* Wallet API capability + chain detection (`wallet_supportedWalletApi` / `wallet_supportedSpecs` / `wallet_requestChainId`), treating Wallet API ≥ 0.10 as STRK20-capable — never inferred from wallet name.
+* `shield` → `wallet_strk20InvokeTransaction` `{ type: "deposit" }`; `privateTransfer` → `{ type: "transfer" }`; `unshield` → `{ type: "withdraw" }`.
+* `getPrivateBalances` → `wallet_strk20Balances`.
+* `waitForStrk20Confirmation` — on-chain reconciliation with a ceiling (timeout → PENDING, never false "CONFIRMED").
+* `translateWalletError` — maps NOT_REGISTERED(118) / INSUFFICIENT_PRIVATE_BALANCE(119) / PRIVACY_LEAK(120) / USER_REFUSED_OP(113) / API_VERSION_NOT_SUPPORTED(162) to honest UX copy.
+
+#### 🔴 [BIG CHANGE] — ShieldTab / SendTab / UnshieldTab rewired to the wallet lane
+* All three now gate on `Strk20WalletLaneGate` (CONNECT_WALLET / WRONG_NETWORK / PRIVACY_WALLET_REQUIRED / READY) and fail closed when a privacy wallet is absent — no public ERC-20 fallback, no fake notes, no localStorage financial state.
+* Lifecycle states: PREPARING → WALLET_APPROVAL → SUBMITTED → CONFIRMING → COMPLETE/FAILED. Wallet proof latency is represented honestly (no "Instant", no false "Confirmed").
+* Private-balance checks only enforce when the wallet-reported balance is available.
+
+#### 🔴 [BIG CHANGE] — Private balances from the wallet (not localStorage)
+* `privacyService.fetchBalances` no longer reads `vaultService` (localStorage) as private-balance authority; returns public balances + `shieldedBalanceAvailable` flag.
+* `terminal/page.tsx` merges private balances from `wallet_strk20Balances` when the wallet lane is READY.
+* `BalanceCards` / `PortfolioTab` show "— / PRIVACY WALLET REQUIRED" instead of fabricated zeros and never count unavailable balances as $0.
+
+#### 🟢 [SMALL CHANGE] — Legacy shield hazards removed
+* `privacyService.executeShield` / `executePrivateTransfer` / `executeUnshield` are now inert fail-closed stubs (no `vaultService.addNote`/`spendNotes`, no raw transfer-to-pool, no dual shield path).
+* `NoteScannerTab` replaced with a fail-closed notice — the app never derives/decrypts viewing keys or reads localStorage notes.
+* `useStarknetWallet` STRK20 detection is capability-based (`wallet_supportedWalletApi`), removing the name-based "Ready = true" fallback.
+
+#### 📝 Documentation
+* `README.md` — added §27 "The two STRK20 integration lanes" (LANE A vs LANE B) and updated real-network status (generic STRK20 via privacy wallet; PEL OPEN still PENDING operator proving).
+
+#### ✅ PEL isolation confirmed
+* `strk20SdkService.openPerpPosition` still uses `.computeAndInvoke()` targeting `PELPerpsSTRK20Bridge` — untouched.
+* No changes to `PELPerpsCore`, `PELPerpsSTRK20Bridge`, `PELLiquidityVault`, insurance, oracle, keeper, Rust risk engine, circuits, or verifiers.

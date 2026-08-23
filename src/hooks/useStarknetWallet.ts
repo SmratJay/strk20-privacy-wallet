@@ -146,24 +146,39 @@ export function useStarknetWallet() {
         const accounts = await targetProvider.enable({ showModal: true });
         const selectedAddress = accounts?.[0] || targetProvider.selectedAddress;
 
-        // Check STRK20 Privacy Capability via least privilege version query
-        let isPrivacySupported = false;
-        let walletApiVersion = '0.0.0';
+// Check STRK20 Privacy Capability via least-privilege version query.
+      // Capability is derived from the Wallet API surface — never from wallet name,
+      // browser user agent, or a hardcoded "Ready = true".
+      let isPrivacySupported = false;
+      let walletApiVersion = '0.0.0';
 
-        if (targetProvider.supportedSpecs) {
-          const specs = Array.isArray(targetProvider.supportedSpecs)
-            ? targetProvider.supportedSpecs
-            : [targetProvider.supportedSpecs];
-          
-          isPrivacySupported = specs.some((s: string) => {
-            const match = s.match(/v?(\d+\.\d+)/);
-            return match && parseFloat(match[1]) >= 0.10;
-          });
-          walletApiVersion = specs[0] || '1.0.0';
-        } else if (targetProvider.id === 'ready' || walletOption?.id === 'ready') {
-          isPrivacySupported = true;
-          walletApiVersion = '0.10.3';
+      try {
+        if (targetProvider.request && typeof targetProvider.request === 'function') {
+          const res = await targetProvider.request({ type: 'wallet_supportedWalletApi' });
+          if (Array.isArray(res) && res.length > 0) {
+            const versions = res.map(String);
+            walletApiVersion = versions[0];
+            isPrivacySupported = versions.some((v) => {
+              const match = v.match(/(\d+)\.(\d+)/);
+              return match && (parseInt(match[1], 10) > 0 || parseInt(match[2], 10) >= 10);
+            });
+          }
         }
+      } catch {
+        // ignore — fall through to legacy capability probe below
+      }
+
+      // Fallback: legacy `supportedSpecs` property (still capability-based, not name-based).
+      if (!isPrivacySupported && targetProvider.supportedSpecs) {
+        const specs = Array.isArray(targetProvider.supportedSpecs)
+          ? targetProvider.supportedSpecs
+          : [targetProvider.supportedSpecs];
+        walletApiVersion = specs[0] || walletApiVersion;
+        isPrivacySupported = specs.some((s: string) => {
+          const match = s.match(/v?(\d+\.\d+)/);
+          return match && parseFloat(match[1]) >= 0.10;
+        });
+      }
 
         setState({
           isConnected: true,

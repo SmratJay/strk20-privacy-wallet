@@ -253,6 +253,41 @@ user-facing flows (STRK20 private invoke for OPEN; direct wallet-signed CLOSE/UP
 never use it. Legacy dispatcher branches are marked LEGACY-ONLY and are only reachable by
 historical tests.
 
+## 27. The two STRK20 integration lanes
+
+There are intentionally **two** STRK20 lanes in this app — do not merge them.
+
+### LANE A — Generic STRK20 wallet UX (privacy wallet → Wallet API)
+
+```
+privacy-enabled wallet (Wallet API >= 0.10, e.g. Ready)
+  └─ wallet_strk20InvokeTransaction / wallet_strk20Balances
+       └─ Shield (deposit) / Private Send (transfer) / Unshield (withdraw)
+```
+
+- Implemented in `src/services/strk20WalletApiService.ts` + `Strk20WalletLaneGate`.
+- The **wallet** owns viewing keys, channels, notes, SNIP-36 proof generation, and the pool
+  interactions. The app never touches viewing keys, never reconstructs notes, never writes
+  financial state to `localStorage`, and never falls back to public ERC-20 transfers.
+- Private balances come from `wallet_strk20Balances`; a wallet that is not STRK20-capable (or
+  a wrong chain) fails closed with clear guidance.
+- The Wallet API adds its own fee action; deposit is two wallet prompts (approve + deposit).
+
+### LANE B — PEL private perps (raw SDK → ComputeAndInvoke → PEL bridge → PEL Core)
+
+```
+raw Privacy SDK (PRIVACY-0.14.3-RC.5 vendored)
+  └─ computeAndInvoke
+       └─ PELPerpsSTRK20Bridge.privacy_compute / privacy_invoke_with_computation
+            └─ PELPerpsCore.open_position_shielded
+```
+
+- Used only for the PEL private OPEN path (`strk20SdkService.openPerpPosition`).
+- Requires the operator **proving + discovery** stack (RC.2 prover + RC.2 discovery +
+  Pathfinder v0.22.7) — see `infra/strk20-operator/README.md`.
+- The PEL prover problem is **not** solved in this codebase; the PEL OPEN remains an advanced
+  operator path.
+
 ## Real-network status
 
 - **Devnet**: verified — five distinct verifiers, real Groth16 OPEN proof verified on-chain,
@@ -262,6 +297,9 @@ historical tests.
   and wired to `PELPerpsCore`; real Cairo tests (deposit/shares, PnL, funding, liquidation
   waterfall, insurance custody, bad debt, withdrawal queue, risk gates, conservation) pass via
   `snforge test`; Rust risk engine + golden vectors pass via `cargo test`.
-- **Sepolia / Mainnet STRK20 shield/perp execution**: **PENDING** — requires the operator
-  proving + discovery services (external infrastructure) and funded accounts. See
+- **Generic STRK20 (Shield / Private Send / Unshield / Private balance)**: runs through a
+  **privacy-enabled wallet** (Wallet API lane) on Starknet Sepolia — no app-side operator
+  required. Requires a STRK20-capable wallet (e.g. Ready).
+- **PEL private OPEN on Sepolia**: **PENDING** — requires the operator proving + discovery
+  services (external infrastructure) and funded accounts. See
   `infra/strk20-operator/README.md` and the final engineering report for the exact steps.

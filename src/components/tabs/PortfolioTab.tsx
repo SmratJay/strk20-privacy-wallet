@@ -65,9 +65,11 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
     return () => { cancelled = true; };
   }, [walletAddress]);
 
-  // 1. Calculate Shielded Cash Value
+  // 1. Calculate Shielded Cash Value (excludes tokens whose private balance is
+  // unavailable — an unread wallet balance must never count as $0)
   const shieldedCashUsd = useMemo(() => {
     return balances.reduce((acc, b) => {
+      if (b.shieldedBalanceAvailable === false) return acc;
       const price = tokenPrices[b.token.symbol] || 0;
       const amount = Number(b.shieldedBalance) / 10 ** b.token.decimals;
       return acc + amount * price;

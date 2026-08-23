@@ -72,12 +72,14 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
 
               <div className="text-right">
                 <div className="text-xs font-bold text-orrange-400">
-                  {formatTokenAmount(b.shieldedBalance, b.token.decimals)} {b.token.symbol}
+                  {b.shieldedBalanceAvailable
+                    ? `${formatTokenAmount(b.shieldedBalance, b.token.decimals)} ${b.token.symbol}`
+                    : '—'}
                 </div>
                 <div className="text-[9px] text-zinc-500 uppercase">
-                  {b.shieldedBalance > 0n
-                    ? `[ 🔒 ${b.pendingNotesCount || 1} SPENDABLE UTXO ]`
-                    : '[ ZERO NOTES ]'}
+                  {b.shieldedBalanceAvailable
+                    ? '[ 🔒 PRIVATE · FROM WALLET ]'
+                    : '[ PRIVACY WALLET REQUIRED ]'}
                 </div>
               </div>
             </div>

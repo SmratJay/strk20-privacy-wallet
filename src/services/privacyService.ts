@@ -1,6 +1,5 @@
 import { RpcProvider, num, uint256, hash } from 'starknet';
-import { getActivePoolAddress, getActiveRpcUrl, TokenInfo, NetworkConfig, NETWORKS, DEFAULT_NETWORK_ID } from '@/config/tokens';
-import { vaultService } from './vaultService';
+import { getActiveRpcUrl, TokenInfo, NetworkConfig, NETWORKS, DEFAULT_NETWORK_ID } from '@/config/tokens';
 
 export const ERC20_ABI = [
   {
@@ -50,6 +49,12 @@ export interface ShieldedBalance {
   privacyApiSupported: boolean;
   /** false when the RPC could not be reached for this token — UI must show "—", never a fabricated 0. */
   publicBalanceAvailable: boolean;
+  /**
+   * true when shieldedBalance came from the privacy wallet (Wallet API) / real STRK20
+   * discovery. When false the private balance is UNKNOWN — the UI must never treat 0 as
+   * authoritative, and never read a localStorage note store as balance authority.
+   */
+  shieldedBalanceAvailable?: boolean;
 }
 
 export interface PrivacyTransaction {
@@ -142,13 +147,16 @@ export class PrivacyService {
   }
 
   /**
-   * Fetches both public and shielded STRK20 balances for a given account.
-   * Dynamically adapts to the active network (Mainnet or Sepolia).
-   * Supports ALL Starknet wallets (Braavos, Argent X, Ready Wallet).
+   * Fetches PUBLIC on-chain balances for the active network's tokens.
+   *
+   * Private (shielded) balances are NOT authoritative here: the generic STRK20 lane reads
+   * them from the privacy wallet via the Wallet API (strk20WalletApiService), and PEL reads
+   * them from real STRK20 discovery. This method never treats localStorage note stores as
+   * balance authority, and never fabricates a private balance.
    */
   async fetchBalances(
     accountAddress: string,
-    walletAccount?: any,
+    _walletAccount?: any,
     network?: NetworkConfig
   ): Promise<ShieldedBalance[]> {
     const activeNetwork = network || NETWORKS.mainnet;
@@ -156,16 +164,10 @@ export class PrivacyService {
     const rpcUrls = activeNetwork.rpcUrls;
     const results: ShieldedBalance[] = [];
 
-    const hasNativePrivacyWalletApi =
-      walletAccount != null && typeof walletAccount.strk20Balances === 'function';
-
     for (const token of tokens) {
       let publicBalance = 0n;
       let publicBalanceAvailable = true;
-      let shieldedBalance = 0n;
-      let pendingNotesCount = 0;
 
-      // 1. Fetch live public ERC-20 balance on-chain
       const pub = await this.fetchERC20Balance(token.address, accountAddress, rpcUrls);
       publicBalance = pub.balance;
       publicBalanceAvailable = pub.ok;
@@ -173,34 +175,14 @@ export class PrivacyService {
         console.warn(`Could not fetch public balance for ${token.symbol} (all RPCs unreachable).`);
       }
 
-      // 2. Fetch shielded balance:
-      // If Ready Wallet: query wallet API
-      // If Braavos / Argent X: query the in-browser Encrypted UTXO Vault
-      if (hasNativePrivacyWalletApi) {
-        try {
-          const shieldedRes = await walletAccount.strk20Balances([token.address]);
-          if (shieldedRes && shieldedRes[token.address]) {
-            shieldedBalance = BigInt(shieldedRes[token.address]);
-          }
-        } catch (err) {
-          console.warn(`Native shielded query failed, falling back to vault:`, err);
-          shieldedBalance = vaultService.getUnspentShieldedBalance(accountAddress, token.address, activeNetwork.id);
-        }
-      } else {
-        shieldedBalance = vaultService.getUnspentShieldedBalance(accountAddress, token.address, activeNetwork.id);
-      }
-
-      // Count unspent notes
-      const notes = vaultService.getNotes(accountAddress, activeNetwork.id);
-      pendingNotesCount = notes.filter((n) => !n.isSpent && n.tokenAddress.toLowerCase() === token.address.toLowerCase()).length;
-
       results.push({
         token,
         publicBalance,
         publicBalanceAvailable,
-        shieldedBalance,
-        pendingNotesCount,
-        privacyApiSupported: true, // Universal support via in-browser Umbra client
+        shieldedBalance: 0n,
+        shieldedBalanceAvailable: false,
+        pendingNotesCount: 0,
+        privacyApiSupported: false,
       });
     }
 
@@ -223,121 +205,58 @@ export class PrivacyService {
   }
 
   /**
-   * Shield tokens into the STRK20 Privacy Pool.
-   * Compatible with Braavos, Argent X, Ready Wallet, and Cartridge.
+   * LEGACY — UNREACHABLE from the UI. Generic STRK20 shield now runs through the
+   * Wallet API lane (strk20WalletApiService.shield). This stub FAILS CLOSED and never
+   * writes a fake note or performs a public ERC-20 transfer to the pool.
    */
   async executeShield(
-    walletAccount: any,
-    token: TokenInfo,
-    amountBigInt: bigint,
-    onStepChange?: (step: 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED') => void,
-    poolAddress?: string,
-    networkId: string = 'mainnet'
+    _walletAccount: any,
+    _token: TokenInfo,
+    _amountBigInt: bigint,
+    _onStepChange?: (step: 'APPROVING' | 'SHIELDING' | 'PROVING' | 'SUBMITTED') => void,
+    _poolAddress?: string,
+    _networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
-    if (!walletAccount) throw new Error('Wallet not connected');
-
-    const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
-
-    // 1. Ready Wallet native route
-    if (typeof walletAccount.strk20Shield === 'function') {
-      onStepChange?.('PROVING');
-      const res = await walletAccount.strk20Shield({
-        token: token.address,
-        amount: amountBigInt.toString(),
-      });
-      onStepChange?.('SUBMITTED');
-      const txHash = res.transaction_hash || res.hash || '0x';
-      if (address) {
-        vaultService.addNote(address, networkId, token.address, token.symbol, amountBigInt, txHash);
-      }
-      return { txHash };
-    }
-
-    // 2. Braavos / Argent X path — FAIL CLOSED. A plain public ERC-20 `transfer` to the
-    // pool contract address does NOT create a shielded note (no deposit, no owner, no
-    // way to unshield) — it would park the user's USDC in the pool's balance forever.
-    // The only correct shield for these wallets is the real STRK20 SDK path
-    // (strk20SdkService.shield), which requires the operator proving + discovery
-    // services. Never silently "shield" via a raw transfer.
     throw new Error(
-      'STRK20_SHIELD_UNAVAILABLE: This wallet does not expose a native STRK20 shield API. ' +
-        'Use strk20SdkService.shield (requires NEXT_PUBLIC_STRK20_PROVER_URL + NEXT_PUBLIC_STRK20_DISCOVERY_URL). ' +
-        'No funds were moved.'
+      'STRK20 shield must run through the privacy wallet (Wallet API lane). No funds were moved.',
     );
   }
 
   /**
-   * Execute private note transfer inside STRK20 pool
+   * LEGACY — UNREACHABLE from the UI. Private transfers run through the Wallet API lane
+   * (strk20WalletApiService.privateTransfer). Fails closed; never falls back to a public
+   * ERC-20 transfer and never writes local note state.
    */
   async executePrivateTransfer(
-    walletAccount: any,
-    token: TokenInfo,
-    recipientViewingKeyOrAddress: string,
-    amountBigInt: bigint,
-    onStepChange?: (step: 'PREPARING' | 'PROVING' | 'SUBMITTING') => void,
-    poolAddress?: string,
-    networkId: string = 'mainnet'
+    _walletAccount: any,
+    _token: TokenInfo,
+    _recipientViewingKeyOrAddress: string,
+    _amountBigInt: bigint,
+    _onStepChange?: (step: 'PREPARING' | 'PROVING' | 'SUBMITTING') => void,
+    _poolAddress?: string,
+    _networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
-    if (!walletAccount) throw new Error('Wallet not connected');
-
-    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
-    const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
-    onStepChange?.('PREPARING');
-
-    // 1. Ready Wallet native route
-    if (typeof walletAccount.strk20Transfer === 'function') {
-      onStepChange?.('PROVING');
-      const res = await walletAccount.strk20Transfer({
-        token: token.address,
-        recipient: recipientViewingKeyOrAddress,
-        amount: amountBigInt.toString(),
-      });
-      onStepChange?.('SUBMITTING');
-      const txHash = res.transaction_hash || res.hash || '0x';
-      if (address) {
-        vaultService.spendNotes(address, token.address, amountBigInt, networkId);
-      }
-      return { txHash };
-    }
-
-    // 2. Fallback check: Refuse to execute plain ERC20 transfer under the label of "private transfer"
-    throw new Error('STRK20 native privacy wallet required for private transfers. Please connect Ready Wallet or a STRK20-compatible wallet.');
+    throw new Error(
+      'STRK20 private transfers must run through the privacy wallet (Wallet API lane).',
+    );
   }
 
   /**
-   * Execute unshield (withdraw private note back to public address)
+   * LEGACY — UNREACHABLE from the UI. Unshield runs through the Wallet API lane
+   * (strk20WalletApiService.unshield). Fails closed; never drains a public wallet.
    */
   async executeUnshield(
-    walletAccount: any,
-    token: TokenInfo,
-    destinationAddress: string,
-    amountBigInt: bigint,
-    onStepChange?: (step: 'PROVING' | 'SUBMITTING') => void,
-    poolAddress?: string,
-    networkId: string = 'mainnet'
+    _walletAccount: any,
+    _token: TokenInfo,
+    _destinationAddress: string,
+    _amountBigInt: bigint,
+    _onStepChange?: (step: 'PROVING' | 'SUBMITTING') => void,
+    _poolAddress?: string,
+    _networkId: string = 'mainnet'
   ): Promise<{ txHash: string }> {
-    if (!walletAccount) throw new Error('Wallet not connected');
-
-    const targetPoolAddress = poolAddress || getActivePoolAddress(networkId);
-    const address = walletAccount.address || walletAccount.account?.address || walletAccount.selectedAddress;
-
-    if (typeof walletAccount.strk20Unshield === 'function') {
-      onStepChange?.('PROVING');
-      // Spend from local note vault
-      if (address) {
-        vaultService.spendNotes(address, token.address, amountBigInt, networkId);
-      }
-      const res = await walletAccount.strk20Unshield({
-        token: token.address,
-        recipient: destinationAddress,
-        amount: amountBigInt.toString(),
-      });
-      onStepChange?.('SUBMITTING');
-      return { txHash: res.transaction_hash || res.hash || '0x' };
-    }
-
-    // Refuse to fake unshielding by draining user's public wallet
-    throw new Error('STRK20 native privacy wallet required to unshield funds. Please connect Ready Wallet or a STRK20-compatible wallet.');
+    throw new Error(
+      'STRK20 unshield must run through the privacy wallet (Wallet API lane). No funds were moved.',
+    );
   }
 }
 

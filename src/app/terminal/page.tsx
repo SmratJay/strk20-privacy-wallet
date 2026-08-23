@@ -37,6 +37,7 @@ import { CompliancePassportModal } from '@/components/CompliancePassportModal';
 
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { privacyService, ShieldedBalance, PrivacyTransaction } from '@/services/privacyService';
+import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { TokenInfo } from '@/config/tokens';
 import { useToast } from '@/components/Toast';
 import { useNetwork } from '@/context/NetworkContext';
@@ -60,7 +61,6 @@ function TerminalContent() {
   const [initialRecipient, setInitialRecipient] = useState('');
   const [initialTokenSymbol, setInitialTokenSymbol] = useState('');
   const [initialAmount, setInitialAmount] = useState('');
-  const [initialMemo, setInitialMemo] = useState('');
 
   // Balances state
   const [balances, setBalances] = useState<ShieldedBalance[]>(() =>
@@ -69,6 +69,7 @@ function TerminalContent() {
       publicBalance: 0n,
       publicBalanceAvailable: true,
       shieldedBalance: 0n,
+      shieldedBalanceAvailable: false,
       pendingNotesCount: 0,
       privacyApiSupported: false,
     }))
@@ -94,7 +95,6 @@ function TerminalContent() {
       if (toParam) setInitialRecipient(decodeURIComponent(toParam));
       if (tokenParam) setInitialTokenSymbol(tokenParam);
       if (amountParam) setInitialAmount(amountParam);
-      if (memoParam) setInitialMemo(decodeURIComponent(memoParam));
 
       if (tabParam) {
         const uppercaseTab = tabParam.toUpperCase() as PELTabType;
@@ -145,7 +145,9 @@ function TerminalContent() {
     }
   };
 
-  // Refresh public and shielded balances across all supported tokens
+  // Refresh public + private balances across all supported tokens.
+  // Public balances come from the RPC; PRIVATE balances come from the privacy wallet
+  // (Wallet API lane) — never from localStorage, never fabricated.
   const refreshBalances = useCallback(async () => {
     if (!wallet.isConnected || !wallet.address) {
       setBalances(
@@ -154,6 +156,7 @@ function TerminalContent() {
           publicBalance: 0n,
           publicBalanceAvailable: true,
           shieldedBalance: 0n,
+          shieldedBalanceAvailable: false,
           pendingNotesCount: 0,
           privacyApiSupported: false,
         }))
@@ -168,7 +171,33 @@ function TerminalContent() {
         wallet.walletAccount,
         currentNetwork
       );
-      setBalances(results);
+
+      // Merge private balances from the privacy wallet when the Wallet API lane is READY.
+      let walletPrivate: Record<string, bigint> = {};
+      try {
+        const status = await strk20WalletApiService.getWalletApiStatus(wallet);
+        if (status.state === 'READY') {
+          const entries = await strk20WalletApiService.getPrivateBalances(
+            wallet,
+            currentNetwork.tokens.map((t) => t.address),
+          );
+          for (const e of entries) {
+            if (e.token) walletPrivate[e.token.toLowerCase()] = e.balance;
+          }
+        }
+      } catch {
+        walletPrivate = {};
+      }
+
+      const merged = results.map((b) => {
+        const walletBal = walletPrivate[b.token.address.toLowerCase()];
+        if (walletBal !== undefined) {
+          return { ...b, shieldedBalance: walletBal, shieldedBalanceAvailable: true };
+        }
+        return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
+      });
+
+      setBalances(merged);
     } catch (err) {
       console.error('Failed to fetch balances:', err);
     } finally {
@@ -352,7 +381,6 @@ function TerminalContent() {
                 initialRecipient={initialRecipient}
                 initialTokenSymbol={initialTokenSymbol}
                 initialAmount={initialAmount}
-                initialMemo={initialMemo}
                 onSuccess={(txHash, token, amount, recipient) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,

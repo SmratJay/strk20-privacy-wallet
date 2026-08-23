@@ -1,0 +1,79 @@
+'use client';
+
+import React from 'react';
+import { Wallet, AlertTriangle, Globe, ShieldAlert } from 'lucide-react';
+import { WalletApiStatus } from '@/services/strk20WalletApiService';
+
+/**
+ * Gate banner for the generic STRK20 Wallet API lane (LANE A).
+ * Renders honest state before a Shield / Private Send / Unshield form is usable:
+ *   CONNECT_WALLET / WRONG_NETWORK / PRIVACY_WALLET_REQUIRED / READY.
+ */
+export const Strk20WalletLaneGate: React.FC<{ status: WalletApiStatus | null; checking?: boolean }> = ({
+  status,
+  checking,
+}) => {
+  if (checking || !status) {
+    return (
+      <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
+        Checking private STRK20 wallet capability…
+      </div>
+    );
+  }
+
+  switch (status.state) {
+    case 'CONNECT_WALLET':
+      return (
+        <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2">
+          <Wallet className="w-4 h-4 shrink-0 text-orrange-400" />
+          <div>
+            <span className="font-bold text-white uppercase">Connect a Starknet wallet</span>
+            <p className="text-zinc-400 mt-0.5">
+              Connect a Starknet wallet to use private STRK20 shield / send / unshield.
+            </p>
+          </div>
+        </div>
+      );
+    case 'WRONG_NETWORK':
+      return (
+        <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start gap-2">
+          <Globe className="w-4 h-4 shrink-0" />
+          <div>
+            <span className="font-bold uppercase">Switch to Starknet Sepolia</span>
+            <p className="text-amber-200/80 mt-0.5">
+              Private STRK20 currently works on Starknet Sepolia. Switch your wallet network
+              and try again.
+            </p>
+          </div>
+        </div>
+      );
+    case 'PRIVACY_WALLET_REQUIRED':
+      return (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200 flex items-start gap-2">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          <div>
+            <span className="font-bold uppercase">Privacy wallet required</span>
+            <p className="text-rose-200/80 mt-0.5">
+              A privacy-enabled Starknet wallet (Wallet API ≥ 0.10, e.g. Ready) is required for
+              STRK20. No funds were moved.
+            </p>
+          </div>
+        </div>
+      );
+    case 'READY':
+      return (
+        <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 hidden" />
+          <span className="font-bold uppercase">Private STRK20 ready</span>
+          <span className="text-emerald-300/70">
+            · wallet {status.walletName ? `(${status.walletName})` : ''} handles proofs & privacy
+          </span>
+        </div>
+      );
+    default:
+      return null;
+  }
+};
+
+export const isWalletLaneReady = (status: WalletApiStatus | null): boolean =>
+  status?.state === 'READY';
