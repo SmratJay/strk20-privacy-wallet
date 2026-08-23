@@ -28,7 +28,7 @@ interface SendTabProps {
   initialAmount?: string;
   privateBalancePermission?: WalletBalancePermission;
   onRequestPrivateBalanceAccess?: () => void;
-  onGoToShield?: () => void;
+  onOnboarded?: (txHash: string, tokenSymbol: string, amount: string) => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, recipient: string) => void;
 }
 
@@ -50,7 +50,7 @@ export const SendTab: React.FC<SendTabProps> = ({
   initialAmount = '',
   privateBalancePermission = 'UNKNOWN',
   onRequestPrivateBalanceAccess,
-  onGoToShield,
+  onOnboarded,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -220,7 +220,7 @@ export const SendTab: React.FC<SendTabProps> = ({
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
       />
 
-      {ready && <PrivateReceivingCard wallet={wallet} onGoToShield={onGoToShield} />}
+      {ready && <PrivateReceivingCard wallet={wallet} onOnboarded={onOnboarded} />}
 
       {ready && (
         <form onSubmit={handleSend} className="space-y-4">

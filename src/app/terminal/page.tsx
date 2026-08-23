@@ -306,6 +306,22 @@ function TerminalContent() {
     }
   };
 
+  // Onboarding ("Enable Private Receiving") submits a real deposit through the wallet,
+  // which registers + shields the first note. Record it in history and refresh balances.
+  const handleOnboarded = (txHash: string, tokenSymbol: string, amount: string) => {
+    handleTxSuccess({
+      id: `tx_${Date.now()}`,
+      type: 'SHIELD',
+      tokenSymbol,
+      amount,
+      txHash,
+      timestamp: Date.now(),
+      status: 'CONFIRMED',
+      isPrivate: true,
+      privacyDetails: 'STRK20 privacy onboarding (auto-register + first note)',
+    });
+  };
+
   const handleSearchIntent = (query: string) => {
     const q = query.trim().toUpperCase();
     if (q.includes('SWAP') || q.includes('BUY') || q.includes('SELL')) {
@@ -424,7 +440,7 @@ function TerminalContent() {
                 wallet={wallet}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
-                onGoToShield={() => setActiveTab('SHIELD')}
+                onOnboarded={handleOnboarded}
                 onSuccess={(txHash, token, amount) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -450,7 +466,7 @@ function TerminalContent() {
                 initialAmount={initialAmount}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
-                onGoToShield={() => setActiveTab('SHIELD')}
+                onOnboarded={handleOnboarded}
                 onSuccess={(txHash, token, amount, recipient) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -476,7 +492,7 @@ function TerminalContent() {
                 wallet={wallet}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
-                onGoToShield={() => setActiveTab('SHIELD')}
+                onOnboarded={handleOnboarded}
                 onSuccess={(txHash, token, amount, destination) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,

@@ -24,7 +24,7 @@ interface UnshieldTabProps {
   wallet: any;
   privateBalancePermission?: WalletBalancePermission;
   onRequestPrivateBalanceAccess?: () => void;
-  onGoToShield?: () => void;
+  onOnboarded?: (txHash: string, tokenSymbol: string, amount: string) => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, destination: string) => void;
 }
 
@@ -42,7 +42,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
   wallet,
   privateBalancePermission = 'UNKNOWN',
   onRequestPrivateBalanceAccess,
-  onGoToShield,
+  onOnboarded,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -179,7 +179,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
       />
 
-      {ready && <PrivateReceivingCard wallet={wallet} onGoToShield={onGoToShield} />}
+      {ready && <PrivateReceivingCard wallet={wallet} onOnboarded={onOnboarded} />}
 
       {ready && (
         <form onSubmit={handleUnshield} className="space-y-4">

@@ -395,9 +395,10 @@ export const strk20WalletApiService = {
   getWalletApiStatus,
   getWalletPermissions,
   getPrivateBalances,
-  checkPrivateReceivingStatus,
+  getPrivateReceivingRequirement,
   enablePrivateReceiving,
   isRecipientReadinessError,
+  isAccountFinalizingError,
   shield,
   privateTransfer,
   unshield,
@@ -405,84 +406,270 @@ export const strk20WalletApiService = {
   translateWalletError,
 };
 
-// ─── Private-receiving onboarding (wallet-owned) ──────────────────────────────
+// ─── Private-receiving onboarding (LANE A: Wallet API) ────────────────────────
+//
+// PROTOCOL FACTS (verified against the current spec + wallet-side SDK source):
+//
+//  1. The Wallet API exposes NO dapp-facing registration / channel-setup RPC.
+//     STRK20_ACTION is exactly `deposit | withdraw | transfer | invoke`
+//     (wallet_rpc.json, v0.10.3/0.10.4). There is no `wallet_register...` or
+//     `wallet_setupChannel...` in the spec or in starknet.js WalletAccountV6.
+//
+//  2. Registration is TRANSPARENT in the wallet. The wallet-side prover that backs
+//     `wallet_strk20InvokeTransaction` (starknet-privacy `client/src/strk20-prover.ts`,
+//     CorePrivateTransfersProver.prove) runs every action with:
+//         autoRegister: true, autoSetup: true, autoSelectNotes: "naive",
+//         autoDiscover: { channels: "refresh", notes: "refresh" }
+//     So the first time a user submits ANY real STRK20 action, the wallet itself adds
+//     the SetViewingKey (registration) + OpenChannel(self) + token subchannel actions
+//     to the same transaction. Registration is one-time and immutable per the protocol
+//     ("viewing keys are registered once and treated as immutable").
+//
+//  3. The ONLY authoritative, protocol-derived readiness signal a LANE A dapp has is
+//     `wallet_strk20Balances`, which returns NOT_REGISTERED (118) while the user is
+//     unregistered. We never guess from error strings for readiness, and we never write
+//     any local "registered" flag.
+//
+//  4. `discoverRequirement(recipient, token)` (Register/SetupChannel/SetupToken/Ready)
+//     is the SDK-lane readiness mechanism. It requires the user's viewing key and an
+//     indexer, so a LANE A dapp MUST NOT use it (privacy rule: the dapp never handles
+//     viewing keys). It remains authoritative for LANE B (strk20SdkService).
+//
+//  5. Because there is no pure-registration action in the Wallet API, the closest
+//     protocol-correct onboarding is a real `wallet_strk20InvokeTransaction` deposit:
+//     the wallet transparently registers + sets up + deposits the first note in the SAME
+//     transaction. This is implemented below, surfaced with real step/state transitions
+//     and the real transaction hash. No fake state is ever created.
 
-export type PrivateReceivingStatus = 'UNKNOWN' | 'ENABLED' | 'NOT_ENABLED' | 'UNSUPPORTED';
+export type PrivateReceivingRequirement =
+  | 'CONNECT_WALLET'
+  | 'UNSUPPORTED'
+  | 'WRONG_NETWORK'
+  | 'NEEDS_REGISTRATION'
+  | 'READY'
+  | 'UNKNOWN';
 
-export type EnablePrivateReceivingResult = {
-  status: 'ALREADY_ENABLED' | 'NEEDS_FIRST_SHIELD' | 'UNSUPPORTED' | 'ERROR';
-  message: string;
-};
+export type PrivateReceivingEnableStatus =
+  | 'READY' // already registered — no transaction sent
+  | 'SUBMITTED' // registration/setup transaction submitted (real hash), awaiting confirmation
+  | 'CONFIRMED' // transaction confirmed AND re-probe verified READY (or wallet read is unavailable)
+  | 'UNSUPPORTED'
+  | 'WRONG_NETWORK'
+  | 'USER_REJECTED'
+  | 'ACCOUNT_FINALIZING'
+  | 'FAILED';
+
+export interface PrivateReceivingEnableResult {
+  status: PrivateReceivingEnableStatus;
+  transactionHash?: string;
+  message?: string;
+}
 
 /**
- * Check whether the connected wallet is registered for STRK20 private receiving.
- *
- * Registration ("Enable private receiving") is wallet-owned: the wallet sets a viewing
- * key on-chain. The Wallet API exposes no standalone "register recipient" RPC — the
- * wallet registers the user transparently on their first STRK20 action (per the spec:
- * "Registration into the pool is transparent"). We therefore probe registration with a
- * read (wallet_strk20Balances) and translate the official NOT_REGISTERED (118) code.
- *
- * This is only ever called on explicit user action (never on render) so the wallet's
- * private-balance consent prompt is not spam-triggered.
+ * Progress callback fired by `enablePrivateReceiving` so the UI can render each real
+ * protocol phase. `WALLET_APPROVAL` means the Ready wallet itself is showing the
+ * approval/proof UI — the dapp did not perform the operation on its own.
  */
-export async function checkPrivateReceivingStatus(wallet: any): Promise<PrivateReceivingStatus> {
-  const provider = resolveWalletApiProvider(wallet);
-  if (!provider || !wallet?.isConnected) return 'UNKNOWN';
+export type PrivateReceivingStep =
+  | 'CHECKING'
+  | 'WALLET_APPROVAL'
+  | 'SUBMITTED'
+  | 'CONFIRMING'
+  | 'CONFIRMED';
 
-  // Capability gate: only a STRK20-capable Wallet API ≥ 0.10 wallet can onboard.
+export type PrivateReceivingStepCallback = (
+  step: PrivateReceivingStep,
+  detail?: { transactionHash?: string },
+) => void;
+
+/**
+ * Read the connected wallet's private-receiving requirement from protocol state.
+ *
+ * Only ever called on explicit user action (never during render) so the wallet's
+ * private-balance consent is not spam-triggered.
+ */
+export async function getPrivateReceivingRequirement(
+  wallet: any,
+): Promise<PrivateReceivingRequirement> {
+  const provider = resolveWalletApiProvider(wallet);
+  if (!provider || !wallet?.isConnected) return 'CONNECT_WALLET';
+
+  let status: WalletApiStatus;
   try {
-    const status = await getWalletApiStatus(wallet);
-    if (!status.supportsStrk20) return 'UNSUPPORTED';
+    status = await getWalletApiStatus(wallet);
   } catch {
     return 'UNKNOWN';
   }
+  if (!status.supportsStrk20) return 'UNSUPPORTED';
+  if (status.chainId && BigInt(status.chainId) !== BigInt(SN_SEPOLIA_CHAIN_ID)) {
+    return 'WRONG_NETWORK';
+  }
 
-  // Probe registration. Success => viewing key registered. NOT_REGISTERED => not onboarded.
+  // Authoritative registration probe: wallet_strk20Balances returns NOT_REGISTERED
+  // while the user is unregistered. Success => viewing key registered on-chain.
   try {
     await provider.request({ type: 'wallet_strk20Balances', params: { tokens: [] } });
-    return 'ENABLED';
+    return 'READY';
   } catch (err: any) {
-    if (typeof err?.code === 'number' && err.code === 118) return 'NOT_ENABLED';
+    if (typeof err?.code === 'number' && err.code === 118) return 'NEEDS_REGISTRATION';
     return 'UNKNOWN';
   }
 }
 
 /**
- * Trigger the connected wallet's STRK20 onboarding so the user can receive private
- * transfers. Honest by construction:
- *  - A non-STRK20 wallet is reported as UNSUPPORTED (never faked into the private lane).
- *  - A registered wallet is ALREADY_ENABLED.
- *  - An unregistered wallet reports NEEDS_FIRST_SHIELD: the Wallet API has no standalone
- *    register RPC, so the wallet completes registration on the user's first Shield
- *    (a deposit). We never fabricate a "registered recipient" or fake a local channel.
+ * True when the wallet/prover is telling us the account is not sufficiently finalized
+ * to prove against (the SDK documents a ~10-block finalization safety rule). This is a
+ * wait-and-retry condition, not a terminal failure. Patterns are intentionally narrow
+ * to avoid misclassifying other wallet errors (e.g. NOT_REGISTERED on reads).
  */
-export async function enablePrivateReceiving(wallet: any): Promise<EnablePrivateReceivingResult> {
-  const current = await checkPrivateReceivingStatus(wallet);
-  if (current === 'UNSUPPORTED') {
+export function isAccountFinalizingError(err: unknown): boolean {
+  const msg = String((err as { message?: string })?.message || '').toLowerCase();
+  const patterns = [
+    'not finalized',
+    'finaliz',
+    'account not deployed',
+    'account is not deployed',
+    'cannot register yet',
+    'cannot be registered yet',
+    'not yet available',
+    'stale block',
+    'reorg',
+    'not enough blocks',
+  ];
+  return patterns.some((p) => msg.includes(p));
+}
+
+/**
+ * Enable STRK20 private receiving for the connected Ready address.
+ *
+ * Steps (LANE A — the wallet owns proving/submission):
+ *  1. Read the requirement from protocol state (see getPrivateReceivingRequirement).
+ *  2. If already READY → no transaction is sent.
+ *  3. If NEEDS_REGISTRATION → submit a real `wallet_strk20InvokeTransaction` deposit.
+ *     The wallet transparently performs registration (SetViewingKey) + self-channel +
+ *     token subchannel setup + the deposit in one transaction (autoRegister/autoSetup).
+ *     This is the documented registration path for LANE A.
+ *  4. Wait for on-chain acceptance; then re-probe readiness. CONFIRMED is only returned
+ *     after the wallet/protocol confirms the transaction (never from the hash alone).
+ *
+ * @param opts.token      STRK20 token address the first note is deposited against.
+ * @param opts.amountBase Deposit amount in the token's smallest unit (> 0).
+ * @param opts.reconcile  Optional on-chain reconcile function (injectable for tests);
+ *                        defaults to waitForStrk20Confirmation against the public RPC.
+ */
+export async function enablePrivateReceiving(
+  wallet: any,
+  opts: { token: string; amountBase: bigint; reconcile?: (hash: string) => Promise<Strk20ReconcileStatus> },
+  onStep?: PrivateReceivingStepCallback,
+): Promise<PrivateReceivingEnableResult> {
+  onStep?.('CHECKING');
+  const requirement = await getPrivateReceivingRequirement(wallet);
+  switch (requirement) {
+    case 'CONNECT_WALLET':
+      return { status: 'FAILED', message: 'Connect your Ready Wallet first.' };
+    case 'UNSUPPORTED':
+      return {
+        status: 'UNSUPPORTED',
+        message:
+          "STRK20 privacy isn't supported by this wallet yet. Use Ready X to enable private transfers.",
+      };
+    case 'WRONG_NETWORK':
+      return {
+        status: 'WRONG_NETWORK',
+        message: 'Private STRK20 works on Starknet Sepolia. Switch your wallet network and try again.',
+      };
+    case 'READY':
+      return {
+        status: 'READY',
+        message: 'Private receiving is already enabled for this Ready address.',
+      };
+    case 'UNKNOWN':
+      return {
+        status: 'FAILED',
+        message: 'Could not determine private-receiving status. Try again.',
+      };
+    case 'NEEDS_REGISTRATION':
+      break;
+  }
+
+  if (!opts?.token || opts.amountBase <= 0n) {
     return {
-      status: 'UNSUPPORTED',
-      message:
-        "STRK20 privacy isn't supported by this wallet yet. Use Ready X to enable private transfers.",
+      status: 'FAILED',
+      message: 'A token and a shield amount greater than zero are required to enable private receiving.',
     };
   }
-  if (current === 'ENABLED') {
+
+  const provider = requireReadyProvider(wallet);
+  let receipt: WalletActionReceipt;
+  try {
+    onStep?.('WALLET_APPROVAL');
+    receipt = await invokeStrk20(wallet, provider, [
+      { type: 'deposit', token: opts.token, amount: toHexFelt(opts.amountBase) },
+    ]);
+  } catch (err: any) {
+    const code = typeof err?.code === 'number' ? err.code : undefined;
+    if (code === 113) {
+      return {
+        status: 'USER_REJECTED',
+        message: 'You declined the STRK20 privacy setup in Ready. No transaction was sent.',
+      };
+    }
+    // NOT_REGISTERED on an INVOKE (vs. the balances read) means the wallet could not
+    // transparently register — per the spec, registration is what should happen here.
+    // The documented cause is insufficient block finality for the account/prover.
+    if (code === 118 || isAccountFinalizingError(err)) {
+      return {
+        status: 'ACCOUNT_FINALIZING',
+        message:
+          'Your account is still finalizing. Wait a few blocks (~10 blocks), then try again.',
+      };
+    }
+    return { status: 'FAILED', message: translateWalletError(err).userMessage };
+  }
+
+  // Reconcile with the real chain; never claim enabled from a hash alone.
+  const reconcile =
+    opts.reconcile ?? ((hash: string) => waitForStrk20Confirmation(hash));
+  onStep?.('SUBMITTED', { transactionHash: receipt.transactionHash });
+  onStep?.('CONFIRMING', { transactionHash: receipt.transactionHash });
+  const reconcileResult = await reconcile(receipt.transactionHash);
+  if (reconcileResult === 'CONFIRMED') {
+    const after = await getPrivateReceivingRequirement(wallet);
+    if (after === 'READY') {
+      onStep?.('CONFIRMED', { transactionHash: receipt.transactionHash });
+      return {
+        status: 'CONFIRMED',
+        transactionHash: receipt.transactionHash,
+        message: 'Private receiving is enabled for this Ready address.',
+      };
+    }
+    if (after === 'UNKNOWN') {
+      onStep?.('CONFIRMED', { transactionHash: receipt.transactionHash });
+      return {
+        status: 'CONFIRMED',
+        transactionHash: receipt.transactionHash,
+        message:
+          'Registration transaction confirmed. Re-check shortly to confirm receiving state.',
+      };
+    }
     return {
-      status: 'ALREADY_ENABLED',
-      message: 'Private receiving is already enabled for this wallet.',
+      status: 'FAILED',
+      transactionHash: receipt.transactionHash,
+      message:
+        'Registration was submitted but could not yet be verified as ready. Re-check shortly.',
     };
   }
-  if (current === 'NOT_ENABLED') {
+  if (reconcileResult === 'REVERTED') {
     return {
-      status: 'NEEDS_FIRST_SHIELD',
-      message:
-        'Private receiving is enabled automatically the first time you Shield. Shield any amount to complete onboarding.',
+      status: 'FAILED',
+      transactionHash: receipt.transactionHash,
+      message: 'The privacy-setup transaction reverted on-chain.',
     };
   }
   return {
-    status: 'ERROR',
-    message:
-      "Could not determine private-receiving status. Make sure your wallet is connected on Starknet Sepolia and try again.",
+    status: 'SUBMITTED',
+    transactionHash: receipt.transactionHash,
+    message: 'Privacy setup submitted — awaiting confirmation.',
   };
 }
 

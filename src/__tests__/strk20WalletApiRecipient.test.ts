@@ -1,21 +1,22 @@
 /**
  * @file strk20WalletApiRecipient.test.ts
- * @description Unit tests for the STRK20 Wallet API recipient-readiness error
- * translation and the private-receiving onboarding helpers. These enforce the
- * "recipient must enable private receiving" protocol fact without faking it.
+ * @description Unit tests for STRK20 recipient-readiness error translation (fallback
+ * UX only) and Wallet API version gating. Readiness itself is protocol-derived in
+ * getPrivateReceivingRequirement (see strk20WalletApiOnboarding.test.ts); these error
+ * matchers are deliberately NOT the primary readiness mechanism.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   isRecipientReadinessError,
   translateWalletError,
-  checkPrivateReceivingStatus,
-  enablePrivateReceiving,
+  isAccountFinalizingError,
+  getWalletApiStatus,
   PRIVATE_RECEIVING_RECIPIENT_MESSAGE,
   MIN_STRK20_WALLET_API_VERSION,
 } from '../services/strk20WalletApiService';
 
-describe('isRecipientReadinessError', () => {
+describe('isRecipientReadinessError (fallback translator only)', () => {
   it('detects a missing channel context', () => {
     expect(isRecipientReadinessError({ message: 'Missing channel context for recipient 0x123' })).toBe(true);
   });
@@ -33,16 +34,14 @@ describe('isRecipientReadinessError', () => {
   it('does not fire on unrelated errors', () => {
     expect(isRecipientReadinessError({ message: 'Insufficient private balance' })).toBe(false);
     expect(isRecipientReadinessError({ message: 'User aborted the request' })).toBe(false);
+    expect(isRecipientReadinessError({ message: 'An error occurred (NOT_REGISTERED)' })).toBe(false);
     expect(isRecipientReadinessError({})).toBe(false);
   });
 });
 
-describe('translateWalletError (recipient context)', () => {
+describe('translateWalletError (recipient context fallback)', () => {
   it('translates a missing-channel error to the recipient message when recipient=true', () => {
-    const t = translateWalletError(
-      { message: 'Missing channel context' },
-      { recipient: true },
-    );
+    const t = translateWalletError({ message: 'Missing channel context' }, { recipient: true });
     expect(t.userMessage).toBe(PRIVATE_RECEIVING_RECIPIENT_MESSAGE);
   });
 
@@ -62,65 +61,47 @@ describe('translateWalletError (recipient context)', () => {
   });
 });
 
-function makeWallet({ supportsStrk20, notRegistered }: { supportsStrk20: boolean; notRegistered?: boolean }) {
-  const request = async ({ type }: { type: string }): Promise<unknown> => {
-    if (type === 'wallet_supportedWalletApi') {
-      return supportsStrk20 ? [MIN_STRK20_WALLET_API_VERSION] : ['0.9.0'];
-    }
-    if (type === 'wallet_supportedSpecs') {
-      return supportsStrk20 ? [MIN_STRK20_WALLET_API_VERSION] : [];
-    }
-    if (type === 'wallet_requestChainId') {
-      return '0x534e5f5345504f4c4941';
-    }
-    if (type === 'wallet_strk20Balances') {
-      if (notRegistered) {
-        const err: any = new Error('An error occurred (NOT_REGISTERED)');
-        err.code = 118;
-        throw err;
-      }
-      return [{ token: '0x1', balance: '0x0' }];
-    }
-    return [];
-  };
-  return {
-    isConnected: true,
-    rawWallet: { request },
-  };
-}
-
-describe('checkPrivateReceivingStatus', () => {
-  it('returns UNSUPPORTED for a non-STRK20 wallet', async () => {
-    const status = await checkPrivateReceivingStatus(makeWallet({ supportsStrk20: false }));
-    expect(status).toBe('UNSUPPORTED');
+describe('isAccountFinalizingError', () => {
+  it('recognizes finalization messages as a wait-and-retry condition', () => {
+    expect(isAccountFinalizingError({ message: 'Account is not finalized yet' })).toBe(true);
+    expect(isAccountFinalizingError({ message: 'Cannot be registered yet — insufficient block finality' })).toBe(true);
+    expect(isAccountFinalizingError({ message: 'Stale block, reorg detected' })).toBe(true);
   });
 
-  it('returns ENABLED when registered', async () => {
-    const status = await checkPrivateReceivingStatus(makeWallet({ supportsStrk20: true, notRegistered: false }));
-    expect(status).toBe('ENABLED');
-  });
-
-  it('returns NOT_ENABLED when the wallet reports NOT_REGISTERED', async () => {
-    const status = await checkPrivateReceivingStatus(makeWallet({ supportsStrk20: true, notRegistered: true }));
-    expect(status).toBe('NOT_ENABLED');
+  it('does not misclassify a plain NOT_REGISTERED or unrelated error', () => {
+    expect(isAccountFinalizingError({ message: 'An error occurred (NOT_REGISTERED)' })).toBe(false);
+    expect(isAccountFinalizingError({ message: 'Insufficient private balance' })).toBe(false);
+    expect(isAccountFinalizingError({ code: 113 })).toBe(false);
   });
 });
 
-describe('enablePrivateReceiving', () => {
-  it('reports UNSUPPORTED honestly for a non-STRK20 wallet', async () => {
-    const res = await enablePrivateReceiving(makeWallet({ supportsStrk20: false }));
-    expect(res.status).toBe('UNSUPPORTED');
-    expect(res.message).toContain("isn't supported by this wallet yet");
+describe('Wallet API version gating', () => {
+  function walletWithApi(version: string) {
+    return {
+      isConnected: true,
+      rawWallet: {
+        request: async ({ type }: { type: string }) => {
+          if (type === 'wallet_supportedWalletApi') return [version];
+          if (type === 'wallet_supportedSpecs') return [];
+          if (type === 'wallet_requestChainId') return '0x534e5f5345504f4c4941';
+          return [];
+        },
+      },
+    };
+  }
+
+  it('accepts 0.10 as STRK20-capable', async () => {
+    const s = await getWalletApiStatus(walletWithApi(MIN_STRK20_WALLET_API_VERSION));
+    expect(s.supportsStrk20).toBe(true);
   });
 
-  it('reports ALREADY_ENABLED for a registered wallet', async () => {
-    const res = await enablePrivateReceiving(makeWallet({ supportsStrk20: true, notRegistered: false }));
-    expect(res.status).toBe('ALREADY_ENABLED');
+  it('accepts 0.10.3 as STRK20-capable', async () => {
+    const s = await getWalletApiStatus(walletWithApi('0.10.3'));
+    expect(s.supportsStrk20).toBe(true);
   });
 
-  it('reports NEEDS_FIRST_SHIELD for an unregistered wallet without faking registration', async () => {
-    const res = await enablePrivateReceiving(makeWallet({ supportsStrk20: true, notRegistered: true }));
-    expect(res.status).toBe('NEEDS_FIRST_SHIELD');
-    expect(res.message.toLowerCase()).toContain('first time you shield');
+  it('rejects 0.9.x as not STRK20-capable', async () => {
+    const s = await getWalletApiStatus(walletWithApi('0.9.5'));
+    expect(s.supportsStrk20).toBe(false);
   });
 });
