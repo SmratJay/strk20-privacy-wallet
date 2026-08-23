@@ -10,9 +10,14 @@ import { useNetwork } from '@/context/NetworkContext';
 import {
   strk20WalletApiService,
   WalletApiStatus,
+  WalletBalancePermission,
   translateWalletError,
 } from '@/services/strk20WalletApiService';
-import { Strk20WalletLaneGate, isWalletLaneReady } from '@/components/terminal/Strk20WalletLaneGate';
+import {
+  Strk20WalletLaneGate,
+  isWalletLaneReady,
+  PrivateBalanceAccessNote,
+} from '@/components/terminal/Strk20WalletLaneGate';
 
 interface SendTabProps {
   balances: ShieldedBalance[];
@@ -20,6 +25,8 @@ interface SendTabProps {
   initialRecipient?: string;
   initialTokenSymbol?: string;
   initialAmount?: string;
+  privateBalancePermission?: WalletBalancePermission;
+  onRequestPrivateBalanceAccess?: () => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, recipient: string) => void;
 }
 
@@ -38,6 +45,8 @@ export const SendTab: React.FC<SendTabProps> = ({
   initialRecipient = '',
   initialTokenSymbol = '',
   initialAmount = '',
+  privateBalancePermission = 'UNKNOWN',
+  onRequestPrivateBalanceAccess,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -172,7 +181,7 @@ export const SendTab: React.FC<SendTabProps> = ({
         setPhase('SUBMITTED');
       }
     } catch (err: any) {
-      const t = translateWalletError(err);
+      const t = translateWalletError(err, { asset: selectedToken.symbol });
       setError(t.userMessage);
       setPhase('FAILED');
     }
@@ -201,6 +210,10 @@ export const SendTab: React.FC<SendTabProps> = ({
 
       {ready && (
         <form onSubmit={handleSend} className="space-y-4">
+          <PrivateBalanceAccessNote
+            permission={privateBalancePermission}
+            onRequest={onRequestPrivateBalanceAccess ?? (() => {})}
+          />
           <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
             <div className="flex items-center justify-between text-xs text-zinc-400">
               <span>SELECT ASSET & AMOUNT</span>

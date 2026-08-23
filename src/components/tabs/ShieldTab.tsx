@@ -9,13 +9,20 @@ import { useNetwork } from '@/context/NetworkContext';
 import {
   strk20WalletApiService,
   WalletApiStatus,
+  WalletBalancePermission,
   translateWalletError,
 } from '@/services/strk20WalletApiService';
-import { Strk20WalletLaneGate, isWalletLaneReady } from '@/components/terminal/Strk20WalletLaneGate';
+import {
+  Strk20WalletLaneGate,
+  isWalletLaneReady,
+  PrivateBalanceAccessNote,
+} from '@/components/terminal/Strk20WalletLaneGate';
 
 interface ShieldTabProps {
   balances: ShieldedBalance[];
   wallet: any;
+  privateBalancePermission?: WalletBalancePermission;
+  onRequestPrivateBalanceAccess?: () => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string) => void;
 }
 
@@ -28,7 +35,13 @@ type TxPhase =
   | 'COMPLETE'
   | 'FAILED';
 
-export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSuccess }) => {
+export const ShieldTab: React.FC<ShieldTabProps> = ({
+  balances,
+  wallet,
+  privateBalancePermission = 'UNKNOWN',
+  onRequestPrivateBalanceAccess,
+  onSuccess,
+}) => {
   const { currentNetwork } = useNetwork();
   const [selectedToken, setSelectedToken] = useState<TokenInfo>(currentNetwork.tokens[0]);
   const [amount, setAmount] = useState('');
@@ -115,7 +128,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
         setPhase('SUBMITTED');
       }
     } catch (err: any) {
-      const t = translateWalletError(err);
+      const t = translateWalletError(err, { asset: selectedToken.symbol });
       setError(t.userMessage);
       setPhase('FAILED');
     }
@@ -144,6 +157,10 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ balances, wallet, onSucces
 
       {ready && (
         <form onSubmit={handleShield} className="space-y-4">
+          <PrivateBalanceAccessNote
+            permission={privateBalancePermission}
+            onRequest={onRequestPrivateBalanceAccess ?? (() => {})}
+          />
           <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
             <div className="flex items-center justify-between text-xs text-zinc-400">
               <span>SELECT ASSET & AMOUNT</span>

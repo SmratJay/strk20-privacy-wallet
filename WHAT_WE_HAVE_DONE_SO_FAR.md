@@ -1179,3 +1179,24 @@ Two intentionally separate STRK20 lanes now exist:
 #### ✅ PEL isolation confirmed
 * `strk20SdkService.openPerpPosition` still uses `.computeAndInvoke()` targeting `PELPerpsSTRK20Bridge` — untouched.
 * No changes to `PELPerpsCore`, `PELPerpsSTRK20Bridge`, `PELLiquidityVault`, insurance, oracle, keeper, Rust risk engine, circuits, or verifiers.
+
+---
+
+## 📅 Sunday, August 23, 2026 — Private-balance permission + multi-asset fix
+
+### 🔴 [BIG CHANGE] — Fixed the repeated Ready "Share private balances" popup
+* **Root cause:** `terminal/page.tsx` polled `refreshBalances()` every 12s, which called `wallet_strk20Balances` → Ready re-requested the "Share private balances" consent on every poll.
+* **Fix:** split `refreshPublicBalances()` (polls on the 12s timer, on-chain RPC only — no wallet permission UI) from `refreshPrivateBalances()` (explicit only).
+* Private balances are now read only: after explicit user grant, after a successful Shield/Private Send/Unshield, or on an explicit "Refresh private" button.
+
+### 🔴 [BIG CHANGE] — Session-level private-balance permission
+* New session state `UNKNOWN / GRANTED / DENIED` in `terminal/page.tsx` (in-memory only — no viewing keys, notes, or balances persisted).
+* `wallet_getPermissions` inspected (official Wallet API): it only exposes `"accounts"` — Ready's "Share private balances" consent is wallet-internal, so the app tracks it with a session state and only triggers the prompt on explicit user action.
+* UX: "Share private balances" button only on explicit request; "Private balance access not granted." after denial — no retry loop, no polling, React-Strict-Mode safe.
+
+### 🟢 [SMALL CHANGE] — Generic STRK20 lane is multi-asset
+* `strk20WalletApiService.shield / privateTransfer / unshield` take token addresses (already generic); token selector uses the configured network tokens (STRK, USDC, …).
+* Unsupported assets fail closed with "This asset (SYMBOL) is not supported by the connected STRK20 privacy wallet/pool." — no substitution.
+
+### ✅ PEL isolation
+* PEL remains USDC-only (`strk20SdkService.openPerpPosition` → `computeAndInvoke` → bridge); no PEL contract or perp code changed.

@@ -58,6 +58,14 @@ export interface WalletActionReceipt {
   transactionHash: string;
 }
 
+/**
+ * Session-level private-balance access state. This is the app's memory of whether the
+ * connected wallet's "share private balances" consent has been granted for the current
+ * wallet session. It is IN-MEMORY only — never persisted (no viewing keys, notes, or
+ * balances are stored).
+ */
+export type WalletBalancePermission = 'UNKNOWN' | 'GRANTED' | 'DENIED';
+
 // ─── Capability helpers ───────────────────────────────────────────────────────
 
 /** True when a "0.10.x"-style version string is >= the minimum STRK20 Wallet API version. */
@@ -163,6 +171,21 @@ export async function getWalletApiStatus(wallet: any): Promise<WalletApiStatus> 
 
 // ─── Private balances ─────────────────────────────────────────────────────────
 
+/**
+ * Query the wallet's current Wallet API permissions (official `wallet_getPermissions`).
+ * The standard only exposes "accounts"; Ready's "share private balances" consent is
+ * wallet-internal and is tracked by the app's session `WalletBalancePermission` state.
+ */
+export async function getWalletPermissions(wallet: any): Promise<string[]> {
+  const provider = requireReadyProvider(wallet);
+  try {
+    const res = (await provider.request({ type: 'wallet_getPermissions' })) as unknown;
+    return Array.isArray(res) ? res.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Query the user's private balances from the privacy wallet (authoritative). */
 export async function getPrivateBalances(
   wallet: any,
@@ -184,7 +207,7 @@ export async function getPrivateBalances(
 
 // ─── Actions (Wallet API owns proving + submission) ───────────────────────────
 
-/** Shield: deposit public USDC into the privacy pool as a private note. */
+/** Shield: deposit a supported public asset into the privacy pool as a private note. */
 export async function shield(
   wallet: any,
   token: string,
@@ -296,8 +319,17 @@ export interface TranslatedWalletError {
 /**
  * Map Wallet API / JSON-RPC errors to honest UX messages.
  * Codes from starknet-specs wallet-api errors (NOT_REGISTERED=118, …).
+ *
+ * When `opts.asset` is provided and the wallet rejects the payload with an invalid
+ * payload / unknown error, the generic lane fails closed with the explicit
+ * asset-unsupported message — the app constructs well-formed requests, so a rejection
+ * of a configured token is surfaced as an unsupported asset (never silently
+ * substituted with another token).
  */
-export function translateWalletError(err: unknown): TranslatedWalletError {
+export function translateWalletError(
+  err: unknown,
+  opts?: { asset?: string },
+): TranslatedWalletError {
   const anyErr = err as { code?: number; message?: string; data?: unknown };
   const code = typeof anyErr?.code === 'number' ? anyErr.code : undefined;
   switch (code) {
@@ -321,10 +353,12 @@ export function translateWalletError(err: unknown): TranslatedWalletError {
     case 113:
       return { code, userMessage: 'You rejected the operation in your wallet.' };
     case 114:
-      return {
-        code,
-        userMessage: 'The wallet rejected the request payload as invalid.',
-      };
+      return opts?.asset
+        ? {
+            code,
+            userMessage: `This asset (${opts.asset}) is not supported by the connected STRK20 privacy wallet/pool.`,
+          }
+        : { code, userMessage: 'The wallet rejected the request payload as invalid.' };
     case 162:
       return {
         code,
@@ -334,7 +368,10 @@ export function translateWalletError(err: unknown): TranslatedWalletError {
     default:
       return {
         code,
-        userMessage: anyErr?.message || 'Unknown wallet error.',
+        userMessage:
+          opts?.asset && (code === 163 || code === undefined)
+            ? `This asset (${opts.asset}) is not supported by the connected STRK20 privacy wallet/pool.`
+            : anyErr?.message || 'Unknown wallet error.',
       };
   }
 }
@@ -342,6 +379,7 @@ export function translateWalletError(err: unknown): TranslatedWalletError {
 export const strk20WalletApiService = {
   resolveWalletApiProvider,
   getWalletApiStatus,
+  getWalletPermissions,
   getPrivateBalances,
   shield,
   privateTransfer,

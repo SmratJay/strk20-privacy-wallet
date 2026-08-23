@@ -145,25 +145,35 @@ function TerminalContent() {
     }
   };
 
-  // Refresh public + private balances across all supported tokens.
-  // Public balances come from the RPC; PRIVATE balances come from the privacy wallet
-  // (Wallet API lane) — never from localStorage, never fabricated.
-  const refreshBalances = useCallback(async () => {
+  // ── Private-balance permission (session-only) ────────────────────────────────
+  // Ready gates wallet_strk20Balances behind a "Share private balances" consent.
+  // We track it in-memory for the current wallet session and NEVER poll private
+  // balances — only read them after explicit grant / explicit refresh / a successful
+  // shield/send/unshield.
+  const [privateBalancePermission, setPrivateBalancePermission] = useState<
+    'UNKNOWN' | 'GRANTED' | 'DENIED'
+  >('UNKNOWN');
+
+  const resetBalances = useCallback(() => {
+    setBalances(
+      currentNetwork.tokens.map((token) => ({
+        token,
+        publicBalance: 0n,
+        publicBalanceAvailable: true,
+        shieldedBalance: 0n,
+        shieldedBalanceAvailable: false,
+        pendingNotesCount: 0,
+        privacyApiSupported: false,
+      }))
+    );
+  }, [currentNetwork]);
+
+  // PUBLIC balances: safe to poll (on-chain RPC, no wallet permission UI).
+  const refreshPublicBalances = useCallback(async () => {
     if (!wallet.isConnected || !wallet.address) {
-      setBalances(
-        currentNetwork.tokens.map((token) => ({
-          token,
-          publicBalance: 0n,
-          publicBalanceAvailable: true,
-          shieldedBalance: 0n,
-          shieldedBalanceAvailable: false,
-          pendingNotesCount: 0,
-          privacyApiSupported: false,
-        }))
-      );
+      resetBalances();
       return;
     }
-
     setIsLoadingBalances(true);
     try {
       const results = await privacyService.fetchBalances(
@@ -171,43 +181,88 @@ function TerminalContent() {
         wallet.walletAccount,
         currentNetwork
       );
-
-      // Merge private balances from the privacy wallet when the Wallet API lane is READY.
-      let walletPrivate: Record<string, bigint> = {};
-      try {
-        const status = await strk20WalletApiService.getWalletApiStatus(wallet);
-        if (status.state === 'READY') {
-          const entries = await strk20WalletApiService.getPrivateBalances(
-            wallet,
-            currentNetwork.tokens.map((t) => t.address),
-          );
-          for (const e of entries) {
-            if (e.token) walletPrivate[e.token.toLowerCase()] = e.balance;
-          }
-        }
-      } catch {
-        walletPrivate = {};
-      }
-
-      const merged = results.map((b) => {
-        const walletBal = walletPrivate[b.token.address.toLowerCase()];
-        if (walletBal !== undefined) {
-          return { ...b, shieldedBalance: walletBal, shieldedBalanceAvailable: true };
-        }
-        return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
+      // Preserve wallet-derived private balances across public-only refreshes.
+      setBalances((prev) => {
+        const prevByAddr = new Map(
+          prev.map((b) => [b.token.address.toLowerCase(), b] as const),
+        );
+        return results.map((b) => {
+          const prior = prevByAddr.get(b.token.address.toLowerCase());
+          return {
+            ...b,
+            shieldedBalance: prior?.shieldedBalance ?? 0n,
+            shieldedBalanceAvailable: prior?.shieldedBalanceAvailable ?? false,
+          };
+        });
       });
-
-      setBalances(merged);
     } catch (err) {
-      console.error('Failed to fetch balances:', err);
+      console.error('Failed to fetch public balances:', err);
     } finally {
       setIsLoadingBalances(false);
     }
-  }, [wallet.isConnected, wallet.address, wallet.walletAccount, currentNetwork]);
+  }, [wallet.isConnected, wallet.address, wallet.walletAccount, currentNetwork, resetBalances]);
 
+  // PRIVATE balances: only read when the wallet has granted access this session.
+  const refreshPrivateBalances = useCallback(async () => {
+    if (privateBalancePermission !== 'GRANTED') return;
+    try {
+      const status = await strk20WalletApiService.getWalletApiStatus(wallet);
+      if (status.state !== 'READY') return;
+      const entries = await strk20WalletApiService.getPrivateBalances(
+        wallet,
+        currentNetwork.tokens.map((t) => t.address),
+      );
+      const walletPrivate = new Map(entries.map((e) => [e.token.toLowerCase(), e.balance]));
+      setBalances((prev) =>
+        prev.map((b) => {
+          const bal = walletPrivate.get(b.token.address.toLowerCase());
+          if (bal !== undefined) {
+            return { ...b, shieldedBalance: bal, shieldedBalanceAvailable: true };
+          }
+          return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
+        }),
+      );
+    } catch {
+      // Leave the current state; never fabricate a balance.
+    }
+  }, [wallet, privateBalancePermission, currentNetwork]);
+
+  // Explicit user action: request the wallet to share private balances. This is the
+  // ONLY place the "Share private balances" consent is triggered.
+  const requestPrivateBalanceAccess = useCallback(async () => {
+    if (!wallet.isConnected) return;
+    try {
+      const entries = await strk20WalletApiService.getPrivateBalances(
+        wallet,
+        currentNetwork.tokens.map((t) => t.address),
+      );
+      setPrivateBalancePermission('GRANTED');
+      const walletPrivate = new Map(entries.map((e) => [e.token.toLowerCase(), e.balance]));
+      setBalances((prev) =>
+        prev.map((b) => {
+          const bal = walletPrivate.get(b.token.address.toLowerCase());
+          if (bal !== undefined) {
+            return { ...b, shieldedBalance: bal, shieldedBalanceAvailable: true };
+          }
+          return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
+        }),
+      );
+    } catch (err: any) {
+      const t = strk20WalletApiService.translateWalletError(err);
+      // User refused the balance-sharing consent -> remember for the session.
+      setPrivateBalancePermission(t.code === 113 ? 'DENIED' : 'UNKNOWN');
+    }
+  }, [wallet, currentNetwork]);
+
+  // Initial load: public balances only (no wallet permission prompt on render).
   useEffect(() => {
-    refreshBalances();
-  }, [refreshBalances]);
+    refreshPublicBalances();
+  }, [refreshPublicBalances]);
+
+  // New wallet session -> reset the session-level private-balance permission.
+  useEffect(() => {
+    setPrivateBalancePermission('UNKNOWN');
+  }, [wallet.isConnected, wallet.address]);
 
   // Auto-sync the app network to the connected wallet's chain. The whole deployed
   // protocol (STRK20 pool, PEL contracts, test USDC) is Sepolia-only; without this,
@@ -227,13 +282,14 @@ function TerminalContent() {
     }
   }, [wallet.isConnected, wallet.chainId, setNetworkId]);
 
-  // Auto-refresh balances so newly received funds (e.g. Sepolia USDC) appear without
-  // a manual refresh.
+  // Auto-refresh PUBLIC balances so newly received funds (e.g. Sepolia USDC) appear
+  // without a manual refresh. PRIVATE balances are NEVER polled — the wallet's
+  // "share private balances" consent is only requested on explicit user action.
   useEffect(() => {
     if (!wallet.isConnected) return;
-    const t = setInterval(refreshBalances, 12000);
+    const t = setInterval(refreshPublicBalances, 12000);
     return () => clearInterval(t);
-  }, [refreshBalances, wallet.isConnected]);
+  }, [refreshPublicBalances, wallet.isConnected]);
 
   const handleTxSuccess = (tx: PrivacyTransaction) => {
     const updated = [tx, ...transactions];
@@ -243,7 +299,11 @@ function TerminalContent() {
       title: `${tx.type} Transaction Confirmed`,
       description: `Tx: ${tx.txHash?.slice(0, 10)}... | Privacy: ${tx.privacyDetails}`,
     });
-    refreshBalances();
+    // Reconcile public + (if granted) private balances after a real transaction.
+    refreshPublicBalances();
+    if (privateBalancePermission === 'GRANTED') {
+      refreshPrivateBalances();
+    }
   };
 
   const handleSearchIntent = (query: string) => {
@@ -311,8 +371,12 @@ function TerminalContent() {
             <BalanceCards
               balances={balances}
               isLoading={isLoadingBalances}
-              onRefresh={refreshBalances}
+              onRefresh={refreshPublicBalances}
               onSelectAction={(action) => setActiveTab(action as PELTabType)}
+              wallet={wallet}
+              privateBalancePermission={privateBalancePermission}
+              onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
+              onRefreshPrivateBalances={refreshPrivateBalances}
             />
           )}
 
@@ -358,6 +422,8 @@ function TerminalContent() {
               <ShieldTab
                 balances={balances}
                 wallet={wallet}
+                privateBalancePermission={privateBalancePermission}
+                onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
                 onSuccess={(txHash, token, amount) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -381,6 +447,8 @@ function TerminalContent() {
                 initialRecipient={initialRecipient}
                 initialTokenSymbol={initialTokenSymbol}
                 initialAmount={initialAmount}
+                privateBalancePermission={privateBalancePermission}
+                onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
                 onSuccess={(txHash, token, amount, recipient) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -404,6 +472,8 @@ function TerminalContent() {
               <UnshieldTab
                 balances={balances}
                 wallet={wallet}
+                privateBalancePermission={privateBalancePermission}
+                onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
                 onSuccess={(txHash, token, amount, destination) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,

@@ -1,15 +1,20 @@
 'use client';
 
 import React from 'react';
-import { Shield, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, RefreshCw, Lock, Globe, Zap, Database } from 'lucide-react';
+import { Shield, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, RefreshCw, Lock, Globe, Eye } from 'lucide-react';
 import { ShieldedBalance } from '@/services/privacyService';
 import { formatTokenAmount } from '@/utils/formatters';
+import { WalletBalancePermission } from '@/services/strk20WalletApiService';
 
 interface BalanceCardsProps {
   balances: ShieldedBalance[];
   isLoading: boolean;
   onRefresh: () => void;
   onSelectAction: (tab: 'SHIELD' | 'SEND' | 'UNSHIELD' | 'SWAP', tokenSymbol?: string) => void;
+  wallet: any;
+  privateBalancePermission: WalletBalancePermission;
+  onRequestPrivateBalanceAccess: () => Promise<void>;
+  onRefreshPrivateBalances: () => Promise<void>;
 }
 
 export const BalanceCards: React.FC<BalanceCardsProps> = ({
@@ -17,8 +22,35 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
   isLoading,
   onRefresh,
   onSelectAction,
+  wallet,
+  privateBalancePermission,
+  onRequestPrivateBalanceAccess,
+  onRefreshPrivateBalances,
 }) => {
-  const totalShieldedNotes = balances.reduce((acc, b) => acc + (b.pendingNotesCount || 0), 0);
+  const [requestingAccess, setRequestingAccess] = React.useState(false);
+
+  const handleRequestAccess = async () => {
+    setRequestingAccess(true);
+    try {
+      await onRequestPrivateBalanceAccess();
+    } finally {
+      setRequestingAccess(false);
+    }
+  };
+
+  const handleRefreshPrivate = async () => {
+    setRequestingAccess(true);
+    try {
+      await onRefreshPrivateBalances();
+    } finally {
+      setRequestingAccess(false);
+    }
+  };
+
+  const connected = Boolean(wallet?.isConnected);
+  const walletReadyForLane =
+    privateBalancePermission === 'GRANTED';
+  const accessDenied = privateBalancePermission === 'DENIED';
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 font-mono">
@@ -34,26 +66,57 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-orrange-500 animate-pulse" />
                 <span>SHIELDED PRIVATE POOL</span>
               </span>
-              <p className="text-[10px] text-zinc-500 uppercase">Encrypted UTXO Notes • Stwo Substrate</p>
+              <p className="text-[10px] text-zinc-500 uppercase">Privacy wallet · Wallet API</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {totalShieldedNotes > 0 && (
-              <span className="text-[10px] px-2 py-0.5 bg-orrange-950/60 text-orrange-300 font-bold border border-orrange-500/40">
-                {totalShieldedNotes} {totalShieldedNotes === 1 ? 'NOTE' : 'NOTES'}
-              </span>
-            )}
             <button
               onClick={onRefresh}
               disabled={isLoading}
               className="p-1.5 text-zinc-400 hover:text-orrange-400 hover:bg-zinc-900 border border-zinc-800 transition-colors"
-              title="Refresh Balances"
+              title="Refresh Public Balances"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
+
+        {/* Private Balance Access Gate */}
+        {!connected ? (
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
+            Connect a Starknet wallet to view private STRK20 balances.
+          </div>
+        ) : accessDenied ? (
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
+            Private balance access not granted.
+          </div>
+        ) : !walletReadyForLane ? (
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between gap-2">
+            <span className="text-zinc-400">Private balances are read from your privacy wallet.</span>
+            <button
+              onClick={handleRequestAccess}
+              disabled={requestingAccess}
+              className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
+            >
+              {requestingAccess ? 'Requesting…' : 'Share private balances'}
+            </button>
+          </div>
+        ) : (
+          <div className="p-2.5 bg-zinc-900/60 border border-zinc-800 text-[10px] text-emerald-300 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5">
+              <Eye className="w-3 h-3" />
+              Private balance access granted for this session.
+            </span>
+            <button
+              onClick={handleRefreshPrivate}
+              disabled={requestingAccess}
+              className="px-2.5 py-1 text-[10px] font-bold uppercase text-orrange-400 hover:text-orrange-300 border border-orrange-500/30 hover:border-orrange-500/60 transition-colors cursor-pointer"
+            >
+              Refresh private
+            </button>
+          </div>
+        )}
 
         {/* Shielded Token Rows */}
         <div className="space-y-2">
@@ -79,7 +142,7 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
                 <div className="text-[9px] text-zinc-500 uppercase">
                   {b.shieldedBalanceAvailable
                     ? '[ 🔒 PRIVATE · FROM WALLET ]'
-                    : '[ PRIVACY WALLET REQUIRED ]'}
+                    : '[ PRIVATE BALANCE NOT READ ]'}
                 </div>
               </div>
             </div>

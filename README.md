@@ -272,6 +272,14 @@ privacy-enabled wallet (Wallet API >= 0.10, e.g. Ready)
 - Private balances come from `wallet_strk20Balances`; a wallet that is not STRK20-capable (or
   a wrong chain) fails closed with clear guidance.
 - The Wallet API adds its own fee action; deposit is two wallet prompts (approve + deposit).
+- **Multi-asset:** the generic lane supports any STRK20-compatible asset exposed by the
+  configured network tokens (e.g. STRK, USDC). The token selector is asset-agnostic; an asset
+  the connected wallet/pool rejects fails closed ("This asset is not supported…").
+- **Private-balance permission (no polling loop):** Ready gates `wallet_strk20Balances` behind
+  a "Share private balances" consent. The app tracks a session-only
+  `UNKNOWN / GRANTED / DENIED` state, only requests access on explicit user action, and never
+  polls private balances. Public balances poll on a 12s timer; private balances are read only
+  after grant, after a successful shield/send/unshield, or on explicit refresh.
 
 ### LANE B — PEL private perps (raw SDK → ComputeAndInvoke → PEL bridge → PEL Core)
 

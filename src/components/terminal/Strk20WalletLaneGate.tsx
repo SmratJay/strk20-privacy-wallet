@@ -77,3 +77,27 @@ export const Strk20WalletLaneGate: React.FC<{ status: WalletApiStatus | null; ch
 
 export const isWalletLaneReady = (status: WalletApiStatus | null): boolean =>
   status?.state === 'READY';
+
+/**
+ * Compact private-balance access note for the wallet lane tabs. Renders only when the
+ * wallet has not granted private-balance access this session; never auto-requests.
+ */
+export const PrivateBalanceAccessNote: React.FC<{
+  permission: 'UNKNOWN' | 'GRANTED' | 'DENIED';
+  onRequest: () => void;
+}> = ({ permission, onRequest }) => {
+  if (permission === 'GRANTED') return null;
+  return (
+    <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between gap-2">
+      <span>Private balance access not granted.</span>
+      {permission === 'UNKNOWN' && (
+        <button
+          onClick={onRequest}
+          className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
+        >
+          Share private balances
+        </button>
+      )}
+    </div>
+  );
+};
