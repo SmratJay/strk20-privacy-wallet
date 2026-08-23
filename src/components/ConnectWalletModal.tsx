@@ -9,9 +9,6 @@ import {
   AlertCircle, 
   RefreshCw, 
   Sparkles, 
-  ArrowRight,
-  ChevronDown,
-  ChevronUp,
   Wallet
 } from 'lucide-react';
 import { SupportedWalletMeta } from '@/hooks/useStarknetWallet';
@@ -20,7 +17,6 @@ interface ConnectWalletModalProps {
   isOpen: boolean;
   onClose: () => void;
   supportedWallets: SupportedWalletMeta[];
-  otherWallets?: any[];
   isConnecting: boolean;
   connectingWalletId: string | null;
   connectionError: string | null;
@@ -32,14 +28,12 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
   isOpen,
   onClose,
   supportedWallets,
-  otherWallets = [],
   isConnecting,
   connectingWalletId,
   connectionError,
   onSelectWallet,
   onRescan,
 }) => {
-  const [showOtherWallets, setShowOtherWallets] = useState(false);
   const [installPromptWallet, setInstallPromptWallet] = useState<SupportedWalletMeta | null>(null);
 
   if (!isOpen) return null;
@@ -71,14 +65,14 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                  Connect Wallet
+                  Connect Ready Wallet
                 </h3>
                 <span className="text-[10px] px-1.5 py-0.5 bg-zinc-900 text-zinc-400 border border-zinc-800 font-bold">
                   STARKNET
                 </span>
               </div>
               <p className="text-[11px] text-zinc-500 mt-0.5">
-                Select your preferred Starknet wallet to connect
+                Ready is the privacy-enabled Starknet wallet for STRK20.
               </p>
             </div>
           </div>
@@ -96,9 +90,11 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
         <div className="p-3 bg-zinc-900/70 border border-orrange-500/30 text-xs flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-orrange-400 shrink-0 mt-0.5" />
           <div className="text-[11px] text-zinc-300 leading-relaxed">
-            <span className="font-bold text-white uppercase mr-1">Ready Wallet Recommended:</span>
+            <span className="font-bold text-white uppercase mr-1">STRK20 Private Lane:</span>
             <span>
-              Supports native STRK20 zero-knowledge shielded transactions, confidential balances, and in-wallet proving.
+              Shield / private send / unshield run through the Ready Wallet's native Wallet API —
+              it performs proof generation and privacy setup in-wallet. Other Starknet wallets are
+              not yet supported for private features.
             </span>
           </div>
         </div>
@@ -134,10 +130,10 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
           </div>
         )}
 
-        {/* 3 Core Supported Wallets List */}
+        {/* Ready Wallet List */}
         <div className="space-y-2.5">
           <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-between">
-            <span>Supported Starknet Wallets</span>
+            <span>Supported STRK20 Wallet</span>
             {onRescan && (
               <button
                 onClick={onRescan}
@@ -166,27 +162,11 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
                   } ${isTargetConnecting ? 'ring-1 ring-orrange-500 bg-zinc-900' : ''}`}
                 >
                   <div className="flex items-center gap-3.5 min-w-0">
-                    {/* Wallet Custom Icon Badge */}
-                    <div className={`w-10 h-10 flex items-center justify-center border shrink-0 transition-transform group-hover:scale-105 ${
-                      wallet.id === 'ready'
-                        ? 'bg-orrange-500/10 border-orrange-500/40 text-orrange-400'
-                        : wallet.id === 'braavos'
-                        ? 'bg-sky-500/10 border-sky-500/40 text-sky-400'
-                        : 'bg-purple-500/10 border-purple-500/40 text-purple-400'
-                    }`}>
-                      {wallet.id === 'ready' ? (
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 2.18l7 3.89v4.93c0 4.54-3.05 8.79-7 9.87-3.95-1.08-7-5.33-7-9.87V8.07l7-3.89zM11 7v6h4v-2h-2V7h-2z" />
-                        </svg>
-                      ) : wallet.id === 'braavos' ? (
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.24l6 2.25v4.6c0 3.99-2.61 7.74-6 8.77-3.39-1.03-6-4.78-6-8.77V6.49l6-2.25zM8 9h4.5a2.5 2.5 0 012.5 2.5v.5a2.5 2.5 0 01-2.5 2.5H8V9zm2 1.8v1.4h2.5a.7.7 0 00.7-.7.7.7 0 00-.7-.7H10z" />
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M6 3h4l8 12v6h-4L6 9V3zm8 0h4v4l-4 6-4-6V3h4zM6 15l4 6H6v-6z" />
-                        </svg>
-                      )}
+                    {/* Ready Icon Badge */}
+                    <div className="w-10 h-10 flex items-center justify-center border shrink-0 transition-transform group-hover:scale-105 bg-orrange-500/10 border-orrange-500/40 text-orrange-400">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 2.18l7 3.89v4.93c0 4.54-3.05 8.79-7 9.87-3.95-1.08-7-5.33-7-9.87V8.07l7-3.89zM11 7v6h4v-2h-2V7h-2z" />
+                      </svg>
                     </div>
 
                     {/* Wallet Details */}
@@ -196,13 +176,7 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
                           {wallet.name}
                         </span>
                         {wallet.badge && (
-                          <span className={`text-[9px] font-bold px-1.5 py-0.2 border shrink-0 ${
-                            wallet.badgeType === 'recommended'
-                              ? 'bg-orrange-500/20 text-orrange-400 border-orrange-500/40'
-                              : wallet.badgeType === 'smart'
-                              ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                              : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                          }`}>
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 border shrink-0 bg-orrange-500/20 text-orrange-400 border-orrange-500/40">
                             {wallet.badge}
                           </span>
                         )}
@@ -236,36 +210,24 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
               );
             })}
           </div>
-        </div>
 
-        {/* Other Detected Wallets Collapsible */}
-        {otherWallets && otherWallets.length > 0 && (
-          <div className="pt-2 border-t border-zinc-900 space-y-2">
-            <button
-              onClick={() => setShowOtherWallets(!showOtherWallets)}
-              className="w-full flex items-center justify-between text-[10px] font-bold text-zinc-500 hover:text-zinc-400 uppercase tracking-widest transition-colors cursor-pointer py-1"
+          <p className="text-[10px] text-zinc-600 leading-relaxed pt-1">
+            STRK20 private transfers require both parties to use a privacy-enabled wallet. If Ready
+            isn't detected, install the extension below and click Rescan.
+          </p>
+          {supportedWallets[0]?.chromeUrl && (
+            <a
+              href={supportedWallets[0].chromeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider transition-colors"
             >
-              <span>Other Detected Wallets ({otherWallets.length})</span>
-              {showOtherWallets ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            </button>
-
-            {showOtherWallets && (
-              <div className="space-y-1.5 animate-in fade-in duration-100">
-                {otherWallets.map((other) => (
-                  <button
-                    key={other.id}
-                    onClick={() => onSelectWallet(other)}
-                    disabled={isConnecting}
-                    className="w-full p-2.5 bg-zinc-900/40 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-700 flex items-center justify-between text-xs transition-colors cursor-pointer"
-                  >
-                    <span className="font-bold text-zinc-300">{other.name}</span>
-                    <span className="text-[10px] text-emerald-400 font-bold">Detected →</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+              <Sparkles className="w-3 h-3 text-orrange-400" />
+              <span>Install Ready from the Chrome Web Store</span>
+              <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          )}
+        </div>
 
         {/* Footer info & help link */}
         <div className="pt-3 border-t border-zinc-900 text-[10px] text-zinc-500 flex items-center justify-between">

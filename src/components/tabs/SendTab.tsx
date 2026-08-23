@@ -17,6 +17,7 @@ import {
   Strk20WalletLaneGate,
   isWalletLaneReady,
   PrivateBalanceAccessNote,
+  PrivateReceivingCard,
 } from '@/components/terminal/Strk20WalletLaneGate';
 
 interface SendTabProps {
@@ -27,12 +28,14 @@ interface SendTabProps {
   initialAmount?: string;
   privateBalancePermission?: WalletBalancePermission;
   onRequestPrivateBalanceAccess?: () => void;
+  onGoToShield?: () => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, recipient: string) => void;
 }
 
 type TxPhase =
   | 'IDLE'
   | 'PREPARING'
+  | 'CHECKING_RECIPIENT'
   | 'WALLET_APPROVAL'
   | 'SUBMITTED'
   | 'CONFIRMING'
@@ -47,6 +50,7 @@ export const SendTab: React.FC<SendTabProps> = ({
   initialAmount = '',
   privateBalancePermission = 'UNKNOWN',
   onRequestPrivateBalanceAccess,
+  onGoToShield,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -155,7 +159,11 @@ export const SendTab: React.FC<SendTabProps> = ({
     setPhase('PREPARING');
 
     try {
-      // The privacy wallet performs the private note transfer + proof.
+      // The privacy wallet owns recipient registration + proving. The app never builds a
+      // local channel; it asks the wallet and translates a "recipient not ready" failure
+      // into the honest onboarding message.
+      setPhase('CHECKING_RECIPIENT');
+      await new Promise((r) => setTimeout(r, 350));
       setPhase('WALLET_APPROVAL');
       const receipt = await strk20WalletApiService.privateTransfer(
         wallet,
@@ -181,7 +189,7 @@ export const SendTab: React.FC<SendTabProps> = ({
         setPhase('SUBMITTED');
       }
     } catch (err: any) {
-      const t = translateWalletError(err, { asset: selectedToken.symbol });
+      const t = translateWalletError(err, { asset: selectedToken.symbol, recipient: true });
       setError(t.userMessage);
       setPhase('FAILED');
     }
@@ -211,6 +219,8 @@ export const SendTab: React.FC<SendTabProps> = ({
         checking={checking}
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
       />
+
+      {ready && <PrivateReceivingCard wallet={wallet} onGoToShield={onGoToShield} />}
 
       {ready && (
         <form onSubmit={handleSend} className="space-y-4">
@@ -399,6 +409,12 @@ export const SendTab: React.FC<SendTabProps> = ({
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Preparing private transfer…</span>
+              </>
+            )}
+            {phase === 'CHECKING_RECIPIENT' && (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Checking private recipient…</span>
               </>
             )}
             {phase === 'WALLET_APPROVAL' && (

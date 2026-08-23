@@ -189,7 +189,6 @@ export default function Home() {
         isOpen={wallet.isConnectModalOpen}
         onClose={wallet.closeConnectModal}
         supportedWallets={wallet.supportedWallets}
-        otherWallets={wallet.otherWallets}
         isConnecting={wallet.isConnecting}
         connectingWalletId={wallet.connectingWalletId}
         connectionError={wallet.error}

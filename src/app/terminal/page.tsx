@@ -424,6 +424,7 @@ function TerminalContent() {
                 wallet={wallet}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
+                onGoToShield={() => setActiveTab('SHIELD')}
                 onSuccess={(txHash, token, amount) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -449,6 +450,7 @@ function TerminalContent() {
                 initialAmount={initialAmount}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
+                onGoToShield={() => setActiveTab('SHIELD')}
                 onSuccess={(txHash, token, amount, recipient) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -474,6 +476,7 @@ function TerminalContent() {
                 wallet={wallet}
                 privateBalancePermission={privateBalancePermission}
                 onRequestPrivateBalanceAccess={requestPrivateBalanceAccess}
+                onGoToShield={() => setActiveTab('SHIELD')}
                 onSuccess={(txHash, token, amount, destination) => {
                   handleTxSuccess({
                     id: `tx_${Date.now()}`,
@@ -532,7 +535,6 @@ function TerminalContent() {
         isOpen={wallet.isConnectModalOpen}
         onClose={wallet.closeConnectModal}
         supportedWallets={wallet.supportedWallets}
-        otherWallets={wallet.otherWallets}
         isConnecting={wallet.isConnecting}
         connectingWalletId={wallet.connectingWalletId}
         connectionError={wallet.error}

@@ -70,9 +70,12 @@ export type WalletBalancePermission = 'UNKNOWN' | 'GRANTED' | 'DENIED';
 
 /** True when a "0.10.x"-style version string is >= the minimum STRK20 Wallet API version. */
 function isStrk20CapableVersion(version: string): boolean {
-  const majorMinor = version.split('-')[0].split('.').slice(0, 2).join('.');
-  const parsed = Number.parseFloat(majorMinor);
-  return !Number.isNaN(parsed) && parsed >= Number.parseFloat(MIN_STRK20_WALLET_API_VERSION);
+  const [minMajor, minMinor] = MIN_STRK20_WALLET_API_VERSION.split('.').map(Number);
+  const cleaned = version.split('-')[0].split('.');
+  const major = Number.parseInt(cleaned[0] ?? '0', 10);
+  const minor = Number.parseInt(cleaned[1] ?? '0', 10);
+  if (major !== minMajor) return major > minMajor;
+  return minor >= minMinor;
 }
 
 function toHexFelt(value: bigint): string {
@@ -325,13 +328,24 @@ export interface TranslatedWalletError {
  * asset-unsupported message — the app constructs well-formed requests, so a rejection
  * of a configured token is surfaced as an unsupported asset (never silently
  * substituted with another token).
+ *
+ * When `opts.recipient` is true (private-send context), recipient-readiness failures —
+ * the recipient never enabled STRK20 private receiving — are translated to the honest
+ * recipient message instead of a raw protocol error. This is a protocol requirement:
+ * a private note can only be created for a recipient whose viewing key is registered.
  */
 export function translateWalletError(
   err: unknown,
-  opts?: { asset?: string },
+  opts?: { asset?: string; recipient?: boolean },
 ): TranslatedWalletError {
   const anyErr = err as { code?: number; message?: string; data?: unknown };
   const code = typeof anyErr?.code === 'number' ? anyErr.code : undefined;
+
+  // Recipient-readiness: only meaningful when sending privately to another address.
+  if (opts?.recipient && isRecipientReadinessError(err)) {
+    return { code, userMessage: PRIVATE_RECEIVING_RECIPIENT_MESSAGE };
+  }
+
   switch (code) {
     case 118:
       return {
@@ -381,9 +395,143 @@ export const strk20WalletApiService = {
   getWalletApiStatus,
   getWalletPermissions,
   getPrivateBalances,
+  checkPrivateReceivingStatus,
+  enablePrivateReceiving,
+  isRecipientReadinessError,
   shield,
   privateTransfer,
   unshield,
   waitForStrk20Confirmation,
   translateWalletError,
 };
+
+// ─── Private-receiving onboarding (wallet-owned) ──────────────────────────────
+
+export type PrivateReceivingStatus = 'UNKNOWN' | 'ENABLED' | 'NOT_ENABLED' | 'UNSUPPORTED';
+
+export type EnablePrivateReceivingResult = {
+  status: 'ALREADY_ENABLED' | 'NEEDS_FIRST_SHIELD' | 'UNSUPPORTED' | 'ERROR';
+  message: string;
+};
+
+/**
+ * Check whether the connected wallet is registered for STRK20 private receiving.
+ *
+ * Registration ("Enable private receiving") is wallet-owned: the wallet sets a viewing
+ * key on-chain. The Wallet API exposes no standalone "register recipient" RPC — the
+ * wallet registers the user transparently on their first STRK20 action (per the spec:
+ * "Registration into the pool is transparent"). We therefore probe registration with a
+ * read (wallet_strk20Balances) and translate the official NOT_REGISTERED (118) code.
+ *
+ * This is only ever called on explicit user action (never on render) so the wallet's
+ * private-balance consent prompt is not spam-triggered.
+ */
+export async function checkPrivateReceivingStatus(wallet: any): Promise<PrivateReceivingStatus> {
+  const provider = resolveWalletApiProvider(wallet);
+  if (!provider || !wallet?.isConnected) return 'UNKNOWN';
+
+  // Capability gate: only a STRK20-capable Wallet API ≥ 0.10 wallet can onboard.
+  try {
+    const status = await getWalletApiStatus(wallet);
+    if (!status.supportsStrk20) return 'UNSUPPORTED';
+  } catch {
+    return 'UNKNOWN';
+  }
+
+  // Probe registration. Success => viewing key registered. NOT_REGISTERED => not onboarded.
+  try {
+    await provider.request({ type: 'wallet_strk20Balances', params: { tokens: [] } });
+    return 'ENABLED';
+  } catch (err: any) {
+    if (typeof err?.code === 'number' && err.code === 118) return 'NOT_ENABLED';
+    return 'UNKNOWN';
+  }
+}
+
+/**
+ * Trigger the connected wallet's STRK20 onboarding so the user can receive private
+ * transfers. Honest by construction:
+ *  - A non-STRK20 wallet is reported as UNSUPPORTED (never faked into the private lane).
+ *  - A registered wallet is ALREADY_ENABLED.
+ *  - An unregistered wallet reports NEEDS_FIRST_SHIELD: the Wallet API has no standalone
+ *    register RPC, so the wallet completes registration on the user's first Shield
+ *    (a deposit). We never fabricate a "registered recipient" or fake a local channel.
+ */
+export async function enablePrivateReceiving(wallet: any): Promise<EnablePrivateReceivingResult> {
+  const current = await checkPrivateReceivingStatus(wallet);
+  if (current === 'UNSUPPORTED') {
+    return {
+      status: 'UNSUPPORTED',
+      message:
+        "STRK20 privacy isn't supported by this wallet yet. Use Ready X to enable private transfers.",
+    };
+  }
+  if (current === 'ENABLED') {
+    return {
+      status: 'ALREADY_ENABLED',
+      message: 'Private receiving is already enabled for this wallet.',
+    };
+  }
+  if (current === 'NOT_ENABLED') {
+    return {
+      status: 'NEEDS_FIRST_SHIELD',
+      message:
+        'Private receiving is enabled automatically the first time you Shield. Shield any amount to complete onboarding.',
+    };
+  }
+  return {
+    status: 'ERROR',
+    message:
+      "Could not determine private-receiving status. Make sure your wallet is connected on Starknet Sepolia and try again.",
+  };
+}
+
+// ─── Recipient-readiness error translation ────────────────────────────────────
+
+/**
+ * True when a Wallet API failure means "the RECIPIENT hasn't enabled STRK20 private
+ * receiving yet" (e.g. "Missing channel context"), as opposed to a sender-side problem.
+ *
+ * The Wallet API has no recipient-registration error code, so this detects the wallet's
+ * surfaced message. This is a protocol requirement, not a UI bug: a private note can only
+ * be created for a recipient whose public viewing key is registered in the pool.
+ */
+export function isRecipientReadinessError(err: unknown): boolean {
+  const anyErr = err as { code?: number; message?: string; data?: unknown };
+  const message = String(anyErr?.message || '');
+  const lower = message.toLowerCase();
+  const patterns = [
+    'missing channel context',
+    'channel context',
+    'no channel',
+    'channel is not',
+    'channel does not',
+    'recipient is not registered',
+    'recipient has not registered',
+    'recipient has not been registered',
+    'recipient not registered',
+    'recipient has no',
+    'recipient has not enabled',
+    'recipient.*private receiving',
+    'recipient.*setup',
+    'register the recipient',
+    'setup the recipient',
+    'setup required',
+    'setup requirement',
+    'privacy not enabled',
+    'private receiving not enabled',
+    'not enabled for private',
+    'cannot create note',
+    'cannot construct note',
+  ];
+  return patterns.some((p) => {
+    try {
+      return new RegExp(p).test(lower);
+    } catch {
+      return lower.includes(p);
+    }
+  });
+}
+
+export const PRIVATE_RECEIVING_RECIPIENT_MESSAGE =
+  "This recipient hasn't enabled STRK20 private receiving yet. Ask them to enable private receiving in a supported privacy wallet (e.g. Ready).";

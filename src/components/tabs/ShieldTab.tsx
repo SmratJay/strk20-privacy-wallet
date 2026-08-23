@@ -16,6 +16,7 @@ import {
   Strk20WalletLaneGate,
   isWalletLaneReady,
   PrivateBalanceAccessNote,
+  PrivateReceivingCard,
 } from '@/components/terminal/Strk20WalletLaneGate';
 
 interface ShieldTabProps {
@@ -23,6 +24,7 @@ interface ShieldTabProps {
   wallet: any;
   privateBalancePermission?: WalletBalancePermission;
   onRequestPrivateBalanceAccess?: () => void;
+  onGoToShield?: () => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string) => void;
 }
 
@@ -40,6 +42,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({
   wallet,
   privateBalancePermission = 'UNKNOWN',
   onRequestPrivateBalanceAccess,
+  onGoToShield,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -158,6 +161,8 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({
         checking={checking}
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
       />
+
+      {ready && <PrivateReceivingCard wallet={wallet} onGoToShield={onGoToShield} />}
 
       {ready && (
         <form onSubmit={handleShield} className="space-y-4">

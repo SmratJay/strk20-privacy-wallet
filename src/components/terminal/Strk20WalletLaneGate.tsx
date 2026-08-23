@@ -1,8 +1,12 @@
 'use client';
 
-import React from 'react';
-import { Wallet, AlertTriangle, Globe, ShieldAlert } from 'lucide-react';
-import { WalletApiStatus } from '@/services/strk20WalletApiService';
+import React, { useCallback, useState } from 'react';
+import { Wallet, AlertTriangle, Globe, ShieldAlert, ShieldCheck, RefreshCw, ArrowRight } from 'lucide-react';
+import {
+  WalletApiStatus,
+  strk20WalletApiService,
+  PrivateReceivingStatus,
+} from '@/services/strk20WalletApiService';
 
 /**
  * Gate banner for the generic STRK20 Wallet API lane (LANE A).
@@ -122,6 +126,147 @@ export const PrivateBalanceAccessNote: React.FC<{
         >
           Share private balances
         </button>
+      )}
+    </div>
+  );
+};
+
+type ReceivingViewState =
+  | 'IDLE'
+  | 'CHECKING'
+  | { status: PrivateReceivingStatus; message?: string };
+
+/**
+ * "Enable Private Receiving" onboarding card for the STRK20 Wallet API lane.
+ *
+ * Registration is wallet-owned (the wallet sets a viewing key on-chain). The Wallet API
+ * exposes no standalone "register recipient" RPC, so this card is honest by construction:
+ *   - A non-STRK20 wallet shows the graceful degradation message (never faked in).
+ *   - Registration completes on the user's first Shield (a deposit); the card explains
+ *     this instead of pretending to create a channel locally.
+ *
+ * It only ever probes the wallet on explicit user action — never on render — so the
+ * wallet's private-balance consent is not spam-triggered.
+ */
+export const PrivateReceivingCard: React.FC<{
+  wallet: any;
+  onGoToShield?: () => void;
+}> = ({ wallet, onGoToShield }) => {
+  const [view, setView] = useState<ReceivingViewState>('IDLE');
+
+  const handleEnable = useCallback(async () => {
+    setView('CHECKING');
+    try {
+      const result = await strk20WalletApiService.enablePrivateReceiving(wallet);
+      if (result.status === 'ALREADY_ENABLED') {
+        setView({ status: 'ENABLED', message: result.message });
+      } else if (result.status === 'UNSUPPORTED') {
+        setView({ status: 'UNSUPPORTED', message: result.message });
+      } else if (result.status === 'NEEDS_FIRST_SHIELD') {
+        setView({ status: 'NOT_ENABLED', message: result.message });
+      } else {
+        setView({ status: 'UNKNOWN', message: result.message });
+      }
+    } catch {
+      setView({
+        status: 'UNKNOWN',
+        message: 'Could not reach the wallet. Check the connection and try again.',
+      });
+    }
+  }, [wallet]);
+
+  const status: PrivateReceivingStatus = view === 'IDLE' || view === 'CHECKING' ? 'UNKNOWN' : view.status;
+
+  return (
+    <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-white">
+          <ShieldCheck className="w-4 h-4 text-orrange-400" />
+          <span>Private STRK20 · Receiving</span>
+        </div>
+        {view !== 'IDLE' && view !== 'CHECKING' && (
+          <button
+            onClick={handleEnable}
+            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-orrange-400 uppercase font-bold transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Re-check</span>
+          </button>
+        )}
+      </div>
+
+      {status === 'ENABLED' && (
+        <div className="flex items-center gap-2 text-[11px] text-emerald-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="font-bold uppercase">Private receiving enabled</span>
+          <span className="text-emerald-300/70">— others can send you STRK20 privately.</span>
+        </div>
+      )}
+
+      {status === 'NOT_ENABLED' && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[11px] text-zinc-300">
+            <span className="w-1.5 h-1.5 rounded-full border border-zinc-500 shrink-0" />
+            <span>Private receiving not enabled</span>
+          </div>
+          {view !== 'IDLE' && view !== 'CHECKING' && typeof view === 'object' && view.message && (
+            <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+              <p className="leading-relaxed">{view.message}</p>
+              {onGoToShield && (
+                <button
+                  onClick={onGoToShield}
+                  className="mt-2 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold uppercase flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <span>Go to Shield</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+          <button
+            onClick={handleEnable}
+            disabled={view === 'CHECKING'}
+            className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
+          >
+            {view === 'CHECKING' ? 'Checking private receiving…' : 'Enable private receiving'}
+          </button>
+        </div>
+      )}
+
+      {status === 'UNSUPPORTED' && (
+        <div className="flex items-start gap-2 p-2.5 bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-200">
+          <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+          <p className="leading-relaxed">
+            STRK20 privacy isn't supported by this wallet yet. Use Ready X to enable private
+            transfers.
+          </p>
+        </div>
+      )}
+
+      {status === 'UNKNOWN' && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full border border-zinc-500 shrink-0" />
+            <span>{view === 'CHECKING' ? 'Checking private receiving…' : 'Private receiving status unknown'}</span>
+          </div>
+          {view !== 'IDLE' && view !== 'CHECKING' && typeof view === 'object' && view.message && (
+            <p className="text-[11px] text-zinc-400 leading-relaxed">{view.message}</p>
+          )}
+          <button
+            onClick={handleEnable}
+            disabled={view === 'CHECKING'}
+            className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
+          >
+            {view === 'CHECKING' ? (
+              <>
+                <RefreshCw className="w-3 h-3 inline animate-spin mr-1" />
+                Checking…
+              </>
+            ) : (
+              'Enable private receiving'
+            )}
+          </button>
+        </div>
       )}
     </div>
   );

@@ -16,6 +16,7 @@ import {
   Strk20WalletLaneGate,
   isWalletLaneReady,
   PrivateBalanceAccessNote,
+  PrivateReceivingCard,
 } from '@/components/terminal/Strk20WalletLaneGate';
 
 interface UnshieldTabProps {
@@ -23,6 +24,7 @@ interface UnshieldTabProps {
   wallet: any;
   privateBalancePermission?: WalletBalancePermission;
   onRequestPrivateBalanceAccess?: () => void;
+  onGoToShield?: () => void;
   onSuccess: (txHash: string, token: TokenInfo, amount: string, destination: string) => void;
 }
 
@@ -40,6 +42,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
   wallet,
   privateBalancePermission = 'UNKNOWN',
   onRequestPrivateBalanceAccess,
+  onGoToShield,
   onSuccess,
 }) => {
   const { currentNetwork } = useNetwork();
@@ -175,6 +178,8 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
         checking={checking}
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
       />
+
+      {ready && <PrivateReceivingCard wallet={wallet} onGoToShield={onGoToShield} />}
 
       {ready && (
         <form onSubmit={handleUnshield} className="space-y-4">
