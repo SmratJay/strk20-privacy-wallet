@@ -11,6 +11,7 @@ import {
   WalletApiStatus,
   WalletBalancePermission,
   translateWalletError,
+  SN_SEPOLIA_CHAIN_ID,
 } from '@/services/strk20WalletApiService';
 import {
   Strk20WalletLaneGate,
@@ -80,6 +81,12 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
   const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
   const shieldedBalAvailable = currentBalance?.shieldedBalanceAvailable === true;
   const ready = isWalletLaneReady(status);
+
+  const handleSwitchToSepolia = async () => {
+    await strk20WalletApiService.switchWalletNetwork(wallet, SN_SEPOLIA_CHAIN_ID);
+    if (wallet.refreshWalletChain) await wallet.refreshWalletChain();
+    await refreshStatus();
+  };
 
   const handleMax = () => {
     if (shieldedBalAvailable && shieldedBal > 0n) {
@@ -177,6 +184,7 @@ export const UnshieldTab: React.FC<UnshieldTabProps> = ({
         status={status}
         checking={checking}
         onConnect={() => (wallet.openConnectModal ? wallet.openConnectModal() : wallet.connectWallet())}
+        onSwitchToSepolia={handleSwitchToSepolia}
       />
 
       {ready && <PrivateReceivingCard wallet={wallet} onOnboarded={onOnboarded} />}

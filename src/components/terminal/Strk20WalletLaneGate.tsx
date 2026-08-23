@@ -20,11 +20,15 @@ export const Strk20WalletLaneGate: React.FC<{
   status: WalletApiStatus | null;
   checking?: boolean;
   onConnect?: () => void;
+  onSwitchToSepolia?: () => Promise<void> | void;
 }> = ({
   status,
   checking,
   onConnect,
+  onSwitchToSepolia,
 }) => {
+  const [switchingNetwork, setSwitchingNetwork] = useState(false);
+
   if (checking || !status) {
     return (
       <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
@@ -58,15 +62,33 @@ export const Strk20WalletLaneGate: React.FC<{
       );
     case 'WRONG_NETWORK':
       return (
-        <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start gap-2">
-          <Globe className="w-4 h-4 shrink-0" />
-          <div>
-            <span className="font-bold uppercase">Switch to Starknet Sepolia</span>
-            <p className="text-amber-200/80 mt-0.5">
-              Private STRK20 currently works on Starknet Sepolia. Switch your wallet network
-              and try again.
-            </p>
+        <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <Globe className="w-4 h-4 shrink-0" />
+            <div>
+              <span className="font-bold uppercase">Switch to Starknet Sepolia</span>
+              <p className="text-amber-200/80 mt-0.5">
+                Private STRK20 currently works on Starknet Sepolia. Switch your wallet network
+                and try again.
+              </p>
+            </div>
           </div>
+          {onSwitchToSepolia && (
+            <button
+              onClick={async () => {
+                setSwitchingNetwork(true);
+                try {
+                  await onSwitchToSepolia();
+                } finally {
+                  setSwitchingNetwork(false);
+                }
+              }}
+              disabled={switchingNetwork}
+              className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-mono font-bold text-xs uppercase tracking-wider shrink-0 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {switchingNetwork ? 'Switching…' : 'Switch to Sepolia'}
+            </button>
+          )}
         </div>
       );
     case 'PRIVACY_WALLET_REQUIRED':

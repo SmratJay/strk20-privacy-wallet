@@ -235,10 +235,24 @@ export function useStarknetWallet() {
         });
       }
 
+      // Read the wallet's ACTUAL chain live — a synchronous `chainId` property is not
+      // reliable (it is often absent, causing a wrong Sepolia assumption), and the app
+      // network auto-syncs to this value.
+      let liveChainId: string | null = null;
+      try {
+        if (targetProvider.request && typeof targetProvider.request === 'function') {
+          const c = await targetProvider.request({ type: 'wallet_requestChainId' });
+          if (c) liveChainId = String(c);
+        }
+      } catch {
+        liveChainId = null;
+      }
+      const chainId = liveChainId || targetProvider.chainId || constants.StarknetChainId.SN_SEPOLIA;
+
       setState({
         isConnected: true,
         address: selectedAddress,
-        chainId: targetProvider.chainId || constants.StarknetChainId.SN_SEPOLIA,
+        chainId,
         walletName: targetProvider.name || targetWallet.name || 'Starknet Wallet',
         walletIcon: targetWallet.badge || '🛡️',
         isPrivacySupported,
@@ -292,6 +306,36 @@ export function useStarknetWallet() {
     setIsConnectModalOpen(false);
   };
 
+  /**
+   * Re-read the wallet's current chain via `wallet_requestChainId` and sync state.
+   * The wallet's synchronous `chainId` property can be stale immediately after a
+   * `wallet_switchStarknetChain`, so call this after switching networks.
+   * @returns the authoritative chain id (hex), or the previous value if it can't be read.
+   */
+  const refreshWalletChain = useCallback(async (): Promise<string | null> => {
+    const candidates: unknown[] = [
+      state.rawWallet,
+      state.rawWallet?.provider,
+      state.walletAccount,
+      state.walletAccount?.provider,
+    ];
+    const provider = candidates.find(
+      (c: any) => c && typeof (c as { request?: unknown }).request === 'function',
+    );
+    if (!provider) return state.chainId;
+    try {
+      const chainId = String(
+        await (provider as { request: (call: { type: string }) => Promise<unknown> }).request({
+          type: 'wallet_requestChainId',
+        }),
+      );
+      setState((prev) => ({ ...prev, chainId }));
+      return chainId;
+    } catch {
+      return state.chainId;
+    }
+  }, [state.rawWallet, state.walletAccount, state.chainId]);
+
   return {
     ...state,
     supportedWallets,
@@ -303,6 +347,7 @@ export function useStarknetWallet() {
     closeConnectModal,
     connectWallet,
     disconnectWallet,
+    refreshWalletChain,
     rescan: scanWallets,
   };
 }

@@ -25,6 +25,7 @@ import {
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 import { useNetwork } from '@/context/NetworkContext';
 import { sessionKeyService, ScopedSessionKey } from '@/services/sessionKeyService';
+import { strk20WalletApiService, SN_SEPOLIA_CHAIN_ID, SN_MAIN_CHAIN_ID } from '@/services/strk20WalletApiService';
 import { useToast } from '@/components/Toast';
 
 interface HeaderProps {
@@ -104,6 +105,32 @@ export const Header: React.FC<HeaderProps> = ({
         description: 'Scoped session key authorized for 8h ($5,000 allowance).',
       });
     }
+  };
+
+  // Selecting a network with a connected wallet prompts the wallet (via the official
+  // wallet_switchStarknetChain Wallet API) to switch chains, so the app and wallet stay
+  // in sync. On decline/error the app stays on the wallet's actual chain.
+  const handleSelectNetwork = async (target: 'mainnet' | 'sepolia') => {
+    setNetworkDropdownOpen(false);
+    if (wallet.isConnected && wallet.refreshWalletChain) {
+      const targetChain = target === 'sepolia' ? SN_SEPOLIA_CHAIN_ID : SN_MAIN_CHAIN_ID;
+      const res = await strk20WalletApiService.switchWalletNetwork(wallet, targetChain);
+      if (res.status === 'USER_REJECTED') {
+        showToast({ type: 'error', title: 'Network Switch Declined', description: 'You declined the network switch in your wallet.' });
+        await wallet.refreshWalletChain();
+        return;
+      }
+      if (res.status === 'CHAIN_UNSUPPORTED') {
+        showToast({ type: 'error', title: 'Network Not Supported', description: res.message });
+        return;
+      }
+      if (res.status === 'ERROR') {
+        showToast({ type: 'error', title: 'Switch Failed', description: res.message });
+        return;
+      }
+      await wallet.refreshWalletChain();
+    }
+    setNetworkId(target);
   };
 
   // Close dropdowns on outside click
@@ -271,10 +298,7 @@ export const Header: React.FC<HeaderProps> = ({
             {networkDropdownOpen && (
               <div className="absolute right-0 mt-2 w-48 bg-zinc-950 border border-zinc-800 shadow-2xl p-1 z-50 corner-box">
                 <button
-                  onClick={() => {
-                    setNetworkId('mainnet');
-                    setNetworkDropdownOpen(false);
-                  }}
+                  onClick={() => handleSelectNetwork('mainnet')}
                   className={`w-full flex items-center justify-between px-3 py-2 text-xs font-mono font-bold text-left ${
                     !isSepolia ? 'bg-orrange-500/20 text-orrange-300' : 'text-zinc-400 hover:bg-zinc-900'
                   }`}
@@ -283,10 +307,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {!isSepolia && <CheckCircle2 className="w-3.5 h-3.5 text-orrange-400" />}
                 </button>
                 <button
-                  onClick={() => {
-                    setNetworkId('sepolia');
-                    setNetworkDropdownOpen(false);
-                  }}
+                  onClick={() => handleSelectNetwork('sepolia')}
                   className={`w-full flex items-center justify-between px-3 py-2 text-xs font-mono font-bold text-left ${
                     isSepolia ? 'bg-amber-500/20 text-amber-300' : 'text-zinc-400 hover:bg-zinc-900'
                   }`}

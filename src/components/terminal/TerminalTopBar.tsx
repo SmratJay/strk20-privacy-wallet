@@ -22,6 +22,7 @@ import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 import { useNetwork } from '@/context/NetworkContext';
 import { sessionKeyService, ScopedSessionKey } from '@/services/sessionKeyService';
 import { priceService, TokenPrices } from '@/services/priceService';
+import { strk20WalletApiService, SN_SEPOLIA_CHAIN_ID, SN_MAIN_CHAIN_ID } from '@/services/strk20WalletApiService';
 import { useToast } from '@/components/Toast';
 
 interface TerminalTopBarProps {
@@ -110,6 +111,32 @@ export const TerminalTopBar: React.FC<TerminalTopBarProps> = ({ wallet, onSearch
         description: 'Scoped STARK session key authorized for 8h ($5,000 allowance).',
       });
     }
+  };
+
+  // Selecting a network with a connected wallet prompts the wallet (via the official
+  // wallet_switchStarknetChain Wallet API) to switch chains. On decline/error the app
+  // stays on the wallet's actual chain.
+  const handleSelectNetwork = async (target: 'mainnet' | 'sepolia') => {
+    setNetworkDropdownOpen(false);
+    if (wallet.isConnected && wallet.refreshWalletChain) {
+      const targetChain = target === 'sepolia' ? SN_SEPOLIA_CHAIN_ID : SN_MAIN_CHAIN_ID;
+      const res = await strk20WalletApiService.switchWalletNetwork(wallet, targetChain);
+      if (res.status === 'USER_REJECTED') {
+        showToast({ type: 'error', title: 'Network Switch Declined', description: 'You declined the network switch in your wallet.' });
+        await wallet.refreshWalletChain();
+        return;
+      }
+      if (res.status === 'CHAIN_UNSUPPORTED') {
+        showToast({ type: 'error', title: 'Network Not Supported', description: res.message });
+        return;
+      }
+      if (res.status === 'ERROR') {
+        showToast({ type: 'error', title: 'Switch Failed', description: res.message });
+        return;
+      }
+      await wallet.refreshWalletChain();
+    }
+    setNetworkId(target);
   };
 
   // Close dropdowns on outside click
@@ -216,35 +243,29 @@ export const TerminalTopBar: React.FC<TerminalTopBarProps> = ({ wallet, onSearch
 
           {networkDropdownOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-zinc-950 border border-zinc-800 shadow-2xl z-50 p-1.5 space-y-1">
-              <button
-                onClick={() => {
-                  setNetworkId('mainnet');
-                  setNetworkDropdownOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-left transition-colors ${
-                  networkId === 'mainnet'
-                    ? 'bg-orrange-500 text-black'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <span>Starknet Mainnet</span>
-                {networkId === 'mainnet' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              </button>
+<button
+                  onClick={() => handleSelectNetwork('mainnet')}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-left transition-colors ${
+                    networkId === 'mainnet'
+                      ? 'bg-orrange-500 text-black'
+                      : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                  }`}
+                >
+                  <span>Starknet Mainnet</span>
+                  {networkId === 'mainnet' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                </button>
 
-              <button
-                onClick={() => {
-                  setNetworkId('sepolia');
-                  setNetworkDropdownOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-left transition-colors ${
-                  networkId === 'sepolia'
-                    ? 'bg-orrange-500 text-black'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <span>Sepolia Testnet</span>
-                {networkId === 'sepolia' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              </button>
+                <button
+                  onClick={() => handleSelectNetwork('sepolia')}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-left transition-colors ${
+                    networkId === 'sepolia'
+                      ? 'bg-orrange-500 text-black'
+                      : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                  }`}
+                >
+                  <span>Sepolia Testnet</span>
+                  {networkId === 'sepolia' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                </button>
             </div>
           )}
         </div>

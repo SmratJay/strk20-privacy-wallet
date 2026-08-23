@@ -10,8 +10,10 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   getPrivateReceivingRequirement,
   enablePrivateReceiving,
+  switchWalletNetwork,
   MIN_STRK20_WALLET_API_VERSION,
   SN_SEPOLIA_CHAIN_ID,
+  SN_MAIN_CHAIN_ID,
 } from '../services/strk20WalletApiService';
 
 type RegistrationState = 'registered' | 'not_registered' | 'error';
@@ -276,5 +278,91 @@ describe('no fake local state', () => {
     );
     // The service performs no storage writes; readiness comes only from the wallet.
     expect(storage.setItem).not.toHaveBeenCalled();
+  });
+});
+
+describe('switchWalletNetwork (wallet_switchStarknetChain)', () => {
+  function makeSwitchWallet(opts: {
+    currentChain?: string | null;
+    switchResult?: { code?: number; message?: string } | null;
+    postChain?: string | null;
+    connected?: boolean;
+  } = {}) {
+    const {
+      currentChain = SN_MAIN_CHAIN_ID,
+      switchResult = null,
+      postChain = SN_SEPOLIA_CHAIN_ID,
+      connected = true,
+    } = opts;
+    const calls: string[] = [];
+    const request = async ({ type }: { type: string }): Promise<unknown> => {
+      calls.push(type);
+      if (type === 'wallet_requestChainId') {
+        if (calls.filter((t) => t === 'wallet_requestChainId').length === 1) {
+          if (currentChain === null) throw new Error('no chain');
+          return currentChain;
+        }
+        if (postChain === null) throw new Error('no chain');
+        return postChain;
+      }
+      if (type === 'wallet_switchStarknetChain') {
+        if (switchResult) {
+          const err: any = new Error(switchResult.message || 'switch failed');
+          err.code = switchResult.code;
+          throw err;
+        }
+        return true;
+      }
+      return [];
+    };
+    return { wallet: { isConnected: connected, rawWallet: { request } }, calls };
+  }
+
+  it('returns NOT_CONNECTED when no wallet is connected', async () => {
+    const res = await switchWalletNetwork(
+      makeSwitchWallet({ connected: false }).wallet,
+      SN_SEPOLIA_CHAIN_ID,
+    );
+    expect(res.status).toBe('NOT_CONNECTED');
+  });
+
+  it('returns ALREADY_ON_CHAIN without prompting when already on the target', async () => {
+    const { wallet, calls } = makeSwitchWallet({ currentChain: SN_SEPOLIA_CHAIN_ID });
+    const res = await switchWalletNetwork(wallet, SN_SEPOLIA_CHAIN_ID);
+    expect(res.status).toBe('ALREADY_ON_CHAIN');
+    expect(calls).not.toContain('wallet_switchStarknetChain');
+  });
+
+  it('returns SWITCHED and the authoritative post-switch chain', async () => {
+    const { wallet, calls } = makeSwitchWallet();
+    const res = await switchWalletNetwork(wallet, SN_SEPOLIA_CHAIN_ID);
+    expect(res.status).toBe('SWITCHED');
+    expect(res.chainId).toBe(SN_SEPOLIA_CHAIN_ID);
+    expect(calls).toContain('wallet_switchStarknetChain');
+  });
+
+  it('returns USER_REJECTED when the user declines in the wallet prompt', async () => {
+    const { wallet } = makeSwitchWallet({ switchResult: { code: 113, message: 'An error occurred (USER_REFUSED_OP)' } });
+    const res = await switchWalletNetwork(wallet, SN_SEPOLIA_CHAIN_ID);
+    expect(res.status).toBe('USER_REJECTED');
+  });
+
+  it('returns CHAIN_UNSUPPORTED on UNLISTED_NETWORK / CHAIN_ID_NOT_SUPPORTED', async () => {
+    const a = await switchWalletNetwork(
+      makeSwitchWallet({ switchResult: { code: 112, message: 'An error occurred (UNLISTED_NETWORK)' } }).wallet,
+      SN_SEPOLIA_CHAIN_ID,
+    );
+    expect(a.status).toBe('CHAIN_UNSUPPORTED');
+    const b = await switchWalletNetwork(
+      makeSwitchWallet({ switchResult: { code: 117, message: 'An error occurred (CHAIN_ID_NOT_SUPPORTED)' } }).wallet,
+      SN_SEPOLIA_CHAIN_ID,
+    );
+    expect(b.status).toBe('CHAIN_UNSUPPORTED');
+  });
+
+  it('returns ERROR on an unexpected wallet failure', async () => {
+    const { wallet } = makeSwitchWallet({ switchResult: { code: 163, message: 'An error occurred (UNKNOWN_ERROR)' } });
+    const res = await switchWalletNetwork(wallet, SN_SEPOLIA_CHAIN_ID);
+    expect(res.status).toBe('ERROR');
   });
 });

@@ -26,6 +26,7 @@
  */
 
 export const SN_SEPOLIA_CHAIN_ID = '0x534e5f5345504f4c4941'; // ASCII "SN_SEPOLIA"
+export const SN_MAIN_CHAIN_ID = '0x534e5f4d41494e'; // ASCII "SN_MAIN"
 export const MIN_STRK20_WALLET_API_VERSION = '0.10';
 
 export type WalletApiLaneState =
@@ -397,6 +398,7 @@ export const strk20WalletApiService = {
   getPrivateBalances,
   getPrivateReceivingRequirement,
   enablePrivateReceiving,
+  switchWalletNetwork,
   isRecipientReadinessError,
   isAccountFinalizingError,
   shield,
@@ -670,6 +672,82 @@ export async function enablePrivateReceiving(
     status: 'SUBMITTED',
     transactionHash: receipt.transactionHash,
     message: 'Privacy setup submitted — awaiting confirmation.',
+  };
+}
+
+// ─── Network switching (official wallet_requestChainId / wallet_switchStarknetChain) ──
+
+export type WalletNetworkSwitchStatus =
+  | 'SWITCHED' // wallet switched; returns the authoritative new chainId
+  | 'ALREADY_ON_CHAIN'
+  | 'USER_REJECTED' // user declined in the wallet prompt
+  | 'CHAIN_UNSUPPORTED' // wallet can't add/switch to this chain (UNLISTED_NETWORK/CHAIN_ID_NOT_SUPPORTED)
+  | 'NOT_CONNECTED'
+  | 'ERROR';
+
+export interface WalletNetworkSwitchResult {
+  status: WalletNetworkSwitchStatus;
+  chainId?: string;
+  message?: string;
+}
+
+/**
+ * Ask the connected wallet to switch to `targetChainIdHex` via the official
+ * `wallet_switchStarknetChain` Wallet API method. This surfaces the wallet's own
+ * network-switch prompt (approval UI) to the user.
+ *
+ * Re-queries `wallet_requestChainId` after a successful switch so the caller can sync
+ * app state to the wallet's authoritative chain (the wallet's synchronous `chainId`
+ * property can be stale right after a switch).
+ */
+export async function switchWalletNetwork(
+  wallet: any,
+  targetChainIdHex: string,
+): Promise<WalletNetworkSwitchResult> {
+  const provider = resolveWalletApiProvider(wallet);
+  if (!provider || !wallet?.isConnected) {
+    return { status: 'NOT_CONNECTED', message: 'Connect a wallet first.' };
+  }
+
+  let current: string | null = null;
+  try {
+    current = String(await provider.request({ type: 'wallet_requestChainId' }));
+  } catch {
+    current = null;
+  }
+  if (current && BigInt(current) === BigInt(targetChainIdHex)) {
+    return { status: 'ALREADY_ON_CHAIN', chainId: current, message: 'Wallet is already on this network.' };
+  }
+
+  try {
+    await provider.request({
+      type: 'wallet_switchStarknetChain',
+      params: { chainId: targetChainIdHex },
+    });
+  } catch (err: any) {
+    const code = typeof err?.code === 'number' ? err.code : undefined;
+    if (code === 113) {
+      return { status: 'USER_REJECTED', message: 'You declined the network switch in your wallet.' };
+    }
+    if (code === 117 || code === 112) {
+      return {
+        status: 'CHAIN_UNSUPPORTED',
+        message: 'Your wallet does not support this network. Add it in your wallet first.',
+      };
+    }
+    return { status: 'ERROR', message: err?.message || 'Failed to switch network in the wallet.' };
+  }
+
+  let newChain: string | null = null;
+  try {
+    newChain = String(await provider.request({ type: 'wallet_requestChainId' }));
+  } catch {
+    newChain = null;
+  }
+  return {
+    status: 'SWITCHED',
+    chainId: newChain ?? targetChainIdHex,
+    message: 'Network switched in the wallet.',
   };
 }
 
