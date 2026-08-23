@@ -793,24 +793,6 @@ export const PrivacyPoolABI = [
         ]
     },
     {
-        "type": "enum",
-        "name": "privacy::objects::OpenNoteScreeningPolicy",
-        "variants": [
-            {
-                "name": "Required",
-                "type": "()"
-            },
-            {
-                "name": "Exempt",
-                "type": "()"
-            },
-            {
-                "name": "Delegated",
-                "type": "()"
-            }
-        ]
-    },
-    {
         "type": "interface",
         "name": "privacy::interface::IViews",
         "items": [
@@ -1046,7 +1028,7 @@ export const PrivacyPoolABI = [
             },
             {
                 "type": "function",
-                "name": "get_open_note_screening_policy",
+                "name": "is_open_note_depositor_blocked",
                 "inputs": [
                     {
                         "name": "depositor",
@@ -1055,7 +1037,7 @@ export const PrivacyPoolABI = [
                 ],
                 "outputs": [
                     {
-                        "type": "privacy::objects::OpenNoteScreeningPolicy"
+                        "type": "core::bool"
                     }
                 ],
                 "state_mutability": "view"
@@ -1133,15 +1115,15 @@ export const PrivacyPoolABI = [
             },
             {
                 "type": "function",
-                "name": "set_open_note_screening_policy",
+                "name": "set_open_note_depositor_blocked",
                 "inputs": [
                     {
                         "name": "depositor",
                         "type": "core::starknet::contract_address::ContractAddress"
                     },
                     {
-                        "name": "policy",
-                        "type": "privacy::objects::OpenNoteScreeningPolicy"
+                        "name": "blocked",
+                        "type": "core::bool"
                     }
                 ],
                 "outputs": [],
@@ -1990,7 +1972,7 @@ export const PrivacyPoolABI = [
     },
     {
         "type": "event",
-        "name": "privacy::events::OpenNoteScreeningPolicySet",
+        "name": "privacy::events::OpenNoteDepositorBlockSet",
         "kind": "struct",
         "members": [
             {
@@ -1999,8 +1981,8 @@ export const PrivacyPoolABI = [
                 "kind": "key"
             },
             {
-                "name": "policy",
-                "type": "privacy::objects::OpenNoteScreeningPolicy",
+                "name": "blocked",
+                "type": "core::bool",
                 "kind": "data"
             }
         ]
@@ -2106,8 +2088,8 @@ export const PrivacyPoolABI = [
                 "kind": "nested"
             },
             {
-                "name": "OpenNoteScreeningPolicySet",
-                "type": "privacy::events::OpenNoteScreeningPolicySet",
+                "name": "OpenNoteDepositorBlockSet",
+                "type": "privacy::events::OpenNoteDepositorBlockSet",
                 "kind": "nested"
             }
         ]

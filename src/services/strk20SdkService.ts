@@ -18,12 +18,20 @@
  * REQUIRED OPERATOR INFRASTRUCTURE (run by the team, or a hosted provider):
  *   - Proving service:  ProvingServiceProofProvider(url, chainId) (env NEXT_PUBLIC_STRK20_PROVER_URL)
  *   - Discovery service: IndexerDiscoveryProvider(url, pool)    (env NEXT_PUBLIC_STRK20_DISCOVERY_URL)
- *   Both must match the PRIVACY-0.14.x compatibility tag used by the pool on the target network.
+ *
+ * INTENTIONAL VERSION COMBINATION (must be validated on-chain before production):
+ *   - SDK        = official git tag PRIVACY-0.14.3-RC.5 (vendored, package 0.14.3-rc.5)
+ *   - Prover     = PRIVACY-0.14.3-RC.2
+ *   - Discovery  = PRIVACY-0.14.3-RC.2
+ *   - Pathfinder = v0.22.7
+ * The RC.5 SDK adds the `computeAndInvoke` builder used by the PEL STRK20 OPEN path while
+ * keeping the prover/discovery wire protocol identical to RC.2. The deployed Sepolia pool
+ * (CONTRACT_VERSION '2.0') supports the ComputeAndInvoke action.
  *
  * INSTALL: the SDK is vendored at vendor/starknet-privacy-sdk (built from
- * github.com/starkware-libs/starknet-privacy, sdk/). It is referenced via a `file:`
- * dependency in package.json, so no GitHub Packages auth is required. To update it:
- *   git clone https://github.com/starkware-libs/starknet-privacy && cd sdk && npm ci && npm run build
+ * github.com/starkware-libs/starknet-privacy @ PRIVACY-0.14.3-RC.5, sdk/). It is referenced
+ * via a `file:` dependency in package.json, so no GitHub Packages auth is required. To update it:
+ *   git clone --depth 1 --branch PRIVACY-0.14.3-RC.5 https://github.com/starkware-libs/starknet-privacy && cd sdk && npm ci && npm run build
  *   cp -R dist <repo>/vendor/starknet-privacy-sdk/
  *
  * The SDK is imported lazily (dynamic import, non-literal specifier) so the rest of the

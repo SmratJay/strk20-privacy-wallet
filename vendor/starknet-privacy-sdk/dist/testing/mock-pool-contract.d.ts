@@ -13,7 +13,6 @@ import { Channel } from "../internal/channel.js";
 import { type Hash, type PrivateKey as ViewingKey, type PublicKey, ChannelKey } from "../utils/crypto.js";
 import type { PoolContractInterface, EncChannelInfo, EncSubchannelInfo, EncOutgoingChannelInfo, EncPrivateKey } from "../internal/pool-contract-interface.js";
 import type { MockContracts, MockContract } from "./contracts.js";
-import { CairoCustomEnum } from "starknet";
 import { ClientAction } from "../internal/client-actions.js";
 type OpenNote = {
     r: bigint;
@@ -75,12 +74,9 @@ export declare class MockPoolContract implements MockContract, PoolContractInter
     subchannel_exists(subchannelMarker: bigint): boolean;
     get_enc_private_key(_userAddr: StarknetAddressBigint): EncPrivateKey;
     get_auditor_public_key(): bigint;
-    get_screener_public_key(): bigint;
-    get_version(): bigint;
     get_fee_amount(): bigint | number;
     get_fee_collector(): bigint;
     get_proof_validity_blocks(): bigint | number;
-    get_open_note_screening_policy(_depositor: StarknetAddressBigint): CairoCustomEnum;
     /**
      * Get all encrypted channel info for a recipient.
      */

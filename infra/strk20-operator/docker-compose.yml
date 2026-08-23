@@ -40,22 +40,50 @@ services:
       - strk20
 
   # ---------------------------------------------------------------------------
-  # Optional local Pathfinder node (recommended for production WS indexing). Requires
-  # PATHFINDER_ETHEREUM_API_URL (an L1 RPC). Uncomment and set .env.
+  # Local Pathfinder node (Starknet Sepolia). Requires an Ethereum L1 RPC
+  # (PATHFINDER_ETHEREUM_API_URL). PATHFINDER_STORAGE_STATE_TRIES=10000 is required by
+  # the transaction prover.
   # ---------------------------------------------------------------------------
-  # pathfinder:
-  #   image: eqlabs/pathfinder:v0.22.7
-  #   container_name: strk20-pathfinder
-  #   restart: unless-stopped
-  #   environment:
-  #     PATHFINDER_STORAGE_STATE_TRIES: "10000"
-  #     PATHFINDER_ETHEREUM_API_URL: ${ETHEREUM_API_URL}
-  #     PATHFINDER_HTTP_RPC_ENDPOINT: "0.0.0.0:9545"
-  #   ports:
-  #     - "9545:9545"
-  #     - "9546:9546"
-  #   networks:
-  #     - strk20
+  pathfinder:
+    image: eqlabs/pathfinder:v0.22.7
+    container_name: strk20-pathfinder
+    restart: unless-stopped
+    environment:
+      PATHFINDER_NETWORK: "sepolia-testnet"
+      PATHFINDER_STORAGE_STATE_TRIES: "10000"
+      PATHFINDER_ETHEREUM_API_URL: ${ETHEREUM_API_URL}
+      PATHFINDER_HTTP_RPC_ENDPOINT: "0.0.0.0:9545"
+      # Discovery service indexes via WebSocket — Pathfinder serves WS at /ws and it is
+      # disabled by default.
+      PATHFINDER_WEBSOCKET_ENABLED: "true"
+      # 8 GB host: Pathfinder's default 4096 MiB compiler budget + 4096 MiB margin
+      # computes 0 RPC compiler concurrency. Pin a fixed limit so the RPC server starts.
+      PATHFINDER_RPC_COMPILER_CONCURRENCY_LIMIT: "1"
+    ports:
+      - "9545:9545"
+      - "9546:9546"
+    networks:
+      - strk20
+
+  prover:
+    image: ghcr.io/starkware-libs/starknet-privacy/transaction-prover:PRIVACY-0.14.3-RC.2
+    container_name: strk20-prover
+    restart: unless-stopped
+    environment:
+      # The prover requires a Starknet node exposing the v0.10 JSON-RPC API.
+      RPC_URL: http://pathfinder:9545/rpc/v0_10
+      CHAIN_ID: SN_SEPOLIA
+      PROVER_PORT: "3000"
+      PROVER_IP: "0.0.0.0"
+      MAX_CONCURRENT_REQUESTS: "1"
+      RUST_LOG: info
+    ports:
+      # Host 3001 -> container 3000 (host 3000 is the Next.js dev server)
+      - "3001:3000"
+    networks:
+      - strk20
+    depends_on:
+      - pathfinder
 
 networks:
   strk20:

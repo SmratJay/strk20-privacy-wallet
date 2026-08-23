@@ -1,6 +1,8 @@
 // PEL Private Perpetuals Types — V3 (Whitepaper Sections 5, 7, 11)
 // CONFIG VERSION: 3 — must match canonical protocol constants
 
+use starknet::ContractAddress;
+
 pub type Bn254Commitment = u256;
 pub type Bn254Nullifier = u256;
 pub type CommitmentStorageKey = felt252;
@@ -64,4 +66,16 @@ pub fn u256_to_felt252(x: u256) -> felt252 {
     let low: felt252 = x.low.into();
     let high: felt252 = x.high.into();
     low + high * 340282366920938463463374607431768211456_felt252
+}
+
+// Deposit to an open note, returned by an externally-invoked contract during the
+// STRK20 privacy pool's `apply_actions` (the pool deserializes the invoke target's
+// return as `Span<OpenNoteDeposit>`). Layout MUST match the privacy pool contract:
+//   packages/privacy/src/objects.cairo — struct OpenNoteDeposit { note_id, token, amount }
+// The PEL bridge returns an EMPTY span (no open-note deposits).
+#[derive(Serde, Copy, Drop, PartialEq, Debug)]
+pub struct OpenNoteDeposit {
+    pub note_id: felt252,
+    pub token: ContractAddress,
+    pub amount: u128,
 }

@@ -11,8 +11,6 @@ import { derivePublicKey, generateRandom, toBigInt, } from "../utils/crypto.js";
 import { encryptions } from "../utils/encryptions.js";
 import { AdvancedMap, AddressMap } from "../utils/maps.js";
 import { assert, isOpen } from "../utils/validation.js";
-import { SCREENING_SIGNER_PUBLIC_KEY } from "./screening-signer.js";
-import { CairoCustomEnum } from "starknet";
 import { compute_channel_key, compute_channel_marker, compute_subchannel_id, compute_subchannel_marker, compute_note_id, compute_nullifier, compute_outgoing_channel_id, compute_identity_key, } from "../utils/hashes.js";
 import { toHex } from "../utils/convert.js";
 class ChannelsMap extends AdvancedMap {
@@ -100,14 +98,6 @@ export class MockPoolContract {
         // Mock returns dummy auditor key
         return 1n;
     }
-    get_screener_public_key() {
-        // The key whose private half the signing mock proof provider attests with.
-        return SCREENING_SIGNER_PUBLIC_KEY;
-    }
-    get_version() {
-        // The mock is not a versioned deployment, so it reports no version.
-        return 0n;
-    }
     get_fee_amount() {
         return 0n;
     }
@@ -116,14 +106,6 @@ export class MockPoolContract {
     }
     get_proof_validity_blocks() {
         return 450n;
-    }
-    get_open_note_screening_policy(_depositor) {
-        // The mock lists no depositor, so every one reads back the default policy.
-        return new CairoCustomEnum({
-            Required: {},
-            Exempt: undefined,
-            Delegated: undefined,
-        });
     }
     // ============ Helper Methods for Discovery ============
     /**

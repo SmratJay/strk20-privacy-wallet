@@ -35,6 +35,7 @@
 //   - Admin may update pool/core/verifier references — see SECURITY notes in README.
 
 use starknet::ContractAddress;
+use super::types::OpenNoteDeposit;
 
 #[starknet::interface]
 pub trait IPELPerpsSTRK20Bridge<TContractState> {
@@ -49,7 +50,7 @@ pub trait IPELPerpsSTRK20Bridge<TContractState> {
         ref self: TContractState,
         computed: Span<felt252>,
         invoke_additional_data: Span<felt252>,
-    );
+    ) -> Span<OpenNoteDeposit>;
 
     // ── View / accounting ─────────────────────────────────────────────────
     fn get_in_pool_collateral(self: @TContractState, identity_key: felt252) -> u128;
@@ -77,7 +78,7 @@ pub trait IPELPerpsSTRK20Bridge<TContractState> {
 #[starknet::contract]
 pub mod PELPerpsSTRK20Bridge {
     use super::IPELPerpsSTRK20Bridge;
-    use super::super::types::u256_to_storage_key;
+    use super::super::types::{u256_to_storage_key, OpenNoteDeposit};
     use super::super::groth16_verifier::{IGroth16VerifierBN254Dispatcher, IGroth16VerifierBN254DispatcherTrait};
     use super::super::pel_perps_core::{IPELPerpsCoreDispatcher, IPELPerpsCoreDispatcherTrait};
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
@@ -264,11 +265,15 @@ pub mod PELPerpsSTRK20Bridge {
         // After recording the in-pool collateral, the bridge relays the proof to
         // PELPerpsCore.open_position_shielded so the REAL Groth16 proof is verified by the
         // Core itself and the position state transition happens on-chain.
+        //
+        // The privacy pool's `apply_actions` deserializes the invoke target's return as
+        // `Span<OpenNoteDeposit>` (see privacy_pool privacy.cairo `_apply_invoke_and_deposits`).
+        // The PEL bridge returns an EMPTY span — PEL never deposits into open notes.
         fn privacy_invoke_with_computation(
             ref self: ContractState,
             computed: Span<felt252>,
             invoke_additional_data: Span<felt252>,
-        ) {
+        ) -> Span<OpenNoteDeposit> {
             assert(get_caller_address() == self.pool.read(), 'UNAUTHORIZED_POOL');
             assert(computed.len() >= 4, 'MALFORMED_COMPUTED_PHASE');
             let commitment_key = *computed.at(0);
@@ -321,6 +326,10 @@ pub mod PELPerpsSTRK20Bridge {
                 commitment: commitment_key,
                 timestamp: now,
             });
+
+            // No open-note deposits: the pool's apply_actions expects an empty
+            // `Span<OpenNoteDeposit>` from the ComputeAndInvoke target.
+            array![].span()
         }
 
         // ── Views ──────────────────────────────────────────────────────────

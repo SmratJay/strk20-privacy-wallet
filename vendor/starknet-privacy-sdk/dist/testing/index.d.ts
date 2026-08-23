@@ -10,7 +10,6 @@ export { createMockProof, createMockCallAndProof, Withdrawal } from "./helpers.j
 export { compute_channel_key, compute_channel_marker, compute_subchannel_id, compute_subchannel_marker, compute_note_id, compute_nullifier, compute_enc_amount_hash, compute_enc_token_hash, compute_enc_private_key_hash, compute_enc_user_addr_hash, compute_enc_channel_key_hash, compute_enc_sender_addr_hash, } from "../utils/hashes.js";
 export { CallMockProofProvider } from "../internal/mock-proving.js";
 export { ScreeningCallMockProofProvider } from "./screening-mock-proving.js";
-export { exemptOpenNoteDepositor } from "./screening-policy.js";
 export { ProvingServiceProofProvider } from "../internal/proving-service-provider.js";
 export { TracingRpcProvider, TracedRpcError, type DecodedError } from "./tracing-provider.js";
 export { ContractDiscoveryProvider, type PoolContractInterface, } from "../internal/contract-discovery.js";

@@ -82,13 +82,6 @@ export declare const ShadowAccountAnonymizerABI: readonly [{
         readonly type: "@core::array::Array::<privacy::objects::OpenNoteDeposit>";
     }];
 }, {
-    readonly type: "struct";
-    readonly name: "core::array::Span::<core::starknet::contract_address::ContractAddress>";
-    readonly members: readonly [{
-        readonly name: "snapshot";
-        readonly type: "@core::array::Array::<core::starknet::contract_address::ContractAddress>";
-    }];
-}, {
     readonly type: "enum";
     readonly name: "core::bool";
     readonly variants: readonly [{
@@ -152,7 +145,7 @@ export declare const ShadowAccountAnonymizerABI: readonly [{
             readonly type: "core::array::Span::<shadow_account_anonymizer::shadow_account_anonymizer::OpenNote>";
         }];
         readonly outputs: readonly [{
-            readonly type: "(core::array::Span::<privacy::objects::OpenNoteDeposit>, core::array::Span::<core::starknet::contract_address::ContractAddress>)";
+            readonly type: "core::array::Span::<privacy::objects::OpenNoteDeposit>";
         }];
         readonly state_mutability: "external";
     }, {
@@ -345,6 +338,13 @@ export declare const ShadowAccountAnonymizerABI: readonly [{
     }, {
         readonly name: "SecurityGovernor";
         readonly type: "()";
+    }];
+}, {
+    readonly type: "struct";
+    readonly name: "core::array::Span::<core::starknet::contract_address::ContractAddress>";
+    readonly members: readonly [{
+        readonly name: "snapshot";
+        readonly type: "@core::array::Array::<core::starknet::contract_address::ContractAddress>";
     }];
 }, {
     readonly type: "interface";

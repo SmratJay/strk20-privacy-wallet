@@ -12,9 +12,18 @@ you exactly how to run them for **Starknet Sepolia**, then point the app at them
 | Transaction prover | `ghcr.io/starkware-libs/starknet-privacy/transaction-prover:PRIVACY-0.14.3-RC.2` | Stwo validity proofs (`starknet_proveTransaction`) | Yes |
 | Proof interceptor | `ghcr.io/starkware-libs/starknet-privacy/proof-interceptor:PRIVACY-0.14.3-RC.2` | Deposit screening sidecar | Optional |
 
-> All components in a row are tested together. Use the **matching** `PRIVACY-0.14.x` tag.
-> The Sepolia privacy pool (`0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91`)
-> must match the tag used by these services.
+### Version combination (intentional)
+
+This repo vendors the **official Privacy SDK from the `PRIVACY-0.14.3-RC.5` git tag** (package `0.14.3-rc.5`), which exposes the `computeAndInvoke` builder used by the PEL STRK20 OPEN path (PEL bridge `privacy_compute` → `privacy_invoke_with_computation`).
+
+- **SDK**     = official `PRIVACY-0.14.3-RC.5`
+- **Prover**  = `PRIVACY-0.14.3-RC.2`
+- **Discovery** = `PRIVACY-0.14.3-RC.2`
+- **Pathfinder** = `v0.22.7`
+
+This is an **intentional runtime compatibility combination**, not a set that was tested together upstream as one row. It must be **validated on-chain before it is considered production-ready** — see "Verify the stack" below. The SDK↔service wire protocols (`starknet_proveTransaction` / `starknet_specVersion`; `/health`, `/v1/sync/incoming_state`) are unchanged across these releases, and the deployed Sepolia privacy pool is the `CONTRACT_VERSION = '2.0'` pool that supports the `ComputeAndInvoke` action.
+
+> All components in a row are tested together upstream. Use matching revisions when deploying.
 
 ## 2. Node
 

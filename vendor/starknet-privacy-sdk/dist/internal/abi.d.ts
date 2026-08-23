@@ -576,19 +576,6 @@ export declare const PrivacyPoolABI: readonly [{
         readonly type: "core::starknet::contract_address::ContractAddress";
     }];
 }, {
-    readonly type: "enum";
-    readonly name: "privacy::objects::OpenNoteScreeningPolicy";
-    readonly variants: readonly [{
-        readonly name: "Required";
-        readonly type: "()";
-    }, {
-        readonly name: "Exempt";
-        readonly type: "()";
-    }, {
-        readonly name: "Delegated";
-        readonly type: "()";
-    }];
-}, {
     readonly type: "interface";
     readonly name: "privacy::interface::IViews";
     readonly items: readonly [{
@@ -754,13 +741,13 @@ export declare const PrivacyPoolABI: readonly [{
         readonly state_mutability: "view";
     }, {
         readonly type: "function";
-        readonly name: "get_open_note_screening_policy";
+        readonly name: "is_open_note_depositor_blocked";
         readonly inputs: readonly [{
             readonly name: "depositor";
             readonly type: "core::starknet::contract_address::ContractAddress";
         }];
         readonly outputs: readonly [{
-            readonly type: "privacy::objects::OpenNoteScreeningPolicy";
+            readonly type: "core::bool";
         }];
         readonly state_mutability: "view";
     }];
@@ -818,13 +805,13 @@ export declare const PrivacyPoolABI: readonly [{
         readonly state_mutability: "external";
     }, {
         readonly type: "function";
-        readonly name: "set_open_note_screening_policy";
+        readonly name: "set_open_note_depositor_blocked";
         readonly inputs: readonly [{
             readonly name: "depositor";
             readonly type: "core::starknet::contract_address::ContractAddress";
         }, {
-            readonly name: "policy";
-            readonly type: "privacy::objects::OpenNoteScreeningPolicy";
+            readonly name: "blocked";
+            readonly type: "core::bool";
         }];
         readonly outputs: readonly [];
         readonly state_mutability: "external";
@@ -1466,15 +1453,15 @@ export declare const PrivacyPoolABI: readonly [{
     }];
 }, {
     readonly type: "event";
-    readonly name: "privacy::events::OpenNoteScreeningPolicySet";
+    readonly name: "privacy::events::OpenNoteDepositorBlockSet";
     readonly kind: "struct";
     readonly members: readonly [{
         readonly name: "depositor";
         readonly type: "core::starknet::contract_address::ContractAddress";
         readonly kind: "key";
     }, {
-        readonly name: "policy";
-        readonly type: "privacy::objects::OpenNoteScreeningPolicy";
+        readonly name: "blocked";
+        readonly type: "core::bool";
         readonly kind: "data";
     }];
 }, {
@@ -1558,8 +1545,8 @@ export declare const PrivacyPoolABI: readonly [{
         readonly type: "privacy::events::ProofValidityBlocksSet";
         readonly kind: "nested";
     }, {
-        readonly name: "OpenNoteScreeningPolicySet";
-        readonly type: "privacy::events::OpenNoteScreeningPolicySet";
+        readonly name: "OpenNoteDepositorBlockSet";
+        readonly type: "privacy::events::OpenNoteDepositorBlockSet";
         readonly kind: "nested";
     }];
 }];

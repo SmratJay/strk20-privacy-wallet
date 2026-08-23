@@ -36,10 +36,19 @@ export async function checkStrk20OperatorStatus(): Promise<Strk20OperatorStatus>
   let discoveryReachable = false;
 
   if (proverConfigured) {
+    const proverBaseUrl = proverUrl as string;
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${proverUrl}/health`, { signal: controller.signal });
+      // The transaction prover is a JSON-RPC endpoint — its health is
+      // `starknet_specVersion`, NOT `GET /health` (which is the discovery service's
+      // health check). The SDK's ProvingService.isHealthy() calls starknet_specVersion.
+      const res = await fetch(proverBaseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'starknet_specVersion', params: [] }),
+        signal: controller.signal,
+      });
       clearTimeout(t);
       proverReachable = res.ok;
     } catch {
