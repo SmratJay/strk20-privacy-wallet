@@ -17,9 +17,11 @@ import {
   FileCheck2,
   Terminal,
   Layers,
-  TrendingUp
+  TrendingUp,
+  Copy,
+  Check
 } from 'lucide-react';
-import { shortenAddress } from '@/utils/formatters';
+import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 import { useNetwork } from '@/context/NetworkContext';
 import { sessionKeyService, ScopedSessionKey } from '@/services/sessionKeyService';
 import { useToast } from '@/components/Toast';
@@ -45,10 +47,33 @@ export const Header: React.FC<HeaderProps> = ({
   const [networkDropdownOpen, setNetworkDropdownOpen] = useState(false);
   const [productsDropdownOpen, setProductsDropdownOpen] = useState(false);
   const [sessionKey, setSessionKey] = useState<ScopedSessionKey | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const networkDropdownRef = useRef<HTMLDivElement>(null);
   const productsDropdownRef = useRef<HTMLDivElement>(null);
+
+  const handleCopyAddress = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!wallet.address) return;
+    
+    const success = await copyToClipboard(wallet.address);
+    if (success) {
+      setCopied(true);
+      showToast({
+        type: 'success',
+        title: 'Address Copied',
+        description: `${shortenAddress(wallet.address, 6)} copied to clipboard.`,
+      });
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      showToast({
+        type: 'error',
+        title: 'Failed to Copy',
+        description: 'Could not copy address to clipboard.',
+      });
+    }
+  };
 
   // Check active session key
   useEffect(() => {
@@ -273,16 +298,40 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Wallet Dropdown / Connect */}
-          <div className="relative" ref={dropdownRef}>
+          <div className="relative flex items-center" ref={dropdownRef}>
             {wallet.isConnected ? (
-              <button
-                onClick={() => setWalletDropdownOpen(!walletDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-mono font-bold text-white transition-all"
-              >
-                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>{shortenAddress(wallet.address)}</span>
-                <ChevronDown className="w-3 h-3 text-zinc-400" />
-              </button>
+              <div className="flex items-center bg-zinc-900 border border-zinc-700 hover:border-orrange-500 transition-all">
+                {/* Click to Copy Address Button */}
+                <button
+                  onClick={handleCopyAddress}
+                  title="Click to copy wallet address to clipboard"
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono font-bold text-white hover:bg-zinc-800 transition-all cursor-pointer group"
+                >
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>
+                    {copied ? (
+                      <span className="text-emerald-400 font-bold flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        COPIED!
+                      </span>
+                    ) : (
+                      shortenAddress(wallet.address)
+                    )}
+                  </span>
+                  {!copied && (
+                    <Copy className="w-3 h-3 text-zinc-400 group-hover:text-orrange-400 transition-colors ml-0.5" />
+                  )}
+                </button>
+
+                {/* Dropdown Toggle */}
+                <button
+                  onClick={() => setWalletDropdownOpen(!walletDropdownOpen)}
+                  title="Wallet options"
+                  className="px-2 py-1.5 border-l border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all cursor-pointer"
+                >
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => wallet.connectWallet()}
@@ -295,18 +344,49 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Wallet Menu */}
             {walletDropdownOpen && wallet.isConnected && (
-              <div className="absolute right-0 mt-2 w-56 bg-zinc-950 border border-zinc-800 shadow-2xl p-1.5 z-50 corner-box">
-                <div className="px-3 py-2 border-b border-zinc-800">
-                  <div className="text-[10px] font-mono uppercase text-zinc-500">Connected Wallet</div>
-                  <div className="text-xs font-mono font-bold text-white truncate">{wallet.address}</div>
-                </div>
-                <div className="p-1 space-y-0.5 font-mono text-xs">
+              <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-950 border border-zinc-800 shadow-2xl p-2 z-50 corner-box space-y-2">
+                {/* Clickable connected wallet card to copy */}
+                <button
+                  onClick={handleCopyAddress}
+                  className="w-full text-left p-2.5 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-orrange-500/50 transition-all group cursor-pointer"
+                  title="Click to copy full address"
+                >
+                  <div className="flex items-center justify-between text-[10px] font-mono uppercase text-zinc-500 font-bold">
+                    <span>Connected Wallet</span>
+                    <span className="text-orrange-400 font-bold flex items-center gap-1 group-hover:underline">
+                      {copied ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div className="text-xs font-mono font-bold text-white break-all mt-1">{wallet.address}</div>
+                </button>
+
+                <div className="p-1 space-y-1 font-mono text-xs">
+                  <button
+                    onClick={handleCopyAddress}
+                    className="w-full flex items-center justify-between px-2.5 py-2 text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Copy className="w-3.5 h-3.5 text-orrange-400" />
+                      <span>Copy Address</span>
+                    </div>
+                    {copied && <span className="text-[10px] text-emerald-400 font-bold">✓ Copied</span>}
+                  </button>
                   <button
                     onClick={() => {
                       onOpenPublishModal();
                       setWalletDropdownOpen(false);
                     }}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 text-zinc-300 hover:bg-zinc-900 hover:text-orrange-400 transition-colors"
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-zinc-300 hover:bg-zinc-900 hover:text-orrange-400 transition-colors cursor-pointer"
                   >
                     <Key className="w-3.5 h-3.5 text-orrange-400" />
                     <span>Viewing Key Escrow</span>
@@ -315,17 +395,22 @@ export const Header: React.FC<HeaderProps> = ({
                     href={`${currentNetwork.explorerUrl}/contract/${wallet.address}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full flex items-center gap-2 px-2 py-1.5 text-zinc-300 hover:bg-zinc-900 transition-colors"
+                    className="w-full flex items-center justify-between px-2.5 py-2 text-zinc-300 hover:bg-zinc-900 transition-colors"
                   >
-                    <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>Explorer Record</span>
+                    <span className="flex items-center gap-2">
+                      <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+                      <span>Explorer Record</span>
+                    </span>
                   </a>
+
+                  <div className="h-px bg-zinc-900 my-1" />
+
                   <button
                     onClick={() => {
                       wallet.disconnectWallet();
                       setWalletDropdownOpen(false);
                     }}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 text-rose-400 hover:bg-rose-500/10 transition-colors"
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                   >
                     <AlertCircle className="w-3.5 h-3.5" />
                     <span>Disconnect</span>
