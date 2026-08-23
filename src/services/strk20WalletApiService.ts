@@ -399,6 +399,7 @@ export const strk20WalletApiService = {
   getPrivateReceivingRequirement,
   enablePrivateReceiving,
   switchWalletNetwork,
+  checkAccountDeployed,
   isRecipientReadinessError,
   isAccountFinalizingError,
   shield,
@@ -618,12 +619,27 @@ export async function enablePrivateReceiving(
     }
     // NOT_REGISTERED on an INVOKE (vs. the balances read) means the wallet could not
     // transparently register — per the spec, registration is what should happen here.
-    // The documented cause is insufficient block finality for the account/prover.
+    // The usual causes are account not deployed yet, or insufficient block finality.
     if (code === 118 || isAccountFinalizingError(err)) {
+      let deployed: boolean | null = null;
+      if (wallet?.address) {
+        try {
+          deployed = await checkAccountDeployed(String(wallet.address));
+        } catch {
+          deployed = null;
+        }
+      }
+      if (deployed === false) {
+        return {
+          status: 'ACCOUNT_FINALIZING',
+          message:
+            'Your Ready account is not deployed on Sepolia yet. Send it a small amount of Sepolia ETH/STRK via the faucet to activate it, then retry.',
+        };
+      }
       return {
         status: 'ACCOUNT_FINALIZING',
         message:
-          'Your account is still finalizing. Wait a few blocks (~10 blocks), then try again.',
+          'Your account was recently created and is still finalizing on Sepolia. Wait ~10 blocks, then retry.',
       };
     }
     return { status: 'FAILED', message: translateWalletError(err).userMessage };
@@ -689,6 +705,31 @@ export interface WalletNetworkSwitchResult {
   status: WalletNetworkSwitchStatus;
   chainId?: string;
   message?: string;
+}
+
+/**
+ * Check whether `address` is actually deployed on the target chain (RPC class-hash
+ * lookup). Used to give precise guidance when the wallet cannot register yet:
+ *   - false  → account is not deployed (counterfactual) → fund/activate via faucet first
+ *   - true   → account is deployed → the issue is block finality
+ *   - null   → the RPC could not answer (don't guess)
+ */
+export async function checkAccountDeployed(
+  address: string,
+  rpcUrl?: string,
+): Promise<boolean | null> {
+  try {
+    const { RpcProvider } = await import('starknet');
+    const provider = new RpcProvider({
+      nodeUrl: rpcUrl || 'https://api.cartridge.gg/x/starknet/sepolia',
+    });
+    await provider.getClassHashAt(address);
+    return true;
+  } catch (err: any) {
+    const msg = String(err?.message || '');
+    if (/contract not found|not found|not deployed|is not deployed/i.test(msg)) return false;
+    return null;
+  }
 }
 
 /**

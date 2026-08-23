@@ -251,8 +251,22 @@ function TerminalContent() {
       const t = strk20WalletApiService.translateWalletError(err);
       // User refused the balance-sharing consent -> remember for the session.
       setPrivateBalancePermission(t.code === 113 ? 'DENIED' : 'UNKNOWN');
+      // Surface WHY the read failed instead of leaving the button silently doing nothing.
+      if (t.code === 118) {
+        showToast({
+          type: 'error',
+          title: 'Private receiving not enabled',
+          description: 'Use "Enable Private Receiving" first to register this address for STRK20.',
+        });
+      } else if (t.code !== 113) {
+        showToast({
+          type: 'error',
+          title: 'Private balances unavailable',
+          description: t.userMessage,
+        });
+      }
     }
-  }, [wallet, currentNetwork]);
+  }, [wallet, currentNetwork, showToast]);
 
   // Initial load: public balances only (no wallet permission prompt on render).
   useEffect(() => {

@@ -146,6 +146,7 @@ export const PrivateBalanceAccessNote: React.FC<{
       <span>Private balance access not granted.</span>
       {permission === 'UNKNOWN' && (
         <button
+          type="button"
           onClick={onRequest}
           className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
         >
@@ -275,6 +276,32 @@ export const PrivateReceivingCard: React.FC<{
     state.step === 'SUBMITTED' ||
     state.step === 'CONFIRMING';
 
+  // Probe readiness WITHOUT submitting anything — used after account finalization.
+  const handleCheckReadiness = useCallback(async () => {
+    setState({ step: 'CHECKING' });
+    const req = await strk20WalletApiService.getPrivateReceivingRequirement(wallet);
+    if (req === 'READY') {
+      setState({ step: 'READY' });
+    } else if (req === 'NEEDS_REGISTRATION') {
+      setState({
+        step: 'ERROR',
+        status: 'ACCOUNT_FINALIZING',
+        message:
+          'Still not registered. Fund/activate your account on Sepolia, wait ~10 blocks, then check again or Enable Private Receiving.',
+      });
+    } else if (req === 'UNSUPPORTED') {
+      setState({
+        step: 'ERROR',
+        status: 'UNSUPPORTED',
+        message: ERROR_COPY.UNSUPPORTED || 'Wallet does not support STRK20 privacy.',
+      });
+    } else if (req === 'WRONG_NETWORK') {
+      setState({ step: 'ERROR', status: 'WRONG_NETWORK', message: ERROR_COPY.WRONG_NETWORK || 'Switch to Starknet Sepolia.' });
+    } else {
+      setState({ step: 'IDLE' });
+    }
+  }, [wallet]);
+
   return (
     <div className="p-4 bg-zinc-900/60 border border-zinc-800 space-y-3">
       <div className="flex items-center justify-between">
@@ -284,6 +311,7 @@ export const PrivateReceivingCard: React.FC<{
         </div>
         {!inProgress && state.step !== 'IDLE' && (
           <button
+            type="button"
             onClick={() => setState({ step: 'IDLE' })}
             className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-orrange-400 uppercase font-bold transition-colors cursor-pointer"
           >
@@ -330,6 +358,7 @@ export const PrivateReceivingCard: React.FC<{
             </div>
           </div>
           <button
+            type="button"
             onClick={handleEnable}
             className="w-full px-3 py-2.5 bg-orrange-500 hover:bg-orrange-400 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
           >
@@ -367,6 +396,7 @@ export const PrivateReceivingCard: React.FC<{
           ) : null}
           {state.step === 'CONFIRMING' && (
             <button
+              type="button"
               onClick={() => setState({ step: 'IDLE' })}
               className="text-[10px] text-zinc-400 hover:text-orrange-400 uppercase font-bold cursor-pointer"
             >
@@ -415,13 +445,37 @@ export const PrivateReceivingCard: React.FC<{
               )}
             </div>
           </div>
-          <button
-            onClick={() => setState({ step: 'IDLE' })}
-            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-orrange-400 uppercase font-bold transition-colors cursor-pointer"
-          >
-            <ArrowRight className="w-3 h-3" />
-            <span>Try again</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {state.status === 'ACCOUNT_FINALIZING' && (
+              <>
+<button
+                  type="button"
+                  onClick={handleCheckReadiness}
+                  className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                >
+                  Check readiness
+                </button>
+                {currentNetwork.faucetUrl && (
+                  <a
+                    href={currentNetwork.faucetUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold uppercase transition-colors"
+                  >
+                    Sepolia Faucet
+                  </a>
+                )}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setState({ step: 'IDLE' })}
+              className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-orrange-400 uppercase font-bold transition-colors cursor-pointer"
+            >
+              <ArrowRight className="w-3 h-3" />
+              <span>Try again</span>
+            </button>
+          </div>
         </div>
       )}
     </div>
