@@ -3,10 +3,11 @@
 @tailwind utilities;
 
 :root {
-  --background: #040406;
+  --background: #0a0a0f;
   --foreground: #f4f4f5;
   --orrange-primary: #FF6B00;
   --orrange-glow: #FF8800;
+  --privacy-accent: #8b5cf6;
 }
 
 body {
@@ -15,15 +16,15 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  background-image: radial-gradient(rgba(255, 107, 0, 0.05) 1px, transparent 0);
-  background-size: 24px 24px;
+  background-image: radial-gradient(rgba(139, 92, 246, 0.04) 1px, transparent 0);
+  background-size: 28px 28px;
   background-attachment: fixed;
 }
 
 /* Custom Selection */
 ::selection {
-  background-color: #FF6B00;
-  color: #000000;
+  background-color: #8b5cf6;
+  color: #ffffff;
 }
 
 /* High-tech Cyberpunk Corner Brackets */

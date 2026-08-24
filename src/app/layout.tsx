@@ -2,11 +2,12 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 import { NetworkProvider } from '@/context/NetworkContext';
+import { WalletProvider } from '@/context/WalletContext';
 
 export const metadata: Metadata = {
-  title: 'orrange // Private Execution Layer for Starknet',
+  title: 'STRK20 Private Wallet',
   description:
-    'Web3 modern SaaS and Private Execution Layer on Starknet. Intent-based routing, shielded UTXO notes, private perpetuals, and zero-knowledge compliance.',
+    'Receive privately, spend freely. A consumer privacy wallet for STRK20 on Starknet.',
 };
 
 export default function RootLayout({
@@ -24,10 +25,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased selection:bg-orrange-500 selection:text-black">
+      <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased">
         <NetworkProvider>
           <ToastProvider>
-            {children}
+            <WalletProvider>{children}</WalletProvider>
           </ToastProvider>
         </NetworkProvider>
       </body>
