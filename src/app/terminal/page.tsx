@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { 
   ShieldCheck, 
@@ -227,9 +227,10 @@ function TerminalContent() {
     }
   }, [wallet, privateBalancePermission, currentNetwork]);
 
-  // Explicit user action: request the wallet to share private balances. This is the
-  // ONLY place the "Share private balances" consent is triggered.
-  const requestPrivateBalanceAccess = useCallback(async () => {
+  // Request the wallet to share private balances. On connect this runs once
+  // automatically (silent) so the user sees balances with no extra button; the manual
+  // buttons pass { silent: false } to surface failures.
+  const requestPrivateBalanceAccess = useCallback(async (opts?: { silent?: boolean }) => {
     if (!wallet.isConnected) return;
     try {
       const entries = await strk20WalletApiService.getPrivateBalances(
@@ -251,6 +252,7 @@ function TerminalContent() {
       const t = strk20WalletApiService.translateWalletError(err);
       // User refused the balance-sharing consent -> remember for the session.
       setPrivateBalancePermission(t.code === 113 ? 'DENIED' : 'UNKNOWN');
+      if (opts?.silent) return;
       // Surface WHY the read failed instead of leaving the button silently doing nothing.
       if (t.code === 118) {
         showToast({
@@ -273,10 +275,30 @@ function TerminalContent() {
     refreshPublicBalances();
   }, [refreshPublicBalances]);
 
-  // New wallet session -> reset the session-level private-balance permission.
+  // New wallet session -> reset the session-level private-balance permission, then
+  // auto-request it once (silent) so private balances show up right after connecting
+  // without a separate button press. The wallet shows its own consent prompt once.
+  // Keyed only on address so it never re-fires (which would re-prompt the wallet).
+  const requestPrivateBalanceAccessRef = useRef(requestPrivateBalanceAccess);
   useEffect(() => {
+    requestPrivateBalanceAccessRef.current = requestPrivateBalanceAccess;
+  }, [requestPrivateBalanceAccess]);
+
+  const autoPrivateRequestRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wallet.isConnected || !wallet.address) {
+      autoPrivateRequestRef.current = null;
+      setPrivateBalancePermission('UNKNOWN');
+      return;
+    }
     setPrivateBalancePermission('UNKNOWN');
-  }, [wallet.isConnected, wallet.address]);
+    if (autoPrivateRequestRef.current === wallet.address) return;
+    autoPrivateRequestRef.current = wallet.address;
+    const t = setTimeout(() => {
+      void requestPrivateBalanceAccessRef.current({ silent: true });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [wallet.isConnected, wallet.address, setPrivateBalancePermission]);
 
   // Auto-sync the app network to the connected wallet's chain. The whole deployed
   // protocol (STRK20 pool, PEL contracts, test USDC) is Sepolia-only; without this,

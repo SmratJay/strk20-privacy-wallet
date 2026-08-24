@@ -94,8 +94,16 @@ export const BalanceCards: React.FC<BalanceCardsProps> = ({
             </button>
           </div>
         ) : accessDenied ? (
-          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400">
-            Private balance access not granted.
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between gap-2">
+            <span>Private balance access was declined.</span>
+            <button
+              type="button"
+              onClick={handleRequestAccess}
+              disabled={requestingAccess}
+              className="px-2.5 py-1 text-[10px] font-bold uppercase text-orrange-400 hover:text-orrange-300 border border-orrange-500/30 hover:border-orrange-500/60 transition-colors cursor-pointer shrink-0"
+            >
+              {requestingAccess ? 'Requesting…' : 'Retry access'}
+            </button>
           </div>
         ) : !walletReadyForLane ? (
           <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between gap-2">

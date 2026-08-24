@@ -143,16 +143,18 @@ export const PrivateBalanceAccessNote: React.FC<{
   if (permission === 'GRANTED') return null;
   return (
     <div className="p-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between gap-2">
-      <span>Private balance access not granted.</span>
-      {permission === 'UNKNOWN' && (
-        <button
-          type="button"
-          onClick={onRequest}
-          className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer"
-        >
-          Share private balances
-        </button>
-      )}
+      <span>
+        {permission === 'DENIED'
+          ? 'Private balance access was declined.'
+          : 'Private balance access not granted yet.'}
+      </span>
+      <button
+        type="button"
+        onClick={onRequest}
+        className="px-3 py-1.5 bg-orrange-500 hover:bg-orrange-400 disabled:opacity-50 text-black font-bold text-[10px] uppercase transition-colors cursor-pointer shrink-0"
+      >
+        Share private balances
+      </button>
     </div>
   );
 };
