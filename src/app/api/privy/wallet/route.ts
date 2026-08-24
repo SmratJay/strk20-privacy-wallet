@@ -18,11 +18,13 @@ function toWallet(w: any): ResolvedWallet {
 }
 
 /**
- * Get (or create) the authenticated user's Starknet embedded wallet.
+ * Create a SERVER-MANAGED Starknet wallet for the authenticated user.
  *
- * Idempotent: reuses an existing user-owned Starknet wallet if present, otherwise creates
- * one. Returns `{ id, address, publicKey }` — the on-chain Ready account address is DERIVED
- * from `publicKey` client-side (see src/privacy/privy/ready.ts).
+ * Server-managed wallets are signed with app-secret Basic auth (no user JWT exchange), which
+ * avoids Privy's `user_signers/authenticate` gate ("Invalid JWT token provided" when the
+ * user-signer feature is not enabled for the app). The userId -> walletId mapping is kept
+ * client-side (encrypted localStorage) since there is no server DB; see the compatibility
+ * audit for the DB-backed / user-owned alternative.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -31,32 +33,15 @@ export async function POST(req: NextRequest) {
     if (!token) {
       return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
     }
-    const claims = await privy.verifyAuthToken(token);
-    const userId = claims.userId;
+    // Gate on a valid Privy session (prevents anonymous wallet creation). The Starknet
+    // wallet itself is created server-managed (no owner), so it is not tied to the user
+    // in Privy's model — PEL maintains the mapping.
+    await privy.verifyAuthToken(token);
 
-    try {
-      const user: any = await privy.getUserById(userId);
-      const accounts: any[] = user?.linkedAccounts || user?.linked_accounts || [];
-      const stark = accounts.find(
-        (a: any) =>
-          a?.type === "wallet" &&
-          (a?.chain_type === "starknet" || a?.chainType === "starknet"),
-      );
-      if (stark?.id) {
-        const wallet: any = await privy.walletApi.getWallet({ id: stark.id });
-        return NextResponse.json({ wallet: toWallet(wallet) });
-      }
-    } catch {
-      // If the lookup fails, fall through to creating a wallet.
-    }
-
-    const created: any = await privy.walletApi.createWallet({
-      chainType: "starknet",
-      owner: { userId },
-    });
+    const created: any = await privy.walletApi.createWallet({ chainType: "starknet" });
     return NextResponse.json({ wallet: toWallet(created) });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "wallet resolution failed";
+    const message = err instanceof Error ? err.message : "wallet creation failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -309,3 +309,13 @@ official reference `starknet-edu/starknet-privy-demo`. All critical claims are s
   instead of using Privy's `wallet.address`.
 - `.env.example`: added `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `NEXT_PUBLIC_PRIVY_APP_ID`,
   `NEXT_PUBLIC_READY_CLASSHASH`.
+
+## Operability note — user-owned signing gate
+
+Privy's user-JWT → authorization-key exchange (`walletApi.generateUserSigner`,
+Wallet API `user_signers/authenticate`) is **disabled by default** for apps and returns
+`{"error": "Invalid JWT token provided", "code": "invalid_data"}` until Privy enables it for
+your app. The signing path therefore uses **server-managed Starknet wallets**: created without
+an owner, signed via `raw_sign` with app-secret Basic auth (live-verified). The userId → walletId
+mapping is kept client-side (localStorage) pending a server DB; the user-owned path is the
+production alternative once Privy enables the feature.

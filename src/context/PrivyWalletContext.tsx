@@ -67,7 +67,19 @@ const UNAVAILABLE: PrivyWalletContextValue = {
 
 const PrivyWalletContext = createContext<PrivyWalletContextValue>(UNAVAILABLE);
 
-async function resolveStarknetWallet(token: string): Promise<ResolvedWallet> {
+async function resolveStarknetWallet(userId: string, token: string): Promise<ResolvedWallet> {
+  const cacheKey = `pel_privy_wallet_${userId.toLowerCase()}`;
+
+  try {
+    const cached = typeof localStorage !== "undefined" ? localStorage.getItem(cacheKey) : null;
+    if (cached) {
+      const parsed = JSON.parse(cached) as ResolvedWallet;
+      if (parsed.id && parsed.address && parsed.publicKey) return parsed;
+    }
+  } catch {
+    // Ignore corrupt cache; fall through to create.
+  }
+
   const res = await fetch("/api/privy/wallet", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -85,7 +97,13 @@ async function resolveStarknetWallet(token: string): Promise<ResolvedWallet> {
   if (!publicKey) throw new Error("Privy Starknet wallet response missing public key.");
   // The real on-chain account is the DERIVED Ready address (NOT Privy wallet.address).
   const address = computeReadyAccountAddress(publicKey);
-  return { id: wallet.id, address, publicKey };
+  const result: ResolvedWallet = { id: wallet.id, address, publicKey };
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(cacheKey, JSON.stringify(result));
+  } catch {
+    // Cache write is best-effort.
+  }
+  return result;
 }
 
 function buildAdapter(): PrivyStrk20Adapter {
@@ -116,7 +134,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       try {
         const token = await getAccessToken();
         if (!token) throw new Error("Privy access token unavailable.");
-        const wallet = await resolveStarknetWallet(token);
+        const wallet = await resolveStarknetWallet(user.id, token);
         const signingClient = fetchSigningClient("/api/privy/sign", () => getAccessToken());
         const provider = new RpcProvider({ nodeUrl: getNetworkConfig("sepolia").rpcUrls[0] });
         const account = StarknetAccountAdapter.create({
