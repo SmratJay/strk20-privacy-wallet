@@ -38,6 +38,8 @@ export interface PrivyWalletContextValue {
   address: string | null;
   account: Account | null;
   viewingKey: bigint | null;
+  /** True after the STRK20 viewing key has been registered on-chain for this user. */
+  privateReceivingEnabled: boolean;
   login: (opts?: { email?: string; google?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   shield: (token: string, amountBase: bigint) => Promise<Strk20ExecuteReceipt>;
@@ -56,6 +58,7 @@ const UNAVAILABLE: PrivyWalletContextValue = {
   address: null,
   account: null,
   viewingKey: null,
+  privateReceivingEnabled: false,
   login: async () => {},
   logout: async () => {},
   shield: async () => { throw new Error("Privy is not configured."); },
@@ -120,6 +123,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
 
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [privateReceivingEnabled, setPrivateReceivingEnabled] = useState(false);
   const [resolved, setResolved] = useState<{
     walletId: string;
     address: string;
@@ -181,6 +185,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
 
   const logout = useCallback(async () => {
     setResolved(null);
+    setPrivateReceivingEnabled(false);
     await privyLogout();
   }, [privyLogout]);
 
@@ -215,7 +220,9 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
 
   const register = useCallback(async () => {
     const user = requireReady();
-    return buildAdapter().register(user);
+    const receipt = await buildAdapter().register(user);
+    setPrivateReceivingEnabled(true);
+    return receipt;
   }, [requireReady]);
 
   const getPrivateBalance = useCallback(
@@ -236,6 +243,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       address: resolved?.address ?? null,
       account: resolved?.account ?? null,
       viewingKey: resolved?.viewingKey ?? null,
+      privateReceivingEnabled,
       login,
       logout,
       shield,
@@ -244,7 +252,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       register,
       getPrivateBalance,
     }),
-    [ready, authenticated, isConnecting, error, resolved, login, logout, shield, unshield, transfer, register, getPrivateBalance],
+    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, login, logout, shield, unshield, transfer, register, getPrivateBalance],
   );
 
   return <PrivyWalletContext.Provider value={value}>{children}</PrivyWalletContext.Provider>;

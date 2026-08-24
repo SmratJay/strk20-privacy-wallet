@@ -38,8 +38,7 @@ export const BalanceCard: React.FC = () => {
       return;
     }
     let cancelled = false;
-    setPrivyLoading(true);
-    (async () => {
+    const load = async () => {
       const map = new Map<string, Row>();
       for (const t of currentNetwork.tokens) {
         const key = t.address.toLowerCase();
@@ -81,9 +80,14 @@ export const BalanceCard: React.FC = () => {
       }
       if (!cancelled) setPrivyBalances(map);
       if (!cancelled) setPrivyLoading(false);
-    })();
+    };
+    setPrivyLoading(true);
+    void load();
+    // Keep the private balance fresh (matches the Ready lane's polling).
+    const timer = setInterval(load, 20000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [privyConnected, privy.address, privy, currentNetwork]);
 

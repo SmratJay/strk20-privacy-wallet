@@ -12,6 +12,7 @@ import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { EnablePrivateReceiving } from '@/components/wallet/EnablePrivateReceiving';
 import { PrivyConnect } from '@/components/wallet/PrivyConnect';
 import { useWallet } from '@/context/WalletContext';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -22,6 +23,9 @@ const greeting = () => {
 
 export default function Home() {
   const { wallet, transactions, privateReceivingState } = useWallet();
+  const privy = usePrivyWallet();
+  const privyConnected = privy.authenticated && privy.account !== null;
+  const showEnablePrivate = privateReceivingState === 'NEEDS_REGISTRATION' || (privyConnected && !privy.privateReceivingEnabled);
 
   return (
     <AppShell>
@@ -44,7 +48,7 @@ export default function Home() {
 
         {wallet.isConnected && (
           <>
-            {privateReceivingState === 'NEEDS_REGISTRATION' && <EnablePrivateReceiving />}
+            {showEnablePrivate && <EnablePrivateReceiving />}
 
             <BalanceCard />
 

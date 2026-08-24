@@ -7,10 +7,14 @@ import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { SendForm } from '@/components/wallet/SendForm';
 import { EnablePrivateReceiving } from '@/components/wallet/EnablePrivateReceiving';
 import { useWallet } from '@/context/WalletContext';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 
 function SendContent() {
   const searchParams = useSearchParams();
   const { wallet, privateReceivingState } = useWallet();
+  const privy = usePrivyWallet();
+  const privyConnected = privy.authenticated && privy.account !== null;
+  const showEnablePrivate = privateReceivingState === 'NEEDS_REGISTRATION' || (privyConnected && !privy.privateReceivingEnabled);
 
   const modeParam = searchParams.get('mode');
   const initialMode =
@@ -29,7 +33,7 @@ function SendContent() {
         <ConnectGate />
       ) : (
         <>
-          {privateReceivingState === 'NEEDS_REGISTRATION' && <EnablePrivateReceiving />}
+          {showEnablePrivate && <EnablePrivateReceiving />}
           <SendForm initialMode={initialMode} />
         </>
       )}

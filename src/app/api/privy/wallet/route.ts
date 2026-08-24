@@ -18,13 +18,13 @@ function toWallet(w: any): ResolvedWallet {
 }
 
 /**
- * Create a SERVER-MANAGED Starknet wallet for the authenticated user.
+ * Get (or create) the authenticated user's SERVER-MANAGED Starknet wallet.
  *
- * Server-managed wallets are signed with app-secret Basic auth (no user JWT exchange), which
- * avoids Privy's `user_signers/authenticate` gate ("Invalid JWT token provided" when the
- * user-signer feature is not enabled for the app). The userId -> walletId mapping is kept
- * client-side (encrypted localStorage) since there is no server DB; see the compatibility
- * audit for the DB-backed / user-owned alternative.
+ * Stable per user: the walletId is recorded in the Privy user's custom metadata
+ * (`starknetWalletId`), so every session/device for the same Google account resolves the SAME
+ * wallet. (Previously a new wallet was minted each time the client cache was missing — hence
+ * duplicate wallets in the Privy dashboard.) Signing uses app-secret Basic auth, avoiding the
+ * user-signer gate.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -33,15 +33,31 @@ export async function POST(req: NextRequest) {
     if (!token) {
       return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
     }
-    // Gate on a valid Privy session (prevents anonymous wallet creation). The Starknet
-    // wallet itself is created server-managed (no owner), so it is not tied to the user
-    // in Privy's model — PEL maintains the mapping.
-    await privy.verifyAuthToken(token);
+    const claims = await privy.verifyAuthToken(token);
+    const userId = claims.userId;
 
+    // 1) Reuse the user's existing wallet (stable mapping in Privy custom metadata).
+    try {
+      const user: any = await privy.getUserById(userId);
+      const walletId = user?.customMetadata?.starknetWalletId;
+      if (typeof walletId === "string" && walletId) {
+        const wallet: any = await privy.walletApi.getWallet({ id: walletId });
+        if (wallet?.id) return NextResponse.json({ wallet: toWallet(wallet) });
+      }
+    } catch {
+      // Lookup failed — fall through to create.
+    }
+
+    // 2) Create a server-managed Starknet wallet and record the mapping.
     const created: any = await privy.walletApi.createWallet({ chainType: "starknet" });
+    try {
+      await privy.setCustomMetadata(userId, { starknetWalletId: String(created.id) });
+    } catch {
+      // Metadata write is best-effort; the wallet is still returned and cached client-side.
+    }
     return NextResponse.json({ wallet: toWallet(created) });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "wallet creation failed";
+    const message = err instanceof Error ? err.message : "wallet resolution failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

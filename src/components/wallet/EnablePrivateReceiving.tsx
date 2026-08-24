@@ -3,10 +3,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 import {
   strk20WalletApiService,
   PrivateReceivingStep,
   PrivateReceivingEnableStatus,
+  waitForStrk20Confirmation,
 } from '@/services/strk20WalletApiService';
 import { parseTokenAmount } from '@/utils/formatters';
 
@@ -27,18 +29,39 @@ const ERROR_COPY: Partial<Record<PrivateReceivingEnableStatus, string>> = {
     'Your account is still finalizing. Wait a few blocks (~10 blocks), then retry.',
 };
 
+function privyErrorToMessage(err: any): string {
+  const msg = String(err?.message || '');
+  const lower = msg.toLowerCase();
+  if (/not deployed|not found|contract not found|is not deployed/i.test(lower)) {
+    return 'Your Starknet account is not deployed yet. Fund it with a small amount of Sepolia ETH/STRK via the faucet, then retry.';
+  }
+  if (/insufficient.*balance|not enough.*funds|insufficient funds|out of fee|fee.*insufficient/i.test(lower)) {
+    return 'You need a small amount of STRK in your Starknet account for network fees. Fund it via the Sepolia faucet, then retry.';
+  }
+  if (/prover|proof|proving|502|504|timeout|unavailable|offline/i.test(lower)) {
+    return 'The STRK20 privacy service is temporarily unavailable. Your funds are unaffected — try again in a moment.';
+  }
+  if (/discover|indexer|no such host|fetch failed/i.test(lower)) {
+    return "We couldn't reach the STRK20 discovery service. Check the operator configuration and retry.";
+  }
+  return msg || 'Could not enable private receiving. Check the operator configuration and retry.';
+}
+
 /**
- * First-run onboarding: enables private receiving. For the Wallet API lane, there is no
- * standalone "register" RPC — the wallet transparently registers the viewing key + channel
- * and shields the first note in a SINGLE REAL transaction when the user performs a STRK20
- * action. So "enable private receiving" here performs a real deposit (the wallet registers in
- * the same tx). It therefore requires a small funded balance. We never fake registration:
- * READY is only shown after the wallet confirms the on-chain transaction and a re-probe of
- * readiness succeeds. A zero-balance user is surfaced as a blocker with a faucet path rather
- * than a generic error.
+ * First-run onboarding: enables private receiving.
+ *
+ * READY lane (Wallet API): registration is transparent — the wallet registers the viewing key +
+ * channel and shields the first note in one real transaction, so a small funded balance is needed.
+ *
+ * PRIVY lane (STRK20 SDK): calls `register()` which submits a real SetViewingKey registration to
+ * the pool (via the operator proving/discovery stack), then reconciles on-chain. Requires the
+ * derived Ready account to be funded/deployed and the operator services configured.
  */
 export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ onEnabled }) => {
   const { wallet, currentNetwork, refreshAfterMutation, setPrivateReceivingState } = useWallet();
+  const privy = usePrivyWallet();
+  const privyConnected = privy.authenticated && privy.account !== null && privy.viewingKey !== null;
+
   const faucetUrl = currentNetwork.faucetUrl;
   const [state, setState] = useState<State>({ step: 'IDLE' });
   const [tokenSymbol, setTokenSymbol] = useState(currentNetwork.tokens[0]?.symbol ?? '');
@@ -48,7 +71,12 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
     currentNetwork.tokens.find((t) => t.symbol === tokenSymbol) || currentNetwork.tokens[0];
 
   const checkReadiness = useCallback(async () => {
-    if (!wallet.isConnected) return;
+    if (privyConnected && privy.privateReceivingEnabled) {
+      setPrivateReceivingState('READY');
+      setState({ step: 'READY' });
+      return;
+    }
+    if (!wallet.isConnected || privyConnected) return;
     setState({ step: 'CHECKING' });
     const req = await strk20WalletApiService.getPrivateReceivingRequirement(wallet);
     if (req === 'READY') {
@@ -60,15 +88,14 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
     } else {
       setState({ step: 'IDLE' });
     }
-  }, [wallet, setPrivateReceivingState]);
+  }, [wallet, privyConnected, privy.privateReceivingEnabled, setPrivateReceivingState]);
 
-  // Probe once on mount so already-registered users see "ready" immediately.
   useEffect(() => {
-    if (wallet.isConnected) {
+    if (wallet.isConnected || privyConnected) {
       void checkReadiness();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet.isConnected]);
+  }, [wallet.isConnected, privyConnected]);
 
   const handleStep = useCallback((step: PrivateReceivingStep, detail?: { transactionHash?: string }) => {
     setState((prev) => {
@@ -90,6 +117,30 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
   }, []);
 
   const handleEnable = useCallback(async () => {
+    if (privyConnected) {
+      setState({ step: 'CHECKING' });
+      try {
+        setState({ step: 'WALLET_APPROVAL' });
+        const receipt = await privy.register();
+        setState({ step: 'SUBMITTED', txHash: receipt.transactionHash });
+        setState({ step: 'CONFIRMING', txHash: receipt.transactionHash });
+        const reconcile = await waitForStrk20Confirmation(receipt.transactionHash);
+        if (reconcile === 'CONFIRMED') {
+          setPrivateReceivingState('READY');
+          setState({ step: 'READY' });
+          await refreshAfterMutation();
+          onEnabled?.();
+        } else if (reconcile === 'REVERTED') {
+          setState({ step: 'ERROR', message: 'The registration transaction reverted on-chain.' });
+        } else {
+          setState({ step: 'SUBMITTED', txHash: receipt.transactionHash });
+        }
+      } catch (err: any) {
+        setState({ step: 'ERROR', message: privyErrorToMessage(err) });
+      }
+      return;
+    }
+
     if (!selectedToken) return;
     const amountBase = parseTokenAmount(amount, selectedToken.decimals);
     if (amountBase <= 0n) {
@@ -122,13 +173,15 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
         message: err?.message || 'Could not reach the wallet. Check the connection and retry.',
       });
     }
-  }, [wallet, selectedToken, amount, handleStep, setPrivateReceivingState, refreshAfterMutation, onEnabled]);
+  }, [privyConnected, privy, selectedToken, amount, handleStep, setPrivateReceivingState, refreshAfterMutation, onEnabled, wallet]);
 
   const busy =
     state.step === 'CHECKING' ||
     state.step === 'WALLET_APPROVAL' ||
     state.step === 'SUBMITTED' ||
     state.step === 'CONFIRMING';
+
+  const isPrivy = privyConnected;
 
   return (
     <div className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5 space-y-3">
@@ -139,8 +192,9 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
         <div>
           <div className="text-sm font-semibold text-zinc-100">Enable private payments</div>
           <div className="text-[12px] text-zinc-400">
-            This lets your wallet privately detect payments sent to you. Setup also shields your
-            first note, so a small funded balance is needed.
+            {isPrivy
+              ? 'Registers your private viewing key so only you can detect payments sent to you.'
+              : 'This lets your wallet privately detect payments sent to you. Setup also shields your first note, so a small funded balance is needed.'}
           </div>
         </div>
       </div>
@@ -156,7 +210,7 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
         <div className="flex items-center gap-2 text-sm text-zinc-300">
           <Loader2 className="w-4 h-4 text-violet-300 animate-spin" />
           {state.step === 'CHECKING' && 'Checking privacy setup…'}
-          {state.step === 'WALLET_APPROVAL' && 'Approve the privacy setup in your wallet…'}
+          {state.step === 'WALLET_APPROVAL' && (isPrivy ? 'Preparing registration…' : 'Approve the privacy setup in your wallet…')}
           {(state.step === 'SUBMITTED' || state.step === 'CONFIRMING') && 'Waiting for confirmation…'}
         </div>
       )}
@@ -182,33 +236,40 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
 
       {state.step === 'IDLE' && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedToken?.symbol ?? ''}
-              onChange={(e) => setTokenSymbol(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-sm font-medium outline-none"
-            >
-              {currentNetwork.tokens.map((t) => (
-                <option key={t.symbol} value={t.symbol}>
-                  {t.icon} {t.symbol}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 text-sm outline-none"
-            />
-          </div>
+          {!isPrivy && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedToken?.symbol ?? ''}
+                onChange={(e) => setTokenSymbol(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-sm font-medium outline-none"
+              >
+                {currentNetwork.tokens.map((t) => (
+                  <option key={t.symbol} value={t.symbol}>
+                    {t.icon} {t.symbol}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 text-sm outline-none"
+              />
+            </div>
+          )}
           <button
             onClick={handleEnable}
             className="w-full py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-sm font-semibold transition-colors"
           >
             Enable private receiving
           </button>
+          {isPrivy && (
+            <p className="text-[11px] text-zinc-500">
+              Requires a funded Starknet account and the STRK20 operator proving/discovery services.
+            </p>
+          )}
         </div>
       )}
     </div>
