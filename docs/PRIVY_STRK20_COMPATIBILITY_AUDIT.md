@@ -75,6 +75,10 @@ one-hour spike against a real Privy app + funded Sepolia account:
 These are format questions, not feasibility questions. The `normalizePrivySignature` /
 `normalizeStarkPublicKey` helpers centralize them so a fix is a one-line change.
 
+> **RESOLVED (source + live verified).** Both were verified against the live Privy API using a
+> real test wallet and the official `starknet-edu/starknet-privy-demo` reference. See the
+> "§29/§30 addendum — resolved compatibility evidence" section below.
+
 ---
 
 ## 2. Compatibility matrix (§26)
@@ -253,3 +257,55 @@ Privy + STRK20 are compatible. The STRK20 SDK was deliberately designed for exac
 split (minimal `{ address, signer }` identity + separate `ViewingKeyProvider`). Privy's
 server-side `rawSign` implements the single signer method the SDK consumes. The adapter is
 one `Signer` subclass plus a thin `Account`/`PrivateTransfers` wiring layer.
+
+---
+
+# §29/§30 addendum — resolved compatibility evidence
+
+Resolved against the live Privy API (test Starknet wallet `i5472fty9mnx9istbj8l8k15`) and the
+official reference `starknet-edu/starknet-privy-demo`. All critical claims are source-backed.
+
+## Q1 — Privy `raw_sign` → Starknet `[r, s]`
+
+**Live response (POST `/v1/wallets/{id}/raw_sign`, body `{ params: { hash } }`):**
+```json
+{ "method": "raw_sign", "data": { "signature": "0x021e00…bc9b04f3d9b3805c1c853f0d4d5744c1bb4ee23ae4953d73764809586adadfb93403", "encoding": "hex" } }
+```
+- Signature is a single **64-byte** hex string = **`r ‖ s`**, 32 bytes each, big-endian.
+- Decode rule (matches the demo `ready.ts`): strip `0x` → 128 hex chars →
+  `r = "0x" + body[0:64]`, `s = "0x" + body[64:128]`.
+- No endianness swap, no recovery byte (Starknet ECDSA has none). Each component is a STARK field element.
+- Validation path: the standard starknet.js `Signer` (subclassed) computes the tx hash with
+  `calculateInvokeTransactionHash2` (V3) and the Ready account's `__validate__` /
+  `is_valid_signature` verifies `(r, s)` against the signer public key.
+- **Live cryptographic proof:** the test wallet's `raw_sign` output, decoded per the rule above,
+  verifies `true` against the wallet `public_key` + signed hash using the Starknet ECDSA verify
+  equation (`w = s⁻¹; u1 = h·w; u2 = r·w; Q = u1·G + u2·P; Q.x == r`) — the same equation the
+  Ready account's `is_valid_signature` performs.
+
+## Q2 — Ready account class hash + address
+
+- **Account version:** Ready = Argent rebranded, **v0.4.0** (NOT v0.5.0). Starknet Foundry
+  `sncast` account table lists `ready` v0.4.0 = `0x036078334509b514626504edc9fb252328d1a240e4e948bef8d0c08dff45927f`.
+- **Class hash (Sepolia):** `0x036078334509b514626504edc9fb252328d1a240e4e948bef8d0c08dff45927f`
+  (confirmed **declared on-chain** via `starknet_getClass` → `argent::account` ABI).
+- **Constructor calldata:** `CallData.compile({ owner: CairoCustomEnum({ Starknet: { pubkey } }), guardian: CairoOption(None) })`.
+- **Public-key encoding:** owner is a Cairo custom enum variant `Starknet { pubkey }`.
+- **Address derivation:** `hash.calculateContractAddressFromHash(salt = publicKey, classHash, constructorCalldata, deployer = 0)`.
+- **Live comparison (test wallet):** derived Ready address `0x18291ad26a7555f1b0cfff41a57f6163c82ef45651aa38d2684c73cc6f72f47`
+  vs Privy `wallet.address` `0x6cedf52201f2c4b554f43d3778e2ccfc16f96c183a0e8717b4c19b039b2d53c` → **NOT equal**.
+
+**Conclusion:** Privy `wallet.address` ≠ Ready account address. Mapping is
+`Privy wallet → public_key → Ready address` via the derivation above. The app must use the
+**derived** address as the `Account` address (and deploy that counterfactual account once funded).
+
+## Code changes applied
+
+- `src/privacy/privy/ready.ts` (new): `READY_SEPOLIA_CLASS_HASH`, `buildReadyConstructorCalldata`,
+  `computeReadyAccountAddress`.
+- `src/privacy/privy/signing.ts`: `normalizePrivySignature` now decodes only the documented
+  64-byte `r‖s` hex (removed speculative formats).
+- `src/context/PrivyWalletContext.tsx`: resolves the **derived** Ready address from `publicKey`
+  instead of using Privy's `wallet.address`.
+- `.env.example`: added `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `NEXT_PUBLIC_PRIVY_APP_ID`,
+  `NEXT_PUBLIC_READY_CLASSHASH`.

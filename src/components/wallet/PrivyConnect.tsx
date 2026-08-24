@@ -63,6 +63,21 @@ export const PrivyConnect: React.FC = () => {
       </div>
 
       <div className="space-y-2">
+        <button
+          onClick={() => privy.login({ loginMethod: "google" })}
+          disabled={privy.isConnecting}
+          className="w-full py-2.5 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {privy.isConnecting && <Loader2 className="w-4 h-4 animate-spin" />}
+          Continue with Google
+        </button>
+
+        <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+          <span className="flex-1 h-px bg-zinc-800" />
+          or with email
+          <span className="flex-1 h-px bg-zinc-800" />
+        </div>
+
         <input
           type="email"
           placeholder="you@example.com"
@@ -71,12 +86,12 @@ export const PrivyConnect: React.FC = () => {
           className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 text-sm outline-none"
         />
         <button
-          onClick={() => privy.login(email.trim() || undefined)}
+          onClick={() => privy.login({ email: email.trim() || undefined })}
           disabled={privy.isConnecting}
           className="w-full py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {privy.isConnecting && <Loader2 className="w-4 h-4 animate-spin" />}
-          {privy.isConnecting ? "Signing in…" : "Sign in"}
+          {privy.isConnecting ? "Signing in…" : "Sign in with email"}
         </button>
       </div>
 

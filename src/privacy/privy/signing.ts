@@ -9,37 +9,22 @@ export function normalizeStarkPublicKey(publicKey: unknown): string {
   return "0x" + BigInt(raw).toString(16);
 }
 
-function toHexValue(v: string | bigint | number): string {
-  if (typeof v === "string") return /^0x/i.test(v) ? v : "0x" + BigInt(v).toString(16);
-  return "0x" + BigInt(v).toString(16);
-}
-
+/**
+ * Decode a Privy `raw_sign` Starknet signature into `[r, s]`.
+ *
+ * Documented + live-verified format: the response is `{ data: { signature: "0x…", encoding: "hex" } }`
+ * where the signature is a single 64-byte hex string (128 hex chars) encoding `r || s`,
+ * each 32 bytes, big-endian. Split in half after stripping `0x`.
+ */
 export function normalizePrivySignature(sig: unknown): [string, string] {
-  if (Array.isArray(sig)) {
-    if (sig.length >= 2) return [String(sig[0]), String(sig[1])];
-    throw new Error("Privy signature array has fewer than 2 elements.");
+  if (typeof sig !== "string" || sig === "") {
+    throw new Error("Privy raw_sign returned a non-hex signature.");
   }
-  if (sig && typeof sig === "object") {
-    const o = sig as { r?: unknown; s?: unknown };
-    if (o.r !== undefined && o.r !== null && o.s !== undefined && o.s !== null) {
-      return [toHexValue(o.r as string | bigint | number), toHexValue(o.s as string | bigint | number)];
-    }
+  const body = /^0x/i.test(sig) ? sig.slice(2) : sig;
+  if (body.length !== 128) {
+    throw new Error(`Unrecognized Privy Starknet signature length (${body.length} hex chars).`);
   }
-  if (typeof sig === "string") {
-    return splitHexSignature(sig);
-  }
-  throw new Error("Unsupported Privy signature format.");
-}
-
-function splitHexSignature(hex: string): [string, string] {
-  const h = /^0x/i.test(hex) ? hex.slice(2) : hex;
-  if (h.length === 128) {
-    return ["0x" + h.slice(0, 64), "0x" + h.slice(64, 128)];
-  }
-  if (h.length === 130) {
-    return ["0x" + h.slice(0, 64), "0x" + h.slice(64, 128)];
-  }
-  throw new Error(`Unrecognized Privy signature length (${h.length} hex chars).`);
+  return ["0x" + body.slice(0, 64), "0x" + body.slice(64, 128)];
 }
 
 export function fetchSigningClient(

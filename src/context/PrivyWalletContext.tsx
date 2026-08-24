@@ -11,6 +11,7 @@ import React, {
 import { Account, RpcProvider, constants } from "starknet";
 import { usePrivy } from "@privy-io/react-auth";
 import { StarknetAccountAdapter, fetchSigningClient } from "@/privacy/privy";
+import { computeReadyAccountAddress } from "@/privacy/privy/ready";
 import { PrivyStrk20Adapter, type Strk20ExecuteReceipt } from "@/privacy/adapter";
 import { loadOrCreateViewingKey } from "@/privacy/privy/viewingKeyStore";
 import { getNetworkConfig } from "@/config/networks";
@@ -37,7 +38,7 @@ export interface PrivyWalletContextValue {
   address: string | null;
   account: Account | null;
   viewingKey: bigint | null;
-  login: (email?: string) => Promise<void>;
+  login: (opts?: { email?: string; loginMethod?: string }) => Promise<void>;
   logout: () => Promise<void>;
   shield: (token: string, amountBase: bigint) => Promise<Strk20ExecuteReceipt>;
   unshield: (token: string, amountBase: bigint, recipient: string) => Promise<Strk20ExecuteReceipt>;
@@ -75,14 +76,16 @@ async function resolveStarknetWallet(token: string): Promise<ResolvedWallet> {
     const body = await res.text().catch(() => "");
     throw new Error(`Failed to resolve Privy Starknet wallet (${res.status}): ${body}`);
   }
-  const json = (await res.json()) as { wallet?: { id?: unknown; address?: unknown; publicKey?: unknown } };
+  const json = (await res.json()) as { wallet?: { id?: unknown; publicKey?: unknown } };
   const wallet = json?.wallet;
-  if (!wallet || typeof wallet.id !== "string" || typeof wallet.address !== "string") {
-    throw new Error("Privy Starknet wallet response missing id/address.");
+  if (!wallet || typeof wallet.id !== "string") {
+    throw new Error("Privy Starknet wallet response missing id.");
   }
   const publicKey = typeof wallet.publicKey === "string" ? wallet.publicKey : "";
   if (!publicKey) throw new Error("Privy Starknet wallet response missing public key.");
-  return { id: wallet.id, address: wallet.address, publicKey };
+  // The real on-chain account is the DERIVED Ready address (NOT Privy wallet.address).
+  const address = computeReadyAccountAddress(publicKey);
+  return { id: wallet.id, address, publicKey };
 }
 
 function buildAdapter(): PrivyStrk20Adapter {
@@ -138,11 +141,14 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   }, [ready, authenticated, user?.id, getAccessToken]);
 
   const login = useCallback(
-    async (email?: string) => {
+    async (opts?: { email?: string; loginMethod?: string }) => {
       setError(null);
       setIsConnecting(true);
       try {
-        await privyLogin(email ? { email } : {});
+        const args: { email?: string; loginMethod?: string } = {};
+        if (opts?.email) args.email = opts.email;
+        if (opts?.loginMethod) args.loginMethod = opts.loginMethod;
+        await privyLogin(args);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Privy login failed.");
       } finally {

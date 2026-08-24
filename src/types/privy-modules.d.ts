@@ -23,7 +23,7 @@ declare module "@privy-io/react-auth" {
     ready: boolean;
     authenticated: boolean;
     user: PrivyUser | null;
-    login(options?: { email?: string; loginMethods?: string[] }): Promise<void>;
+    login(options?: { email?: string; loginMethod?: string; loginMethods?: string[] }): Promise<void>;
     logout(): Promise<void>;
     getAccessToken(): Promise<string | null>;
   };
