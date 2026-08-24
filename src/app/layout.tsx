@@ -3,6 +3,8 @@ import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 import { NetworkProvider } from '@/context/NetworkContext';
 import { WalletProvider } from '@/context/WalletContext';
+import { PrivyAuthProvider } from '@/providers/PrivyAuthProvider';
+import { PrivyWalletProvider } from '@/context/PrivyWalletContext';
 
 export const metadata: Metadata = {
   title: 'STRK20 Private Wallet',
@@ -28,7 +30,11 @@ export default function RootLayout({
       <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased">
         <NetworkProvider>
           <ToastProvider>
-            <WalletProvider>{children}</WalletProvider>
+            <PrivyAuthProvider>
+              <WalletProvider>
+                <PrivyWalletProvider>{children}</PrivyWalletProvider>
+              </WalletProvider>
+            </PrivyAuthProvider>
           </ToastProvider>
         </NetworkProvider>
       </body>

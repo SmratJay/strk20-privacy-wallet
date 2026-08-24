@@ -10,6 +10,7 @@ import { ReceivePanel } from '@/components/wallet/ReceivePanel';
 import { TransactionList } from '@/components/wallet/TransactionList';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { EnablePrivateReceiving } from '@/components/wallet/EnablePrivateReceiving';
+import { PrivyConnect } from '@/components/wallet/PrivyConnect';
 import { useWallet } from '@/context/WalletContext';
 
 const greeting = () => {
@@ -38,6 +39,8 @@ export default function Home() {
         </div>
 
         {!wallet.isConnected && <ConnectGate />}
+
+        <PrivyConnect />
 
         {wallet.isConnected && (
           <>

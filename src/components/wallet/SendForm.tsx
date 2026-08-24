@@ -9,7 +9,8 @@ import {
   translateWalletError,
   SN_SEPOLIA_CHAIN_ID,
 } from '@/services/strk20WalletApiService';
-import { PrivacyTransaction } from '@/services/privacyService';
+import { PrivacyTransaction, privacyService } from '@/services/privacyService';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
 
 type Mode = 'SEND' | 'DEPOSIT' | 'WITHDRAW';
@@ -43,6 +44,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
     recordTransaction,
   } = useWallet();
   const { showToast } = useToast();
+  const privy = usePrivyWallet();
 
   const [mode, setMode] = useState<Mode>(initialMode ?? 'SEND');
   const [selectedToken, setSelectedToken] = useState(currentNetwork.tokens[0]);
@@ -66,11 +68,43 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentNetwork]);
 
-  const ready = walletApiStatus?.state === 'READY';
+  const usingPrivy = privy.authenticated && privy.account !== null;
+
+  const [privyPublicBal, setPrivyPublicBal] = useState<bigint | null>(null);
+  const [privyPrivBal, setPrivyPrivBal] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    if (!usingPrivy) {
+      setPrivyPublicBal(null);
+      setPrivyPrivBal(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const pub = await privacyService.fetchBalances(privy.address ?? '', undefined, currentNetwork);
+        const entry = pub.find((b) => b.token.symbol === selectedToken.symbol);
+        if (!cancelled) setPrivyPublicBal(entry?.publicBalance ?? 0n);
+      } catch {
+        if (!cancelled) setPrivyPublicBal(null);
+      }
+      try {
+        const priv = await privy.getPrivateBalance(selectedToken.address);
+        if (!cancelled) setPrivyPrivBal(priv);
+      } catch {
+        if (!cancelled) setPrivyPrivBal(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [usingPrivy, selectedToken.address, currentNetwork, privy]);
+
+  const ready = usingPrivy ? true : walletApiStatus?.state === 'READY';
   const currentBalance = balances.find((b) => b.token.symbol === selectedToken.symbol);
-  const publicBal = currentBalance ? currentBalance.publicBalance : 0n;
-  const shieldedBal = currentBalance ? currentBalance.shieldedBalance : 0n;
-  const shieldedBalAvailable = currentBalance?.shieldedBalanceAvailable === true;
+  const publicBal = usingPrivy ? privyPublicBal ?? 0n : currentBalance ? currentBalance.publicBalance : 0n;
+  const shieldedBal = usingPrivy ? privyPrivBal ?? 0n : currentBalance ? currentBalance.shieldedBalance : 0n;
+  const shieldedBalAvailable = usingPrivy ? privyPrivBal !== null : currentBalance?.shieldedBalanceAvailable === true;
 
   const busy = phase !== 'IDLE' && phase !== 'FAILED' && phase !== 'COMPLETE';
 
@@ -135,22 +169,27 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
     let tx: PrivacyTransaction;
     try {
       setPhase('WALLET_APPROVAL');
-      const receipt =
-        mode === 'SEND'
-          ? await strk20WalletApiService.privateTransfer(
-              wallet,
-              selectedToken.address,
-              amountBigInt,
-              recipient.trim()
-            )
+      const receipt = usingPrivy
+        ? mode === 'SEND'
+          ? await privy.transfer(selectedToken.address, amountBigInt, recipient.trim())
           : mode === 'DEPOSIT'
-          ? await strk20WalletApiService.shield(wallet, selectedToken.address, amountBigInt)
-          : await strk20WalletApiService.unshield(
-              wallet,
-              selectedToken.address,
-              amountBigInt,
-              recipient.trim()
-            );
+          ? await privy.shield(selectedToken.address, amountBigInt)
+          : await privy.unshield(selectedToken.address, amountBigInt, recipient.trim())
+        : mode === 'SEND'
+        ? await strk20WalletApiService.privateTransfer(
+            wallet,
+            selectedToken.address,
+            amountBigInt,
+            recipient.trim()
+          )
+        : mode === 'DEPOSIT'
+        ? await strk20WalletApiService.shield(wallet, selectedToken.address, amountBigInt)
+        : await strk20WalletApiService.unshield(
+            wallet,
+            selectedToken.address,
+            amountBigInt,
+            recipient.trim()
+          );
 
       setTxHash(receipt.transactionHash);
       setPhase('SUBMITTED');
@@ -222,53 +261,55 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
     }
   };
 
-  if (!wallet.isConnected) return null;
+  if (!usingPrivy) {
+    if (!wallet.isConnected) return null;
 
-  if (checkingStatus || !walletApiStatus) {
-    return (
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-8 text-center text-sm text-zinc-400">
-        Checking private wallet capability…
-      </div>
-    );
-  }
+    if (checkingStatus || !walletApiStatus) {
+      return (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-8 text-center text-sm text-zinc-400">
+          Checking private wallet capability…
+        </div>
+      );
+    }
 
-  if (walletApiStatus.state === 'CONNECT_WALLET') {
-    return null;
-  }
+    if (walletApiStatus.state === 'CONNECT_WALLET') {
+      return null;
+    }
 
-  if (walletApiStatus.state === 'WRONG_NETWORK') {
-    return (
-      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6 text-center space-y-3">
-        <p className="text-sm text-amber-200">
-          Private STRK20 currently works on Starknet Sepolia. Switch your wallet network to
-          continue.
-        </p>
-        <button
-          onClick={handleSwitchToSepolia}
-          disabled={switchingNetwork}
-          className="px-5 py-2.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-sm font-semibold transition-colors disabled:opacity-50"
-        >
-          {switchingNetwork ? 'Switching…' : 'Switch to Sepolia'}
-        </button>
-      </div>
-    );
-  }
+    if (walletApiStatus.state === 'WRONG_NETWORK') {
+      return (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6 text-center space-y-3">
+          <p className="text-sm text-amber-200">
+            Private STRK20 currently works on Starknet Sepolia. Switch your wallet network to
+            continue.
+          </p>
+          <button
+            onClick={handleSwitchToSepolia}
+            disabled={switchingNetwork}
+            className="px-5 py-2.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-sm font-semibold transition-colors disabled:opacity-50"
+          >
+            {switchingNetwork ? 'Switching…' : 'Switch to Sepolia'}
+          </button>
+        </div>
+      );
+    }
 
-  if (walletApiStatus.state === 'PRIVACY_WALLET_REQUIRED') {
-    return (
-      <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-6 text-center space-y-3">
-        <p className="text-sm text-rose-200">
-          A privacy-enabled Starknet wallet (Wallet API ≥ 0.10, e.g. Ready) is required for
-          STRK20.
-        </p>
-        <button
-          onClick={wallet.openConnectModal}
-          className="px-5 py-2.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-sm font-semibold transition-colors"
-        >
-          Switch wallet
-        </button>
-      </div>
-    );
+    if (walletApiStatus.state === 'PRIVACY_WALLET_REQUIRED') {
+      return (
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-6 text-center space-y-3">
+          <p className="text-sm text-rose-200">
+            A privacy-enabled Starknet wallet (Wallet API ≥ 0.10, e.g. Ready) is required for
+            STRK20.
+          </p>
+          <button
+            onClick={wallet.openConnectModal}
+            className="px-5 py-2.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-sm font-semibold transition-colors"
+          >
+            Switch wallet
+          </button>
+        </div>
+      );
+    }
   }
 
   return (
@@ -298,7 +339,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
         })}
       </div>
 
-      {privateBalancePermission !== 'GRANTED' && (
+      {!usingPrivy && privateBalancePermission !== 'GRANTED' && (
         <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
           <span className="text-[13px] text-zinc-400">Share private balances to send privately</span>
           <button
