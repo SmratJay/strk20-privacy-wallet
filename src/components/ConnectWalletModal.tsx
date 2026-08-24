@@ -1,16 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  X, 
-  ShieldCheck, 
-  ExternalLink, 
-  CheckCircle2, 
-  AlertCircle, 
-  RefreshCw, 
-  Sparkles, 
-  Wallet
-} from 'lucide-react';
+import { X, ShieldCheck, ExternalLink, CheckCircle2, AlertCircle, RefreshCw, Wallet } from 'lucide-react';
 import { SupportedWalletMeta } from '@/hooks/useStarknetWallet';
 
 interface ConnectWalletModalProps {
@@ -51,78 +42,50 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md font-mono select-none animate-in fade-in duration-150">
-      <div 
-        className="relative w-full max-w-lg bg-zinc-950 border border-orrange-500/60 corner-box shadow-2xl overflow-hidden p-5 sm:p-6 space-y-5"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+      <div
+        className="relative w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-orrange-500/10 border border-orrange-500/40 text-orrange-400">
-              <Wallet className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                  Connect Ready Wallet
-                </h3>
-                <span className="text-[10px] px-1.5 py-0.5 bg-zinc-900 text-zinc-400 border border-zinc-800 font-bold">
-                  STARKNET
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
-                Ready is the privacy-enabled Starknet wallet for STRK20.
-              </p>
-            </div>
+        {/* Header */}
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <h3 className="text-lg font-semibold text-zinc-100">Connect your privacy wallet</h3>
+            <p className="text-[13px] text-zinc-500 leading-relaxed">
+              To use STRK20 private payments, connect a compatible Starknet privacy wallet. This
+              app does not custody your funds — your wallet does.
+            </p>
           </div>
-
           <button
             onClick={onClose}
-            className="p-1.5 text-zinc-500 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition-colors cursor-pointer"
-            title="Close modal"
+            className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900 rounded-lg transition-colors"
+            title="Close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* STRK20 Privacy Recommendation Callout */}
-        <div className="p-3 bg-zinc-900/70 border border-orrange-500/30 text-xs flex items-start gap-2.5">
-          <ShieldCheck className="w-4 h-4 text-orrange-400 shrink-0 mt-0.5" />
-          <div className="text-[11px] text-zinc-300 leading-relaxed">
-            <span className="font-bold text-white uppercase mr-1">STRK20 Private Lane:</span>
-            <span>
-              Shield / private send / unshield run through the Ready Wallet's native Wallet API —
-              it performs proof generation and privacy setup in-wallet. Other Starknet wallets are
-              not yet supported for private features.
-            </span>
-          </div>
-        </div>
-
-        {/* Error Banner if any */}
+        {/* Error */}
         {connectionError && (
-          <div className="p-3 bg-rose-500/10 border border-rose-500/40 text-xs text-rose-300 flex items-start gap-2 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-            <div className="flex-1 text-[11px]">
-              <span className="font-bold uppercase block text-rose-200">Connection Failed</span>
-              <span className="text-rose-300/90">{connectionError}</span>
-            </div>
+          <div className="flex items-start gap-2 rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-[13px] text-rose-200">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+            <span>{connectionError}</span>
           </div>
         )}
 
-        {/* Install Reminder Banner */}
+        {/* Install reminder */}
         {installPromptWallet && (
-          <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start justify-between gap-2 animate-in fade-in">
-            <div className="text-[11px]">
-              <span className="font-bold uppercase block text-amber-300">
-                Opening {installPromptWallet.name} Install Page
+          <div className="flex items-start justify-between gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[13px] text-amber-200">
+            <div className="space-y-1">
+              <span className="block font-medium text-amber-100">
+                Opening {installPromptWallet.name} install page
               </span>
-              <span>After installing the browser extension, click Rescan or refresh.</span>
+              <span className="text-[12px]">After installing, click Rescan or refresh.</span>
             </div>
             {onRescan && (
               <button
                 onClick={onRescan}
-                className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold uppercase transition-colors shrink-0 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-100 text-[12px] font-medium transition-colors shrink-0"
               >
                 Rescan
               </button>
@@ -130,118 +93,79 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
           </div>
         )}
 
-        {/* Ready Wallet List */}
-        <div className="space-y-2.5">
-          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-between">
-            <span>Supported STRK20 Wallet</span>
+        {/* Wallet options */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-medium text-zinc-500 uppercase tracking-wider">
+              Compatible privacy wallet
+            </span>
             {onRescan && (
               <button
                 onClick={onRescan}
-                className="flex items-center gap-1 text-zinc-500 hover:text-orrange-400 transition-colors cursor-pointer text-[10px]"
-                title="Rescan installed extensions"
+                className="flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-200 transition-colors"
               >
-                <RefreshCw className="w-3 h-3" />
-                <span>Rescan</span>
+                <RefreshCw className="w-3.5 h-3.5" />
+                Rescan
               </button>
             )}
           </div>
 
-          <div className="space-y-2">
-            {supportedWallets.map((wallet) => {
-              const isTargetConnecting = isConnecting && connectingWalletId === wallet.id;
-
-              return (
-                <button
-                  key={wallet.id}
-                  onClick={() => handleWalletClick(wallet)}
-                  disabled={isConnecting}
-                  className={`w-full p-3.5 flex items-center justify-between border transition-all text-left group cursor-pointer ${
-                    wallet.isPrivacyNative
-                      ? 'bg-zinc-900/80 hover:bg-zinc-900 border-orrange-500/50 hover:border-orrange-500 shadow-md shadow-orrange-950/20'
-                      : 'bg-zinc-900/50 hover:bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                  } ${isTargetConnecting ? 'ring-1 ring-orrange-500 bg-zinc-900' : ''}`}
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    {/* Ready Icon Badge */}
-                    <div className="w-10 h-10 flex items-center justify-center border shrink-0 transition-transform group-hover:scale-105 bg-orrange-500/10 border-orrange-500/40 text-orrange-400">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 2.18l7 3.89v4.93c0 4.54-3.05 8.79-7 9.87-3.95-1.08-7-5.33-7-9.87V8.07l7-3.89zM11 7v6h4v-2h-2V7h-2z" />
-                      </svg>
-                    </div>
-
-                    {/* Wallet Details */}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black text-white uppercase tracking-wide truncate">
-                          {wallet.name}
-                        </span>
-                        {wallet.badge && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 border shrink-0 bg-orrange-500/20 text-orrange-400 border-orrange-500/40">
-                            {wallet.badge}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-zinc-500 truncate mt-0.5">
-                        {wallet.tagline}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Status & Action */}
-                  <div className="flex items-center gap-2 shrink-0 ml-3">
-                    {isTargetConnecting ? (
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-orrange-500/10 border border-orrange-500/40 text-orrange-400 text-[10px] font-bold">
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        <span>Connecting...</span>
-                      </div>
-                    ) : wallet.isDetected ? (
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold group-hover:bg-emerald-500 group-hover:text-black transition-colors">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>Detected</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 px-2.5 py-1 bg-zinc-800/80 border border-zinc-700 text-zinc-400 text-[10px] font-bold group-hover:border-zinc-500 group-hover:text-white transition-colors">
-                        <span>Install</span>
-                        <ExternalLink className="w-2.5 h-2.5" />
-                      </div>
+          {supportedWallets.map((wallet) => {
+            const isTargetConnecting = isConnecting && connectingWalletId === wallet.id;
+            return (
+              <button
+                key={wallet.id}
+                onClick={() => handleWalletClick(wallet)}
+                disabled={isConnecting}
+                className={`w-full flex items-center gap-3 rounded-xl border p-3.5 text-left transition-all ${
+                  wallet.isPrivacyNative
+                    ? 'border-violet-500/40 bg-violet-500/5 hover:bg-violet-500/10'
+                    : 'border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900'
+                } ${isTargetConnecting ? 'ring-1 ring-violet-500' : ''}`}
+              >
+                <div className="w-10 h-10 rounded-xl bg-zinc-800/80 flex items-center justify-center text-zinc-300 shrink-0">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-zinc-100">{wallet.name}</span>
+                    {wallet.badge && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-200">
+                        {wallet.badge}
+                      </span>
                     )}
                   </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <p className="text-[10px] text-zinc-600 leading-relaxed pt-1">
-            STRK20 private transfers require both parties to use a privacy-enabled wallet. If Ready
-            isn't detected, install the extension below and click Rescan.
-          </p>
-          {supportedWallets[0]?.chromeUrl && (
-            <a
-              href={supportedWallets[0].chromeUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider transition-colors"
-            >
-              <Sparkles className="w-3 h-3 text-orrange-400" />
-              <span>Install Ready from the Chrome Web Store</span>
-              <ExternalLink className="w-2.5 h-2.5" />
-            </a>
-          )}
+                  <p className="text-[12px] text-zinc-500 truncate mt-0.5">{wallet.tagline}</p>
+                </div>
+                {isTargetConnecting ? (
+                  <RefreshCw className="w-4 h-4 text-violet-300 animate-spin shrink-0" />
+                ) : wallet.isDetected ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <ExternalLink className="w-4 h-4 text-zinc-500 shrink-0" />
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Footer info & help link */}
-        <div className="pt-3 border-t border-zinc-900 text-[10px] text-zinc-500 flex items-center justify-between">
-          <span>Starknet Cairo v2 • Wallet API ≥ 0.10</span>
+        {/* Install CTA */}
+        {supportedWallets[0]?.chromeUrl && (
           <a
-            href="https://www.starknet.io/ecosystem/wallets/"
+            href={supportedWallets[0].chromeUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-zinc-400 hover:text-orrange-400 transition-colors flex items-center gap-1"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-[13px] font-medium transition-colors"
           >
-            <span>Wallet Guide</span>
-            <ExternalLink className="w-2.5 h-2.5" />
+            <ShieldCheck className="w-4 h-4 text-violet-300" />
+            Install Ready from the Chrome Web Store
           </a>
-        </div>
+        )}
+
+        <p className="text-[11px] text-zinc-600 leading-relaxed">
+          STRK20 privacy requires a compatible privacy wallet. Your viewing keys, notes, and proofs
+          stay in your wallet — this app never sees them.
+        </p>
       </div>
     </div>
   );

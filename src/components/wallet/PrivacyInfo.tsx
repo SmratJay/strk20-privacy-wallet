@@ -59,7 +59,7 @@ export const PrivacyInfo: React.FC = () => {
               <p>Under the hood, STRK20 uses:</p>
               <ul className="list-disc list-inside space-y-1">
                 <li>Encrypted pool notes for private balances</li>
-                <li>Viewing-key discovery to find payments sent to you</li>
+                <li>Viewing-key discovery performed inside your privacy wallet to find payments sent to you</li>
                 <li>The STRK20 privacy pool to keep sender, recipient, amount, and token hidden</li>
               </ul>
               <p className="text-zinc-600">

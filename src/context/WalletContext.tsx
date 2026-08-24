@@ -41,6 +41,26 @@ import {
 
 type PrivateReceivingState = 'UNKNOWN' | 'READY' | 'NEEDS_REGISTRATION';
 
+/**
+ * Two distinct concepts are tracked separately — do not conflate them:
+ *
+ *  - `privateBalancePermission` is the session-level "share private balances" CONSENT
+ *    (UNKNOWN / GRANTED / DENIED). It only reflects whether the user let the wallet reveal
+ *    private balances to the dapp.
+ *
+ *  - `privateReceivingState` is REGISTRATION readiness (UNKNOWN / READY / NEEDS_REGISTRATION).
+ *    It reflects whether the address's viewing key is registered with the STRK20 pool so it
+ *    can receive private notes.
+ *
+ * Both are derived from the SAME Wallet API call (`wallet_strk20Balances`), but they are
+ * different concepts. Per the Wallet API spec, a successful `wallet_strk20Balances` implies
+ * the address is registered (it returns NOT_REGISTERED 118 otherwise) — so a success sets
+ * BOTH GRANTED and READY. A consent refusal (USER_REFUSED_OP 113) sets DENIED but leaves
+ * receiving state UNKNOWN (we cannot tell whether the address is registered when the user
+ * withholds consent). A 118 sets NEEDS_REGISTRATION. This equivalence (success ⟺ registered)
+ * is guaranteed by the spec, not assumed.
+ */
+
 interface WalletContextValue {
   wallet: ReturnType<typeof useStarknetWallet>;
   networkId: ReturnType<typeof useNetwork>['networkId'];

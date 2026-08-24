@@ -30,10 +30,16 @@ const ERROR_COPY: Partial<Record<PrivateReceivingEnableStatus, string>> = {
 /**
  * First-run onboarding: enables private receiving. For the Wallet API lane, there is no
  * standalone "register" RPC — the wallet transparently registers the viewing key + channel
- * and shields the first note in a single real transaction. This card surfaces that honestly.
+ * and shields the first note in a SINGLE REAL transaction when the user performs a STRK20
+ * action. So "enable private receiving" here performs a real deposit (the wallet registers in
+ * the same tx). It therefore requires a small funded balance. We never fake registration:
+ * READY is only shown after the wallet confirms the on-chain transaction and a re-probe of
+ * readiness succeeds. A zero-balance user is surfaced as a blocker with a faucet path rather
+ * than a generic error.
  */
 export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ onEnabled }) => {
   const { wallet, currentNetwork, refreshAfterMutation, setPrivateReceivingState } = useWallet();
+  const faucetUrl = currentNetwork.faucetUrl;
   const [state, setState] = useState<State>({ step: 'IDLE' });
   const [tokenSymbol, setTokenSymbol] = useState(currentNetwork.tokens[0]?.symbol ?? '');
   const [amount, setAmount] = useState('0.01');
@@ -133,7 +139,8 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
         <div>
           <div className="text-sm font-semibold text-zinc-100">Enable private payments</div>
           <div className="text-[12px] text-zinc-400">
-            This lets your wallet privately detect payments sent to you.
+            This lets your wallet privately detect payments sent to you. Setup also shields your
+            first note, so a small funded balance is needed.
           </div>
         </div>
       </div>
@@ -155,9 +162,21 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
       )}
 
       {state.step === 'ERROR' && (
-        <div className="flex items-start gap-2 text-sm text-rose-300">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{state.message}</span>
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 text-sm text-rose-300">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{state.message}</span>
+          </div>
+          {faucetUrl && (
+            <a
+              href={faucetUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-violet-300 hover:text-violet-200"
+            >
+              Fund your account on the Sepolia faucet, then retry.
+            </a>
+          )}
         </div>
       )}
 

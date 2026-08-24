@@ -10,10 +10,6 @@ import { useWallet } from '@/context/WalletContext';
 export default function ReceivePage() {
   const { wallet, transactions } = useWallet();
 
-  const incoming = transactions.filter(
-    (t) => t.type === 'SHIELD' || t.type === 'UNSHIELD'
-  );
-
   return (
     <AppShell>
       <div className="space-y-6">
@@ -30,14 +26,14 @@ export default function ReceivePage() {
           <>
             <ReceivePanel large />
             <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-zinc-300">Recent private payments</h2>
-              {incoming.length > 0 ? (
-                <TransactionList transactions={incoming} limit={5} />
+              <h2 className="text-sm font-semibold text-zinc-300">Recent activity</h2>
+              {transactions.length > 0 ? (
+                <TransactionList transactions={transactions} limit={5} />
               ) : (
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-8 text-center">
-                  <p className="text-sm text-zinc-400">No private payments yet</p>
+                  <p className="text-sm text-zinc-400">No activity yet</p>
                   <p className="text-[12px] text-zinc-600">
-                    When someone sends you STRK20 privately, it will appear here.
+                    Your private payments and balance changes will appear here.
                   </p>
                 </div>
               )}

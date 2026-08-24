@@ -343,7 +343,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
             )}
             <div className="flex justify-between">
               <span className="text-zinc-500">Network fee</span>
-              <span className="text-zinc-100">Sponsored by the network</span>
+              <span className="text-zinc-100">Paid by your wallet</span>
             </div>
           </div>
 
