@@ -3,10 +3,12 @@
 import React, { useState } from "react";
 import { ShieldCheck, Loader2, LogOut } from "lucide-react";
 import { usePrivyWallet } from "@/context/PrivyWalletContext";
+import { useWallet } from "@/context/WalletContext";
 import { shortenAddress } from "@/utils/formatters";
 
 export const PrivyConnect: React.FC = () => {
   const privy = usePrivyWallet();
+  const { wallet } = useWallet();
   const [email, setEmail] = useState("");
 
   if (!privy.isAvailable) return null;
@@ -48,6 +50,11 @@ export const PrivyConnect: React.FC = () => {
     );
   }
 
+  // Not authenticated. When no Ready wallet is connected, ConnectGate already offers the
+  // Google button, so only render the sign-in form here when a Ready wallet IS connected
+  // (i.e. the user wants to add Privy as an additional sign-in).
+  if (!wallet.isConnected) return null;
+
   return (
     <div className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5 space-y-3">
       <div className="flex items-center gap-2.5">
@@ -55,9 +62,9 @@ export const PrivyConnect: React.FC = () => {
           <ShieldCheck className="w-4 h-4" />
         </div>
         <div>
-          <div className="text-sm font-semibold text-zinc-100">Continue with Privy</div>
+          <div className="text-sm font-semibold text-zinc-100">Also use Privy</div>
           <div className="text-[12px] text-zinc-400">
-            Social or email sign-in with an embedded Starknet wallet. No extension needed.
+            Sign in with an embedded Starknet wallet — no extension needed.
           </div>
         </div>
       </div>
