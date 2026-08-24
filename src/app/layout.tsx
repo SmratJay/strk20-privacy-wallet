@@ -31,9 +31,9 @@ export default function RootLayout({
         <NetworkProvider>
           <ToastProvider>
             <PrivyAuthProvider>
-              <WalletProvider>
-                <PrivyWalletProvider>{children}</PrivyWalletProvider>
-              </WalletProvider>
+              <PrivyWalletProvider>
+                <WalletProvider>{children}</WalletProvider>
+              </PrivyWalletProvider>
             </PrivyAuthProvider>
           </ToastProvider>
         </NetworkProvider>

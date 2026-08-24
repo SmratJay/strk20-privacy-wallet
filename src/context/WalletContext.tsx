@@ -18,6 +18,7 @@ import {
   WalletApiStatus,
   WalletBalancePermission,
 } from '@/services/strk20WalletApiService';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 
 /**
  * Centralized wallet state for the consumer STRK20 privacy wallet (LANE A — Wallet API).
@@ -59,6 +60,8 @@ export type PrivateBalanceStatus =
 
 interface WalletContextValue {
   wallet: ReturnType<typeof useStarknetWallet>;
+  /** True when either the Ready wallet OR a Privy embedded wallet is connected. */
+  privyConnected: boolean;
   networkId: ReturnType<typeof useNetwork>['networkId'];
   currentNetwork: ReturnType<typeof useNetwork>['currentNetwork'];
   isSepolia: boolean;
@@ -101,6 +104,7 @@ const PRIVATE_POLL_MS = 25000;
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const wallet = useStarknetWallet();
+  const privy = usePrivyWallet();
   const { networkId, currentNetwork, isSepolia, setNetworkId } = useNetwork();
 
   const [balances, setBalances] = useState<ShieldedBalance[]>(() =>
@@ -136,6 +140,21 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Always-current wallet, read through a ref so callbacks don't re-create every render.
   const walletRef = useRef(wallet);
   walletRef.current = wallet;
+
+  // Treat a connected Privy embedded wallet as a connected wallet so the whole app (tabs,
+  // gating, header) works for Privy users too. The Ready wallet lane remains authoritative
+  // for its own flows.
+  const privyConnected = privy.authenticated && privy.account !== null;
+  const effectiveWallet = {
+    ...wallet,
+    isConnected: wallet.isConnected || privyConnected,
+    address: wallet.address || privy.address,
+    walletName: wallet.walletName || 'Privy',
+    walletAccount: wallet.walletAccount || privy.account,
+    isPrivacySupported: wallet.isPrivacySupported || privyConnected,
+    walletApiVersion: wallet.walletApiVersion || (privyConnected ? 'privy' : null),
+    rawWallet: wallet.rawWallet || (privyConnected ? { name: 'Privy' } : null),
+  };
 
   // Guard so concurrent refreshes never overlap.
   const privateRefreshInFlightRef = useRef(false);
@@ -439,7 +458,8 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const value = useMemo<WalletContextValue>(
     () => ({
-      wallet,
+      wallet: effectiveWallet,
+      privyConnected,
       networkId,
       currentNetwork,
       isSepolia,
@@ -468,6 +488,8 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }),
     [
       wallet,
+      effectiveWallet,
+      privyConnected,
       networkId,
       currentNetwork,
       isSepolia,
