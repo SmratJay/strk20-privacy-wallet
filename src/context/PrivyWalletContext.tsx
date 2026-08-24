@@ -38,7 +38,7 @@ export interface PrivyWalletContextValue {
   address: string | null;
   account: Account | null;
   viewingKey: bigint | null;
-  login: (opts?: { email?: string; loginMethod?: string }) => Promise<void>;
+  login: (opts?: { email?: string; google?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   shield: (token: string, amountBase: bigint) => Promise<Strk20ExecuteReceipt>;
   unshield: (token: string, amountBase: bigint, recipient: string) => Promise<Strk20ExecuteReceipt>;
@@ -141,14 +141,17 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   }, [ready, authenticated, user?.id, getAccessToken]);
 
   const login = useCallback(
-    async (opts?: { email?: string; loginMethod?: string }) => {
+    async (opts?: { email?: string; google?: boolean }) => {
       setError(null);
       setIsConnecting(true);
       try {
-        const args: { email?: string; loginMethod?: string } = {};
-        if (opts?.email) args.email = opts.email;
-        if (opts?.loginMethod) args.loginMethod = opts.loginMethod;
-        await privyLogin(args);
+        if (opts?.google) {
+          privyLogin({ loginMethods: ["google"] });
+        } else if (opts?.email) {
+          privyLogin({ prefill: { type: "email", value: opts.email } });
+        } else {
+          privyLogin();
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Privy login failed.");
       } finally {

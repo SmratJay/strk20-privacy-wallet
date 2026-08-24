@@ -64,7 +64,7 @@ export const PrivyConnect: React.FC = () => {
 
       <div className="space-y-2">
         <button
-          onClick={() => privy.login({ loginMethod: "google" })}
+          onClick={() => privy.login({ google: true })}
           disabled={privy.isConnecting}
           className="w-full py-2.5 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
         >

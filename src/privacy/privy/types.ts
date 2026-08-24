@@ -8,22 +8,6 @@ export interface PrivyWalletRecord {
   user_id?: string;
 }
 
-export interface PrivyRawSignResult {
-  signature: unknown;
-}
-
-export interface PrivyServerClient {
-  verifyAuthToken(token: string): Promise<{ userId: string }>;
-  wallets(): {
-    create(input: { chain_type: "starknet"; user_id?: string }): Promise<PrivyWalletRecord>;
-    get(id: string): Promise<PrivyWalletRecord>;
-    rawSign(
-      walletId: string,
-      input: { params: { hash: string } },
-    ): Promise<PrivyRawSignResult>;
-  };
-}
-
 export interface PrivySigningClient {
   signHash(walletId: string, hashHex: string): Promise<unknown>;
 }
