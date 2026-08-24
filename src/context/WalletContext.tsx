@@ -22,44 +22,40 @@ import {
 /**
  * Centralized wallet state for the consumer STRK20 privacy wallet (LANE A — Wallet API).
  *
- * This replaces the per-page balance/transaction bookkeeping that previously lived inside
- * the terminal workspace. It is the single owner of:
- *   - wallet connection (via useStarknetWallet)
- *   - public balances (on-chain RPC, polled)
- *   - private balances (wallet_strk20Balances, permission-gated — never polled)
- *   - the session-level "share private balances" permission
- *   - private-receiving readiness (derived from protocol state, not a local flag)
- *   - local transaction history (a read cache, never balance authority)
+ * PRIVATE-BALANCE LIFE-CYCLE (two concepts, kept completely separate):
  *
- * The privacy wallet (Ready) owns viewing keys, channels, notes, and proofs. This app never
- * touches them and never falls back to public ERC-20 transfers.
+ *   A. AUTHORIZATION — `ensurePrivateBalanceAccess()`. Runs only when access is genuinely
+ *      required (first connect, or an explicit user action). Sets `privateBalanceAccessStatus`
+ *      to GRANTED / DENIED / UNKNOWN. Never runs on every balance read.
  *
- * Note: the `wallet` object returned by useStarknetWallet has a fresh identity on every
- * render. To avoid effect re-run loops, the wallet is read through a ref and callbacks
- * depend only on stable primitives (isConnected / address / chainId).
+ *   B. REFRESH / SYNC — `refreshPrivateBalance()`. A PURE read of `wallet_strk20Balances`.
+ *      It NEVER calls the authorization path, so it can never re-trigger Ready's "Share
+ *      private balances" prompt. Gated on `GRANTED`.
+ *
+ * Because B never authorizes, it is safe to call it:
+ *   - after every mutation we control (shield / private transfer / withdraw), once the
+ *     transaction confirms, and
+ *   - on a modest polling interval to reconcile EXTERNAL incoming private payments
+ *     (the Wallet API exposes no STRK20 balance-change subscription — see the spec note below).
+ *
+ * The private balance from the wallet (`wallet_strk20Balances`) remains the source of truth.
+ * We never calculate it from local history and never fake optimistic balances.
+ *
+ * The privacy wallet (Ready) owns viewing keys, channels, notes, discovery, decryption, and
+ * proofs. This app never touches them and never falls back to public ERC-20 transfers.
  */
 
 type PrivateReceivingState = 'UNKNOWN' | 'READY' | 'NEEDS_REGISTRATION';
 
-/**
- * Two distinct concepts are tracked separately — do not conflate them:
- *
- *  - `privateBalancePermission` is the session-level "share private balances" CONSENT
- *    (UNKNOWN / GRANTED / DENIED). It only reflects whether the user let the wallet reveal
- *    private balances to the dapp.
- *
- *  - `privateReceivingState` is REGISTRATION readiness (UNKNOWN / READY / NEEDS_REGISTRATION).
- *    It reflects whether the address's viewing key is registered with the STRK20 pool so it
- *    can receive private notes.
- *
- * Both are derived from the SAME Wallet API call (`wallet_strk20Balances`), but they are
- * different concepts. Per the Wallet API spec, a successful `wallet_strk20Balances` implies
- * the address is registered (it returns NOT_REGISTERED 118 otherwise) — so a success sets
- * BOTH GRANTED and READY. A consent refusal (USER_REFUSED_OP 113) sets DENIED but leaves
- * receiving state UNKNOWN (we cannot tell whether the address is registered when the user
- * withholds consent). A 118 sets NEEDS_REGISTRATION. This equivalence (success ⟺ registered)
- * is guaranteed by the spec, not assumed.
- */
+/** Detailed private-balance status for the UI. */
+export type PrivateBalanceStatus =
+  | 'IDLE'
+  | 'LOADING'
+  | 'AVAILABLE'
+  | 'UNAVAILABLE'
+  | 'ERROR'
+  | 'NOT_AUTHORIZED'
+  | 'NOT_READY';
 
 interface WalletContextValue {
   wallet: ReturnType<typeof useStarknetWallet>;
@@ -75,9 +71,18 @@ interface WalletContextValue {
   recordTransaction: (tx: PrivacyTransaction) => void;
   clearTransactions: () => void;
 
-  privateBalancePermission: WalletBalancePermission;
-  requestPrivateBalanceAccess: (opts?: { silent?: boolean }) => Promise<void>;
-  refreshPrivateBalances: () => Promise<void>;
+  // A. Authorization (once)
+  privateBalanceAccessStatus: WalletBalancePermission;
+  privateBalancePermission: WalletBalancePermission; // alias (back-compat)
+  ensurePrivateBalanceAccess: (opts?: { silent?: boolean }) => Promise<void>;
+  requestPrivateBalanceAccess: (opts?: { silent?: boolean }) => Promise<void>; // alias
+
+  // B. Refresh / sync (pure read, never authorizes)
+  privateBalanceStatus: PrivateBalanceStatus;
+  privateBalanceError: string | null;
+  privateBalanceUpdatedAt: number | null;
+  refreshPrivateBalance: () => Promise<void>;
+  refreshPrivateBalances: () => Promise<void>; // alias
   refreshPublicBalances: () => Promise<void>;
   refreshAfterMutation: () => Promise<void>;
 
@@ -90,6 +95,9 @@ interface WalletContextValue {
 }
 
 const WalletContext = createContext<WalletContextValue | undefined>(undefined);
+
+/** How often to reconcile external incoming private payments (Wallet API has no subscription). */
+const PRIVATE_POLL_MS = 25000;
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const wallet = useStarknetWallet();
@@ -109,8 +117,16 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isLoadingBalances, setIsLoadingBalances] = useState(false);
   const [transactions, setTransactions] = useState<PrivacyTransaction[]>([]);
 
-  const [privateBalancePermission, setPrivateBalancePermission] =
+  // A. Authorization state (session-level "share private balances" consent).
+  const [privateBalanceAccessStatus, setPrivateBalanceAccessStatus] =
     useState<WalletBalancePermission>('UNKNOWN');
+
+  // B. Refresh state.
+  const [privateBalanceStatus, setPrivateBalanceStatus] =
+    useState<PrivateBalanceStatus>('IDLE');
+  const [privateBalanceError, setPrivateBalanceError] = useState<string | null>(null);
+  const [privateBalanceUpdatedAt, setPrivateBalanceUpdatedAt] = useState<number | null>(null);
+
   const [privateReceivingState, setPrivateReceivingState] =
     useState<PrivateReceivingState>('UNKNOWN');
 
@@ -120,6 +136,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Always-current wallet, read through a ref so callbacks don't re-create every render.
   const walletRef = useRef(wallet);
   walletRef.current = wallet;
+
+  // Guard so concurrent refreshes never overlap.
+  const privateRefreshInFlightRef = useRef(false);
+  const afterMutationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Network auto-sync: query balances against the network the wallet is actually on ──
   useEffect(() => {
@@ -192,6 +212,19 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   }, [currentNetwork]);
 
+  const applyPrivateBalances = useCallback((entries: { token: string; balance: bigint }[]) => {
+    const walletPrivate = new Map(entries.map((e) => [e.token.toLowerCase(), e.balance]));
+    setBalances((prev) =>
+      prev.map((b) => {
+        const bal = walletPrivate.get(b.token.address.toLowerCase());
+        if (bal !== undefined) {
+          return { ...b, shieldedBalance: bal, shieldedBalanceAvailable: true };
+        }
+        return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
+      })
+    );
+  }, []);
+
   const refreshPublicBalances = useCallback(async () => {
     const w = walletRef.current;
     if (!w.isConnected || !w.address) {
@@ -219,78 +252,132 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [wallet.isConnected, wallet.address, currentNetwork, resetBalances]);
 
-  const refreshPrivateBalances = useCallback(async () => {
-    if (privateBalancePermission !== 'GRANTED') return;
+  /**
+   * B. REFRESH / SYNC — a pure read. NEVER authorizes. Safe to call repeatedly and on a poll
+   * timer. Gated on GRANTED + wallet READY. Updates balances + status + error + updatedAt.
+   */
+  const refreshPrivateBalance = useCallback(async () => {
+    if (privateRefreshInFlightRef.current) return;
     const w = walletRef.current;
+    if (!w.isConnected || !w.address) {
+      setPrivateBalanceStatus('UNAVAILABLE');
+      return;
+    }
+    if (privateBalanceAccessStatus !== 'GRANTED') {
+      setPrivateBalanceStatus('NOT_AUTHORIZED');
+      return;
+    }
+    privateRefreshInFlightRef.current = true;
+    setPrivateBalanceStatus((s) => (s === 'AVAILABLE' ? 'AVAILABLE' : 'LOADING'));
+    setPrivateBalanceError(null);
     try {
       const status = await strk20WalletApiService.getWalletApiStatus(w);
-      if (status.state !== 'READY') return;
+      if (status.state !== 'READY') {
+        setPrivateBalanceStatus('NOT_READY');
+        return;
+      }
       const entries = await strk20WalletApiService.getPrivateBalances(
         w,
         currentNetwork.tokens.map((t) => t.address)
       );
-      const walletPrivate = new Map(entries.map((e) => [e.token.toLowerCase(), e.balance]));
-      setBalances((prev) =>
-        prev.map((b) => {
-          const bal = walletPrivate.get(b.token.address.toLowerCase());
-          if (bal !== undefined) {
-            return { ...b, shieldedBalance: bal, shieldedBalanceAvailable: true };
-          }
-          return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
-        })
-      );
+      applyPrivateBalances(entries);
       setPrivateReceivingState('READY');
+      setPrivateBalanceStatus('AVAILABLE');
+      setPrivateBalanceUpdatedAt(Date.now());
     } catch (err: any) {
       const t = strk20WalletApiService.translateWalletError(err);
-      if (t.code === 118) setPrivateReceivingState('NEEDS_REGISTRATION');
-      // Leave balances unchanged; never fabricate a private balance.
+      if (t.code === 118) {
+        // NOT_REGISTERED: the viewing key isn't registered yet — not a balance error.
+        setPrivateBalanceStatus('NOT_READY');
+        setPrivateReceivingState('NEEDS_REGISTRATION');
+      } else if (t.code === 113) {
+        // Consent was refused — treat as not authorized, never keep polling.
+        setPrivateBalanceStatus('NOT_AUTHORIZED');
+        setPrivateBalanceAccessStatus('DENIED');
+      } else {
+        setPrivateBalanceStatus('ERROR');
+        setPrivateBalanceError(t.userMessage);
+      }
+    } finally {
+      privateRefreshInFlightRef.current = false;
     }
-  }, [privateBalancePermission, currentNetwork]);
+  }, [privateBalanceAccessStatus, currentNetwork, applyPrivateBalances]);
 
-  const requestPrivateBalanceAccess = useCallback(
+  /**
+   * A. AUTHORIZATION — runs only when access is genuinely required. If already GRANTED or
+   * DENIED this session, it is a no-op (does not re-prompt). A successful read here both
+   * grants access and (per the Wallet API spec, NOT_REGISTERED 118 is its "unregistered"
+   * error) confirms private-receiving readiness.
+   */
+  const ensurePrivateBalanceAccess = useCallback(
     async (opts?: { silent?: boolean }) => {
       const w = walletRef.current;
       if (!w.isConnected) return;
+      // Already granted this session → never re-prompt.
+      if (privateBalanceAccessStatus === 'GRANTED') return;
+      // Denied + silent (e.g. auto on connect) → never re-prompt without an explicit action.
+      if (privateBalanceAccessStatus === 'DENIED' && opts?.silent) return;
+      setPrivateBalanceStatus('LOADING');
+      setPrivateBalanceError(null);
       try {
         const entries = await strk20WalletApiService.getPrivateBalances(
           w,
           currentNetwork.tokens.map((t) => t.address)
         );
-        setPrivateBalancePermission('GRANTED');
+        setPrivateBalanceAccessStatus('GRANTED');
         setPrivateReceivingState('READY');
-        const walletPrivate = new Map(entries.map((e) => [e.token.toLowerCase(), e.balance]));
-        setBalances((prev) =>
-          prev.map((b) => {
-            const bal = walletPrivate.get(b.token.address.toLowerCase());
-            if (bal !== undefined) {
-              return { ...b, shieldedBalance: bal, shieldedBalanceAvailable: true };
-            }
-            return { ...b, shieldedBalance: 0n, shieldedBalanceAvailable: false };
-          })
-        );
+        applyPrivateBalances(entries);
+        setPrivateBalanceStatus('AVAILABLE');
+        setPrivateBalanceUpdatedAt(Date.now());
       } catch (err: any) {
         const t = strk20WalletApiService.translateWalletError(err);
         if (t.code === 113) {
-          setPrivateBalancePermission('DENIED');
+          setPrivateBalanceAccessStatus('DENIED');
+          setPrivateBalanceStatus('NOT_AUTHORIZED');
         } else if (t.code === 118) {
           setPrivateReceivingState('NEEDS_REGISTRATION');
+          setPrivateBalanceStatus('NOT_READY');
+          setPrivateBalanceAccessStatus('UNKNOWN');
         } else {
-          setPrivateBalancePermission('UNKNOWN');
+          setPrivateBalanceAccessStatus('UNKNOWN');
+          setPrivateBalanceStatus('ERROR');
+          setPrivateBalanceError(t.userMessage);
         }
         if (!opts?.silent) {
           throw err;
         }
       }
     },
-    [currentNetwork]
+    [privateBalanceAccessStatus, currentNetwork, applyPrivateBalances]
   );
+
+  const refreshPrivateBalanceRef = useRef(refreshPrivateBalance);
+  useEffect(() => {
+    refreshPrivateBalanceRef.current = refreshPrivateBalance;
+  }, [refreshPrivateBalance]);
+
+  const ensurePrivateBalanceAccessRef = useRef(ensurePrivateBalanceAccess);
+  useEffect(() => {
+    ensurePrivateBalanceAccessRef.current = ensurePrivateBalanceAccess;
+  }, [ensurePrivateBalanceAccess]);
 
   const refreshAfterMutation = useCallback(async () => {
     await refreshPublicBalances();
-    if (privateBalancePermission === 'GRANTED') {
-      await refreshPrivateBalances();
-    }
-  }, [refreshPublicBalances, refreshPrivateBalances, privateBalancePermission]);
+    await refreshPrivateBalance();
+    // The pool's notes take a short window to mature/discover; re-check once after ~10s so
+    // the just-confirmed shield/send/withdraw reflects the authoritative balance.
+    if (afterMutationTimerRef.current) clearTimeout(afterMutationTimerRef.current);
+    afterMutationTimerRef.current = setTimeout(() => {
+      void refreshPrivateBalanceRef.current();
+    }, 10000);
+  }, [refreshPublicBalances, refreshPrivateBalance]);
+
+  // Clear the after-mutation timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (afterMutationTimerRef.current) clearTimeout(afterMutationTimerRef.current);
+    };
+  }, []);
 
   // ── Wallet API status (capability / chain) ──
   const refreshStatus = useCallback(async () => {
@@ -313,35 +400,42 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshPublicBalances();
   }, [refreshPublicBalances]);
 
-  // ── Public balance polling (12s) — private balances are never polled ──
+  // ── Public balance polling (12s) — private balances are never polled via this timer ──
   useEffect(() => {
     if (!wallet.isConnected) return;
     const t = setInterval(refreshPublicBalances, 12000);
     return () => clearInterval(t);
   }, [refreshPublicBalances, wallet.isConnected]);
 
-  // ── Session private-balance auto-request (once per address, silent) ──
-  const requestPrivateBalanceAccessRef = useRef(requestPrivateBalanceAccess);
-  useEffect(() => {
-    requestPrivateBalanceAccessRef.current = requestPrivateBalanceAccess;
-  }, [requestPrivateBalanceAccess]);
-
+  // ── Session private-balance authorization (once per address, silent) ──
   const autoPrivateRequestRef = useRef<string | null>(null);
   useEffect(() => {
     if (!wallet.isConnected || !wallet.address) {
       autoPrivateRequestRef.current = null;
-      setPrivateBalancePermission('UNKNOWN');
+      setPrivateBalanceAccessStatus('UNKNOWN');
       setPrivateReceivingState('UNKNOWN');
+      setPrivateBalanceStatus('IDLE');
       return;
     }
-    setPrivateBalancePermission('UNKNOWN');
     if (autoPrivateRequestRef.current === wallet.address) return;
     autoPrivateRequestRef.current = wallet.address;
     const t = setTimeout(() => {
-      void requestPrivateBalanceAccessRef.current({ silent: true });
+      void ensurePrivateBalanceAccessRef.current({ silent: true });
     }, 1200);
     return () => clearTimeout(t);
   }, [wallet.isConnected, wallet.address]);
+
+  // ── Safe reconciliation of EXTERNAL incoming private payments ──
+  // The Wallet API exposes no STRK20 balance-change subscription, so we poll
+  // `wallet_strk20Balances` on a modest interval. This is safe because `refreshPrivateBalance`
+  // NEVER authorizes — it only reads — so polling cannot re-trigger a permission prompt.
+  useEffect(() => {
+    if (!wallet.isConnected || privateBalanceAccessStatus !== 'GRANTED') return;
+    const t = setInterval(() => {
+      void refreshPrivateBalanceRef.current();
+    }, PRIVATE_POLL_MS);
+    return () => clearInterval(t);
+  }, [wallet.isConnected, privateBalanceAccessStatus]);
 
   const value = useMemo<WalletContextValue>(
     () => ({
@@ -355,9 +449,15 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       transactions,
       recordTransaction,
       clearTransactions,
-      privateBalancePermission,
-      requestPrivateBalanceAccess,
-      refreshPrivateBalances,
+      privateBalanceAccessStatus,
+      privateBalancePermission: privateBalanceAccessStatus,
+      ensurePrivateBalanceAccess,
+      requestPrivateBalanceAccess: ensurePrivateBalanceAccess,
+      privateBalanceStatus,
+      privateBalanceError,
+      privateBalanceUpdatedAt,
+      refreshPrivateBalance,
+      refreshPrivateBalances: refreshPrivateBalance,
       refreshPublicBalances,
       refreshAfterMutation,
       walletApiStatus,
@@ -377,9 +477,12 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       transactions,
       recordTransaction,
       clearTransactions,
-      privateBalancePermission,
-      requestPrivateBalanceAccess,
-      refreshPrivateBalances,
+      privateBalanceAccessStatus,
+      ensurePrivateBalanceAccess,
+      privateBalanceStatus,
+      privateBalanceError,
+      privateBalanceUpdatedAt,
+      refreshPrivateBalance,
       refreshPublicBalances,
       refreshAfterMutation,
       walletApiStatus,

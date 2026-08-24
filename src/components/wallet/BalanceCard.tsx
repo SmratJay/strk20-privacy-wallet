@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { EyeOff, Wallet } from 'lucide-react';
+import { EyeOff, Wallet, RefreshCw } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { formatTokenAmount } from '@/utils/formatters';
 
@@ -10,13 +10,22 @@ import { formatTokenAmount } from '@/utils/formatters';
  * shown in their native token denomination.
  */
 export const BalanceCard: React.FC = () => {
-  const { balances, isLoadingBalances, privateBalancePermission } = useWallet();
+  const {
+    balances,
+    isLoadingBalances,
+    privateBalancePermission,
+    privateBalanceStatus,
+    privateBalanceUpdatedAt,
+  } = useWallet();
 
   const totalPrivate = balances.reduce(
     (acc, b) => acc + (b.shieldedBalanceAvailable ? b.shieldedBalance : 0n),
     0n
   );
   const anyPrivateKnown = balances.some((b) => b.shieldedBalanceAvailable);
+
+  const syncing = privateBalanceStatus === 'LOADING';
+  const unavailable = privateBalanceStatus !== 'AVAILABLE' && !anyPrivateKnown;
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-950 to-zinc-900/50 overflow-hidden">
@@ -26,8 +35,17 @@ export const BalanceCard: React.FC = () => {
             Private balance
           </span>
           <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-violet-300">
-            <EyeOff className="w-3.5 h-3.5" />
-            Private
+            {syncing ? (
+              <span className="flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                Syncing
+              </span>
+            ) : (
+              <>
+                <EyeOff className="w-3.5 h-3.5" />
+                Private
+              </>
+            )}
           </span>
         </div>
 
@@ -45,6 +63,16 @@ export const BalanceCard: React.FC = () => {
             {privateBalancePermission === 'DENIED'
               ? 'Private balance hidden — you declined access.'
               : 'Connect and share private balances to see your shielded funds.'}
+          </p>
+        )}
+
+        {unavailable && privateBalancePermission === 'GRANTED' && (
+          <p className="text-[12px] text-zinc-500">Private balance not available yet.</p>
+        )}
+
+        {privateBalanceUpdatedAt && (
+          <p className="text-[10px] text-zinc-600">
+            Synced {new Date(privateBalanceUpdatedAt).toLocaleTimeString()}
           </p>
         )}
       </div>
