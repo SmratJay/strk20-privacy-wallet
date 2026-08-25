@@ -157,7 +157,10 @@ export class PrivyStrk20Adapter {
       ? { proofFacts: callAndProof.proof.proofFacts, proof: callAndProof.proof.data }
       : {};
 
-    const execute = user.account.execute as unknown as (
+    // starknet.js Account.execute uses `this.prepareInvoke`, so it must stay bound to the
+    // account instance. (AccountInterface types execute() with InvocationsDetails, which
+    // lacks proofFacts/proof, hence the cast.)
+    const execute = user.account.execute.bind(user.account) as unknown as (
       calls: Call,
       details?: Record<string, unknown>,
     ) => Promise<{ transaction_hash: string }>;
