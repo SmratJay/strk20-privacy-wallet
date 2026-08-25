@@ -108,8 +108,8 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     rpcUrls: [
       // STRK20 proof transactions (SNIP-36 proof_facts/proof) require an RPC node on spec
       // 0.10.1+. cartridge.gg reports 0.9.0 and starknet.js throws snip36RequiresRPC010 there,
-      // so use a 0.10.2 node first and keep cartridge as a read fallback.
-      'https://rpc.starknet.lava.build',
+      // so use a 0.10.3 node first and keep cartridge as a read fallback.
+      'https://sepolia.rpc.vauban.tech/rpc/v0_10',
       process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia',
     ],
     avnuBaseUrl: 'https://starknet.api.avnu.fi',
