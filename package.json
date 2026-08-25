@@ -26,7 +26,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "starknet": "^10.4.0",
+    "starknet": "10.5.0",
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
@@ -40,6 +40,7 @@
     "postcss": "^8.5.2",
     "snarkjs": "0.7.6",
     "tailwindcss": "^3.4.17",
+    "snarkjs": "0.7.6",
     "typescript": "^5.7.3",
     "vitest": "^4.1.10"
   },
