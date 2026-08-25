@@ -1,15 +1,25 @@
 "use client";
 
 import React, { useState } from "react";
-import { ShieldCheck, Loader2, LogOut } from "lucide-react";
+import { ShieldCheck, Loader2, LogOut, Copy, Check } from "lucide-react";
 import { usePrivyWallet } from "@/context/PrivyWalletContext";
 import { useWallet } from "@/context/WalletContext";
-import { shortenAddress } from "@/utils/formatters";
+import { shortenAddress, copyToClipboard } from "@/utils/formatters";
 
 export const PrivyConnect: React.FC = () => {
   const privy = usePrivyWallet();
   const { wallet } = useWallet();
   const [email, setEmail] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAddress = async () => {
+    if (!privy.address) return;
+    const ok = await copyToClipboard(privy.address);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (!privy.isAvailable) return null;
 
@@ -30,9 +40,27 @@ export const PrivyConnect: React.FC = () => {
           </div>
           <div>
             <div className="text-sm font-semibold text-zinc-100">Signed in with Privy</div>
-            <div className="text-[12px] text-zinc-400 font-mono">
-              {privy.address ? shortenAddress(privy.address, 6) : "Preparing wallet…"}
-            </div>
+            <button
+              onClick={handleCopyAddress}
+              title="Click to copy full wallet address"
+              className="text-[12px] text-zinc-400 font-mono hover:text-zinc-200 transition-colors flex items-center gap-1.5 cursor-pointer group"
+            >
+              {privy.address ? (
+                copied ? (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    Copied
+                  </span>
+                ) : (
+                  <>
+                    {shortenAddress(privy.address, 6)}
+                    <Copy className="w-3 h-3 text-zinc-500 group-hover:text-zinc-300" />
+                  </>
+                )
+              ) : (
+                "Preparing wallet…"
+              )}
+            </button>
           </div>
         </div>
         {privy.error && <div className="text-[12px] text-rose-300">{privy.error}</div>}

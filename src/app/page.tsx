@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
+import { PublicBalanceCard } from '@/components/wallet/PublicBalanceCard';
 import { BalanceCard } from '@/components/wallet/BalanceCard';
 import { ReceivePanel } from '@/components/wallet/ReceivePanel';
 import { TransactionList } from '@/components/wallet/TransactionList';
@@ -49,6 +50,8 @@ export default function Home() {
         {wallet.isConnected && (
           <>
             {showEnablePrivate && <EnablePrivateReceiving />}
+
+            <PublicBalanceCard />
 
             <BalanceCard />
 

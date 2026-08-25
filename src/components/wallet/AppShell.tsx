@@ -1,12 +1,22 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ShieldCheck, ArrowUpRight, ArrowDownLeft, Clock, Settings as SettingsIcon, Lock } from 'lucide-react';
+import {
+  ShieldCheck,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Clock,
+  Settings as SettingsIcon,
+  Lock,
+  Copy,
+  Check,
+} from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
-import { shortenAddress } from '@/utils/formatters';
+import { useToast } from '@/components/Toast';
+import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Home', icon: Lock },
@@ -19,6 +29,28 @@ const NAV_ITEMS = [
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
   const { wallet, currentNetwork, isSepolia } = useWallet();
+  const { showToast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAddress = async () => {
+    if (!wallet.address) return;
+    const ok = await copyToClipboard(wallet.address);
+    if (ok) {
+      setCopied(true);
+      showToast({
+        type: 'success',
+        title: 'Address Copied',
+        description: `${shortenAddress(wallet.address, 6)} copied to clipboard.`,
+      });
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      showToast({
+        type: 'error',
+        title: 'Failed to Copy',
+        description: 'Could not copy address to clipboard.',
+      });
+    }
+  };
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -52,9 +84,23 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
             {wallet.isConnected && wallet.address ? (
               <div className="flex items-center gap-2">
-                <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
-                  {shortenAddress(wallet.address, 6)}
-                </span>
+                <button
+                  onClick={handleCopyAddress}
+                  title="Click to copy full wallet address"
+                  className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono hover:text-zinc-200 transition-colors cursor-pointer group"
+                >
+                  {copied ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      Copied
+                    </span>
+                  ) : (
+                    <>
+                      {shortenAddress(wallet.address, 6)}
+                      <Copy className="w-3 h-3 text-zinc-500 group-hover:text-zinc-300" />
+                    </>
+                  )}
+                </button>
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   Connected
