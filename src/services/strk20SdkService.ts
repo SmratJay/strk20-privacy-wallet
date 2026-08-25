@@ -102,8 +102,6 @@ export async function getStrk20ViewingKey(account: any): Promise<bigint> {
   return key;
 }
 
-const SDK_PACKAGE = '@starkware-libs/starknet-privacy-sdk';
-
 /** USDC has 6 decimals. Convert a human dollar amount to base units. */
 export function usdcToBaseUnits(amountUsd: number | string): bigint {
   const n = typeof amountUsd === 'string' ? parseFloat(amountUsd) : amountUsd;
@@ -185,7 +183,7 @@ let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
   if (createPrivateTransfersFn) return createPrivateTransfersFn;
   try {
-    const mod = (await import(/* webpackIgnore: true */ SDK_PACKAGE)) as {
+    const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as {
       createPrivateTransfers: CreatePrivateTransfersFn;
     };
     createPrivateTransfersFn = mod.createPrivateTransfers;

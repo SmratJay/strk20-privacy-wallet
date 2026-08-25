@@ -60,13 +60,11 @@ interface PrivateTransfersLike {
 
 type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTransfersLike;
 
-const SDK_PACKAGE = "@starkware-libs/starknet-privacy-sdk";
-
 let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
 
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
   if (createPrivateTransfersFn) return createPrivateTransfersFn;
-  const mod = (await import(SDK_PACKAGE)) as {
+  const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as {
     createPrivateTransfers: CreatePrivateTransfersFn;
   };
   createPrivateTransfersFn = mod.createPrivateTransfers;

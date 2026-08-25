@@ -70,7 +70,7 @@ export async function checkStrk20OperatorStatus(): Promise<Strk20OperatorStatus>
 
   let sdkAvailable = true;
   try {
-    const mod = (await import(/* webpackIgnore: true */ '@starkware-libs/starknet-privacy-sdk')) as Record<string, unknown>;
+    const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as Record<string, unknown>;
     sdkAvailable = typeof mod?.createPrivateTransfers === 'function';
   } catch {
     sdkAvailable = false;
