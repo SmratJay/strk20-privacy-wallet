@@ -32,6 +32,9 @@ const ERROR_COPY: Partial<Record<PrivateReceivingEnableStatus, string>> = {
 function privyErrorToMessage(err: any): string {
   const msg = String(err?.message || '');
   const lower = msg.toLowerCase();
+  if (/not finalized|finaliz|10-block|10 block|finality/i.test(lower)) {
+    return 'Your account is still finalizing. Wait a few blocks (~10 blocks), then retry.';
+  }
   if (/not deployed|not found|contract not found|is not deployed/i.test(lower)) {
     return 'Your Starknet account is not deployed yet. Fund it with a small amount of Sepolia ETH/STRK via the faucet, then retry.';
   }
@@ -210,7 +213,14 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
         <div className="flex items-center gap-2 text-sm text-zinc-300">
           <Loader2 className="w-4 h-4 text-violet-300 animate-spin" />
           {state.step === 'CHECKING' && 'Checking privacy setup…'}
-          {state.step === 'WALLET_APPROVAL' && (isPrivy ? 'Preparing registration…' : 'Approve the privacy setup in your wallet…')}
+          {state.step === 'WALLET_APPROVAL' &&
+            (isPrivy
+              ? privy.deploying
+                ? privy.deployStatus === 'FINALIZING'
+                  ? 'Waiting for account finality (~10 blocks)…'
+                  : 'Deploying your account on-chain…'
+                : 'Preparing registration…'
+              : 'Approve the privacy setup in your wallet…')}
           {(state.step === 'SUBMITTED' || state.step === 'CONFIRMING') && 'Waiting for confirmation…'}
         </div>
       )}
@@ -268,6 +278,11 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
           {isPrivy && (
             <p className="text-[11px] text-zinc-500">
               Requires a funded Starknet account and the STRK20 operator proving/discovery services.
+            </p>
+          )}
+          {isPrivy && privy.deployStatus === 'NOT_DEPLOYED' && (
+            <p className="text-[11px] text-amber-300/90">
+              Your account will be deployed on-chain when you enable private receiving.
             </p>
           )}
         </div>
