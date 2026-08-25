@@ -157,6 +157,39 @@ export class PrivyStrk20Adapter {
       ? { proofFacts: callAndProof.proof.proofFacts, proof: callAndProof.proof.data }
       : {};
 
+    const log = (msg: string, data?: unknown) => {
+      // eslint-disable-next-line no-console
+      console.log(`[PrivyStrk20Adapter.submit] ${msg}`, data === undefined ? "" : data);
+    };
+    const logError = (msg: string, err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[PrivyStrk20Adapter.submit] ${msg}`,
+        err instanceof Error ? { message: err.message, stack: err.stack } : err,
+      );
+    };
+
+    const calldataArr = (callAndProof.call.calldata ?? []) as unknown[];
+    log("apply_actions call", {
+      contractAddress: callAndProof.call.contractAddress,
+      entrypoint: callAndProof.call.entrypoint,
+      calldataLength: calldataArr.length,
+      calldataHead: calldataArr.slice(0, 6),
+      calldataTail: calldataArr.slice(-4),
+    });
+    log("proof shape", {
+      proofFactsCount: callAndProof.proof?.proofFacts?.length ?? 0,
+      proofFactsHead: callAndProof.proof?.proofFacts?.slice(0, 2),
+      proofDataType: typeof callAndProof.proof?.data,
+      proofDataLength: String(callAndProof.proof?.data ?? "").length,
+    });
+    log("details passed to Account.execute", {
+      tip: "0n",
+      proofFactsCount: proofDetails.proofFacts?.length ?? 0,
+      proofLength: String(proofDetails.proof ?? "").length,
+      accountAddress: user.address,
+    });
+
     // starknet.js Account.execute uses `this.prepareInvoke`, so it must stay bound to the
     // account instance. (AccountInterface types execute() with InvocationsDetails, which
     // lacks proofFacts/proof, hence the cast.)
@@ -165,14 +198,60 @@ export class PrivyStrk20Adapter {
       details?: Record<string, unknown>,
     ) => Promise<{ transaction_hash: string }>;
 
-    const response = await execute(callAndProof.call, { tip: 0n, ...proofDetails });
-    const transactionHash = response.transaction_hash;
-
-    return {
-      transactionHash,
-      status: "PENDING",
-      explorerUrl: `https://sepolia.voyager.online/tx/${transactionHash}`,
-      warnings: result.warnings ?? [],
+    // Instrument the stages INSIDE starknet.js Account.execute so the exact failure point is
+    // recorded: nonce/fee estimation, Privy signing, and RPC submission.
+    const provider = (user.account as unknown as { provider?: unknown }).provider;
+    const signer = (user.account as unknown as { signer?: unknown }).signer;
+    const originals = new Map<string, unknown>();
+    const instrument = (target: unknown, key: string) => {
+      const obj = target as Record<string, unknown>;
+      const original = obj?.[key];
+      if (typeof original !== "function") return;
+      const wrapped = async (...args: unknown[]) => {
+        log(`stage → ${key} (start)`);
+        try {
+          const out = await (original as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+          log(`stage → ${key} (ok)`);
+          return out;
+        } catch (err) {
+          logError(`stage → ${key} (FAILED)`, err);
+          throw err;
+        }
+      };
+      obj[key] = wrapped;
+      originals.set(key, original);
     };
+    const restore = (target: unknown) => {
+      const obj = target as Record<string, unknown>;
+      originals.forEach((original, key) => {
+        obj[key] = original;
+      });
+    };
+
+    instrument(provider, "getNonceForAddress");
+    instrument(provider, "getChainId");
+    instrument(provider, "getCairoVersion");
+    instrument(provider, "getEstimateFee");
+    instrument(provider, "getEstimateFeeBulk");
+    instrument(provider, "invokeFunction");
+    instrument(signer, "signTransaction");
+
+    try {
+      const response = await execute(callAndProof.call, { tip: 0n, ...proofDetails });
+      const transactionHash = response.transaction_hash;
+      log("submission ok", { transactionHash });
+      return {
+        transactionHash,
+        status: "PENDING",
+        explorerUrl: `https://sepolia.voyager.online/tx/${transactionHash}`,
+        warnings: result.warnings ?? [],
+      };
+    } catch (err) {
+      logError("Account.execute FAILED (post-proof submission)", err);
+      throw err;
+    } finally {
+      restore(provider);
+      restore(signer);
+    }
   }
 }
