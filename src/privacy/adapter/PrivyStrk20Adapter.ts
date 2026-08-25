@@ -66,7 +66,7 @@ let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
 
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
   if (createPrivateTransfersFn) return createPrivateTransfersFn;
-  const mod = (await import(/* webpackIgnore: true */ SDK_PACKAGE)) as {
+  const mod = (await import(SDK_PACKAGE)) as {
     createPrivateTransfers: CreatePrivateTransfersFn;
   };
   createPrivateTransfersFn = mod.createPrivateTransfers;
