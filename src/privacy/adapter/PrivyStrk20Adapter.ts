@@ -1,4 +1,4 @@
-import type { AccountInterface, Call } from "starknet";
+import type { AccountInterface, Call, ProviderInterface, ResourceBoundsBN } from "starknet";
 import { constants } from "starknet";
 
 export interface PrivyStrk20User {
@@ -49,6 +49,8 @@ interface BuilderLike {
   register(): BuilderLike;
   surplusTo(recipient: string, withdraw?: boolean): BuilderLike;
   execute(options?: Record<string, unknown>): Promise<ExecuteResultLike>;
+  /** SDK fee-simulation: mock proof via CallMockProofProvider, no real proof generation. */
+  simulate(options: { node: ProviderInterface; validateSignature?: boolean }): Promise<ExecuteResultLike>;
 }
 
 interface PrivateTransfersLike {
@@ -99,31 +101,53 @@ export class PrivyStrk20Adapter {
 
   async register(user: PrivyStrk20User): Promise<Strk20ExecuteReceipt> {
     const transfers = await this.getTransfers(user);
+    const node = this.getNode(user);
+    const sim = await transfers
+      .build({ autoRegister: true })
+      .register()
+      .simulate({ node });
+    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
     const result = await transfers.build({ autoRegister: true }).register().execute();
-    return this.submit(user, result);
+    return this.submit(user, result, resourceBounds);
   }
 
   async shield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
     const transfers = await this.getTransfers(user);
+    const node = this.getNode(user);
+    const opts = { autoDiscover: { notes: "refresh", channels: "refresh" } };
+    const sim = await transfers
+      .build(opts)
+      .with(token, (t) => t.deposit({ amount: amountBase }))
+      .surplusTo(user.address)
+      .simulate({ node });
+    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
     const result = await transfers
-      .build({ autoDiscover: { notes: "refresh", channels: "refresh" } })
+      .build(opts)
       .with(token, (t) => t.deposit({ amount: amountBase }))
       .surplusTo(user.address)
       .execute();
-    return this.submit(user, result);
+    return this.submit(user, result, resourceBounds);
   }
 
   async unshield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
     const transfers = await this.getTransfers(user);
+    const node = this.getNode(user);
+    const opts = {
+      autoDiscover: { notes: "refresh", channels: "refresh" },
+      autoSelectNotes: "naive",
+    };
+    const sim = await transfers
+      .build(opts)
+      .with(token, (t) => t.withdraw({ amount: amountBase }))
+      .surplusTo(user.address)
+      .simulate({ node });
+    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
     const result = await transfers
-      .build({
-        autoDiscover: { notes: "refresh", channels: "refresh" },
-        autoSelectNotes: "naive",
-      })
+      .build(opts)
       .with(token, (t) => t.withdraw({ amount: amountBase }))
       .surplusTo(user.address)
       .execute();
-    return this.submit(user, result);
+    return this.submit(user, result, resourceBounds);
   }
 
   async transfer(
@@ -133,15 +157,23 @@ export class PrivyStrk20Adapter {
     recipient: string,
   ): Promise<Strk20ExecuteReceipt> {
     const transfers = await this.getTransfers(user);
+    const node = this.getNode(user);
+    const opts = {
+      autoDiscover: { notes: "refresh", channels: "refresh" },
+      autoSelectNotes: "naive",
+    };
+    const sim = await transfers
+      .build(opts)
+      .with(token, (t) => t.transfer({ recipient, amount: amountBase }))
+      .surplusTo(user.address)
+      .simulate({ node });
+    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
     const result = await transfers
-      .build({
-        autoDiscover: { notes: "refresh", channels: "refresh" },
-        autoSelectNotes: "naive",
-      })
+      .build(opts)
       .with(token, (t) => t.transfer({ recipient, amount: amountBase }))
       .surplusTo(user.address)
       .execute();
-    return this.submit(user, result);
+    return this.submit(user, result, resourceBounds);
   }
 
   async getPrivateBalance(user: PrivyStrk20User, token: string): Promise<bigint> {
@@ -151,7 +183,60 @@ export class PrivyStrk20Adapter {
     return tokenNotes.reduce((sum, n) => sum + n.amount, 0n);
   }
 
-  private async submit(user: PrivyStrk20User, result: ExecuteResultLike): Promise<Strk20ExecuteReceipt> {
+  private getNode(user: PrivyStrk20User): ProviderInterface {
+    const provider = (user.account as unknown as { provider?: ProviderInterface }).provider;
+    if (!provider) {
+      throw new Error("Account has no RPC provider; cannot run fee estimation.");
+    }
+    return provider;
+  }
+
+  /**
+   * Fee estimation in the SDK-supported way: the apply_actions call carries ONLY proof facts
+   * (mock/virtual proof from `simulate`), never the real STARK proof blob. starknet.js
+   * `estimateFeeBulk` fails when the real `proof` is attached (the node cannot estimate a
+   * proof-bearing transaction), so we estimate first and pass the resulting resource bounds
+   * straight into the real submission (which skips re-estimation).
+   */
+  private async estimateFee(
+    user: PrivyStrk20User,
+    call: Call,
+    proof: CallAndProofLike["proof"],
+  ): Promise<ResourceBoundsBN> {
+    const proofFacts = proof?.proofFacts?.length ? proof.proofFacts : [];
+    const calldata = (call.calldata ?? []) as unknown[];
+    // eslint-disable-next-line no-console
+    console.log(`[PrivyStrk20Adapter.estimateFee] request`, {
+      contractAddress: call.contractAddress,
+      entrypoint: call.entrypoint,
+      calldataLength: calldata.length,
+      proofFactsCount: proofFacts.length,
+      proofBlobPresent: Boolean(proof?.data),
+      accountAddress: user.address,
+    });
+    try {
+      const estimate = await user.account.estimateInvokeFee(call, { tip: 0n, proofFacts });
+      // eslint-disable-next-line no-console
+      console.log(`[PrivyStrk20Adapter.estimateFee] response`, {
+        overallFee: estimate.overall_fee?.toString?.(),
+        resourceBounds: estimate.resourceBounds,
+      });
+      return estimate.resourceBounds;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[PrivyStrk20Adapter.estimateFee] FAILED`,
+        err instanceof Error ? { message: err.message, stack: err.stack } : err,
+      );
+      throw err;
+    }
+  }
+
+  private async submit(
+    user: PrivyStrk20User,
+    result: ExecuteResultLike,
+    resourceBounds: ResourceBoundsBN,
+  ): Promise<Strk20ExecuteReceipt> {
     const { callAndProof } = result;
     const proofDetails = callAndProof.proof?.proofFacts?.length
       ? { proofFacts: callAndProof.proof.proofFacts, proof: callAndProof.proof.data }
@@ -179,7 +264,6 @@ export class PrivyStrk20Adapter {
     });
     log("proof shape", {
       proofFactsCount: callAndProof.proof?.proofFacts?.length ?? 0,
-      proofFactsHead: callAndProof.proof?.proofFacts?.slice(0, 2),
       proofDataType: typeof callAndProof.proof?.data,
       proofDataLength: String(callAndProof.proof?.data ?? "").length,
     });
@@ -187,6 +271,7 @@ export class PrivyStrk20Adapter {
       tip: "0n",
       proofFactsCount: proofDetails.proofFacts?.length ?? 0,
       proofLength: String(proofDetails.proof ?? "").length,
+      resourceBounds,
       accountAddress: user.address,
     });
 
@@ -199,7 +284,8 @@ export class PrivyStrk20Adapter {
     ) => Promise<{ transaction_hash: string }>;
 
     // Instrument the stages INSIDE starknet.js Account.execute so the exact failure point is
-    // recorded: nonce/fee estimation, Privy signing, and RPC submission.
+    // recorded: nonce lookup, Privy signing, and RPC submission. (Fee estimation is skipped
+    // here because resourceBounds are supplied.)
     const provider = (user.account as unknown as { provider?: unknown }).provider;
     const signer = (user.account as unknown as { signer?: unknown }).signer;
     const originals = new Map<string, unknown>();
@@ -231,13 +317,15 @@ export class PrivyStrk20Adapter {
     instrument(provider, "getNonceForAddress");
     instrument(provider, "getChainId");
     instrument(provider, "getCairoVersion");
-    instrument(provider, "getEstimateFee");
-    instrument(provider, "getEstimateFeeBulk");
     instrument(provider, "invokeFunction");
     instrument(signer, "signTransaction");
 
     try {
-      const response = await execute(callAndProof.call, { tip: 0n, ...proofDetails });
+      const response = await execute(callAndProof.call, {
+        tip: 0n,
+        resourceBounds,
+        ...proofDetails,
+      });
       const transactionHash = response.transaction_hash;
       log("submission ok", { transactionHash });
       return {
