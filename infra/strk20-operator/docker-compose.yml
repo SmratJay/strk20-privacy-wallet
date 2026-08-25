@@ -19,9 +19,17 @@
 
 services:
   discovery-service:
-    image: ghcr.io/starkware-libs/starknet-privacy/discovery-service:PRIVACY-0.14.3-RC.2
+    image:  strk20-discovery:patched
     container_name: strk20-discovery
     restart: unless-stopped
+
+    command:
+      - --config
+      - /etc/discovery/config.toml
+
+    volumes: 
+      - ./discovery-config.toml:/etc/discovery/config.toml:ro
+
     environment:
       # Point both at a Starknet Sepolia node that supports WebSocket indexing.
       RPC_URL: ${RPC_URL:-https://api.cartridge.gg/x/starknet/sepolia}
@@ -30,12 +38,6 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8080:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || curl -fsS http://localhost:8080/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
     networks:
       - strk20
 
@@ -59,9 +61,6 @@ services:
       # 8 GB host: Pathfinder's default 4096 MiB compiler budget + 4096 MiB margin
       # computes 0 RPC compiler concurrency. Pin a fixed limit so the RPC server starts.
       PATHFINDER_RPC_COMPILER_CONCURRENCY_LIMIT: "1"
-    ports:
-      - "9545:9545"
-      - "9546:9546"
     networks:
       - strk20
 

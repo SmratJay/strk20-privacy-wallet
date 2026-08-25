@@ -1,0 +1,27 @@
+[api]
+host = "0.0.0.0:8080"
+health_max_lag_secs = 30
+request_timeout = 30
+
+[rpc]
+url = "http://pathfinder:9545/rpc/v0_10"
+max_concurrent_requests = 10
+connect_timeout = 60
+request_timeout = 30
+max_idle_per_host = 10
+max_batch_size = 100
+event_page_size = 1024
+
+[indexer]
+ws_url = "ws://pathfinder:9545/ws"
+connect_timeout = 10
+backoff_initial_interval = 1
+backoff_max_interval = 60
+
+[logging]
+level = "info"
+
+[limits]
+server_budget = 10000
+max_request_body_bytes = 102400
+public_key_cache_capacity = 10000

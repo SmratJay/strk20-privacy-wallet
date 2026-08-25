@@ -19,6 +19,7 @@
     "@starknet-io/get-starknet-discovery": "6.0.3",
     "@starknet-io/get-starknet-wallet-standard": "6.0.3",
     "@starknet-io/types-js": "0.10.3",
+    "@starkware-libs/starknet-privacy-sdk": "file:vendor/starknet-privacy-sdk",
     "@types/qrcode.react": "^1.0.5",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
@@ -41,8 +42,5 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vitest": "^4.1.10"
-  },
-  "optionalDependencies": {
-    "@starkware-libs/starknet-privacy-sdk": "file:vendor/starknet-privacy-sdk"
   }
 }
