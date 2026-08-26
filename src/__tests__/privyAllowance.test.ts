@@ -32,6 +32,8 @@ function makeAccount(opts: {
   allowanceValues?: bigint[];
   fee?: bigint;
   waitForTxError?: Error;
+  executionStatus?: "SUCCEEDED" | "REVERTED";
+  revertReason?: string;
 }) {
   let allowanceIdx = 0;
   const provider = {
@@ -46,7 +48,11 @@ function makeAccount(opts: {
     }),
     waitForTransaction: vi.fn(async (_hash: any) => {
       if (opts.waitForTxError) throw opts.waitForTxError;
-      return { execution_status: "SUCCEEDED" };
+      return {
+        execution_status: opts.executionStatus ?? "SUCCEEDED",
+        finality_status: "ACCEPTED_ON_L2",
+        revert_reason: opts.revertReason,
+      };
     }),
   };
   const execute = vi.fn(async function (this: unknown, _call: any) {
@@ -87,6 +93,9 @@ describe("ensurePrivacyPoolAllowance (Privy lane)", () => {
     expect(approveCall.calldata[0]).toBe(POOL);
     expect(BigInt(approveCall.calldata[1])).toBe(TARGET);
     expect(BigInt(approveCall.calldata[2])).toBe(0n);
+    // exact u256 encoding: [pool, 0x8ac7230489e80000, 0x0]
+    expect("0x" + BigInt(approveCall.calldata[1]).toString(16)).toBe("0x8ac7230489e80000");
+    expect("0x" + BigInt(approveCall.calldata[2]).toString(16)).toBe("0x0");
   });
 
   it("3. waits for the approval receipt before returning", async () => {
@@ -94,6 +103,18 @@ describe("ensurePrivacyPoolAllowance (Privy lane)", () => {
     await ensurePrivacyPoolAllowance(account as any, STRK_TOKEN_ADDRESS, POOL, FEE);
     expect(account.provider.waitForTransaction).toHaveBeenCalledTimes(1);
     expect(account.provider.waitForTransaction.mock.calls[0][0]).toBe("0xapprove");
+  });
+
+  it("3b. a REVERTED approval receipt stops the flow (no privacy proof, precise error)", async () => {
+    const account = makeAccount({
+      allowanceValues: [0n, 0n],
+      executionStatus: "REVERTED",
+      revertReason: "Insufficient ERC20 allowance",
+    });
+    await expect(
+      ensurePrivacyPoolAllowance(account as any, STRK_TOKEN_ADDRESS, POOL, FEE),
+    ).rejects.toThrow("Could not approve STRK spending for the privacy pool.");
+    expect(account.execute).toHaveBeenCalledTimes(1); // approve was attempted
   });
 
   it("4. throws a precise error when the post-approval allowance is still insufficient (stops before proving)", async () => {

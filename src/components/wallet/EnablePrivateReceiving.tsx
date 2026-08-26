@@ -224,9 +224,11 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
                   : 'Deploying your account on-chain…'
                 : privy.approvalStatus === 'approving'
                   ? 'Approval required — approving STRK for private payments…'
-                  : privy.approvalStatus === 'confirmed'
-                    ? 'Approval confirmed — generating privacy proof…'
-                    : 'Preparing registration…'
+                  : privy.approvalStatus === 'submitted'
+                    ? 'Approval submitted — waiting for confirmation…'
+                    : privy.approvalStatus === 'confirmed'
+                      ? 'Approval confirmed — generating privacy proof…'
+                      : 'Preparing registration…'
               : 'Approve the privacy setup in your wallet…')}
           {(state.step === 'SUBMITTED' || state.step === 'CONFIRMING') && 'Waiting for confirmation…'}
         </div>
