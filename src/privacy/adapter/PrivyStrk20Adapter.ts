@@ -118,7 +118,9 @@ export class PrivyStrk20Adapter {
   }
 
   async shield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
-    const opts = { autoDiscover: { notes: "refresh", channels: "refresh" } };
+    // autoSetup: opens the self-channel + STRK subchannel in the same apply_actions proof when
+    // missing (protocol requires subchannel_exists before CreateEncNote — SUBCHANNEL_NOT_FOUND).
+    const opts = { autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } };
     return this.runWithBounds(
       user,
       (t, node) =>
@@ -130,6 +132,7 @@ export class PrivyStrk20Adapter {
 
   async unshield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
     const opts = {
+      autoSetup: true,
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
@@ -149,6 +152,7 @@ export class PrivyStrk20Adapter {
     recipient: string,
   ): Promise<Strk20ExecuteReceipt> {
     const opts = {
+      autoSetup: true,
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
