@@ -62,7 +62,15 @@ function makeAccount() {
   return {
     address: "0xaddr",
     signer: {},
-    provider: {},
+    provider: {
+      // Sufficient STRK allowance so the adapter's prerequisite check performs no approve.
+      callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
+        if (entrypoint === "get_fee_amount") return ["0x" + (2n * 10n ** 18n).toString(16)];
+        if (entrypoint === "allowance") return ["0x" + (10n * 10n ** 18n).toString(16), "0x0"];
+        return ["0x0"];
+      }),
+      waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED" })),
+    },
     estimateInvokeFee,
     execute,
   };
@@ -125,6 +133,12 @@ describe("PrivyStrk20Adapter fee-estimation flow", () => {
       address: "0xaddr",
       signer: {},
       provider: {
+        callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
+          if (entrypoint === "get_fee_amount") return ["0x" + (2n * 10n ** 18n).toString(16)];
+          if (entrypoint === "allowance") return ["0x" + (10n * 10n ** 18n).toString(16), "0x0"];
+          return ["0x0"];
+        }),
+        waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED" })),
         getBlockWithTxHashes: vi.fn(async () => ({
           l1_gas_price: { price_in_fri: "0x64" }, // 100
           l2_gas_price: { price_in_fri: "0x2" }, // 2

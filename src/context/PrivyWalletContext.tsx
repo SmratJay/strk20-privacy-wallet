@@ -19,6 +19,10 @@ import {
   waitForDeploymentFinality,
 } from "@/privacy/privy/ready";
 import { PrivyStrk20Adapter, type Strk20ExecuteReceipt } from "@/privacy/adapter";
+import {
+  STRK_TOKEN_ADDRESS,
+  type ApprovalStatus,
+} from "@/privacy/privy/allowance";
 import { loadOrCreateViewingKey } from "@/privacy/privy/viewingKeyStore";
 import { getNetworkConfig } from "@/config/networks";
 import { waitForStrk20Confirmation } from "@/services/strk20WalletApiService";
@@ -61,6 +65,8 @@ export interface PrivyWalletContextValue {
   deployed: boolean;
   deploying: boolean;
   deployError: string | null;
+  /** STRK allowance prerequisite progress (approving STRK for the privacy pool). */
+  approvalStatus: ApprovalStatus;
   login: (opts?: { email?: string; google?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   /** Deploy the derived Ready account if not already deployed. Resolves true when READY. */
@@ -86,6 +92,7 @@ const UNAVAILABLE: PrivyWalletContextValue = {
   deployed: false,
   deploying: false,
   deployError: null,
+  approvalStatus: "idle",
   login: async () => {},
   logout: async () => {},
   deploy: async () => { throw new Error("Privy is not configured."); },
@@ -137,12 +144,14 @@ async function resolveStarknetWallet(userId: string, token: string): Promise<Res
   return result;
 }
 
-function buildAdapter(): PrivyStrk20Adapter {
+function buildAdapter(onApprovalStatus?: (status: ApprovalStatus) => void): PrivyStrk20Adapter {
   return new PrivyStrk20Adapter({
     poolContractAddress: SEPOLIA_POOL,
     chainId: constants.StarknetChainId.SN_SEPOLIA,
     proverUrl: PROVER_URL,
     discoveryUrl: DISCOVERY_URL,
+    feeTokenAddress: STRK_TOKEN_ADDRESS,
+    onApprovalStatus,
   });
 }
 
@@ -152,6 +161,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [privateReceivingEnabled, setPrivateReceivingEnabled] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("idle");
   const [resolved, setResolved] = useState<{
     walletId: string;
     address: string;
@@ -318,7 +328,8 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     async (token: string, amountBase: bigint) => {
       await ensureReady();
       const user = requireReady();
-      return buildAdapter().shield(user, token, amountBase);
+      setApprovalStatus("idle");
+      return buildAdapter((s) => setApprovalStatus(s)).shield(user, token, amountBase);
     },
     [requireReady, ensureReady],
   );
@@ -327,7 +338,8 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     async (token: string, amountBase: bigint, recipient: string) => {
       await ensureReady();
       const user = requireReady();
-      return buildAdapter().unshield(user, token, amountBase);
+      setApprovalStatus("idle");
+      return buildAdapter((s) => setApprovalStatus(s)).unshield(user, token, amountBase);
     },
     [requireReady, ensureReady],
   );
@@ -336,7 +348,8 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     async (token: string, amountBase: bigint, recipient: string) => {
       await ensureReady();
       const user = requireReady();
-      return buildAdapter().transfer(user, token, amountBase, recipient);
+      setApprovalStatus("idle");
+      return buildAdapter((s) => setApprovalStatus(s)).transfer(user, token, amountBase, recipient);
     },
     [requireReady, ensureReady],
   );
@@ -344,7 +357,8 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   const register = useCallback(async () => {
     await ensureReady();
     const user = requireReady();
-    const receipt = await buildAdapter().register(user);
+    setApprovalStatus("idle");
+    const receipt = await buildAdapter((s) => setApprovalStatus(s)).register(user);
     setPrivateReceivingEnabled(true);
     return receipt;
   }, [requireReady, ensureReady]);
@@ -372,6 +386,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       deployed: deployStatus === "READY",
       deploying: deployStatus === "DEPLOYING" || deployStatus === "FINALIZING",
       deployError,
+      approvalStatus,
       login,
       logout,
       deploy,
@@ -381,7 +396,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       register,
       getPrivateBalance,
     }),
-    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, login, logout, deploy, shield, unshield, transfer, register, getPrivateBalance],
+    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, approvalStatus, login, logout, deploy, shield, unshield, transfer, register, getPrivateBalance],
   );
 
   return <PrivyWalletContext.Provider value={value}>{children}</PrivyWalletContext.Provider>;

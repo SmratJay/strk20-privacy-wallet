@@ -1,5 +1,11 @@
 import type { AccountInterface, Call, ProviderInterface, ResourceBoundsBN } from "starknet";
 import { constants } from "starknet";
+import {
+  ensurePrivacyPoolAllowance,
+  readPoolFee,
+  STRK_TOKEN_ADDRESS,
+  type ApprovalStatus,
+} from "@/privacy/privy/allowance";
 
 export interface PrivyStrk20User {
   account: AccountInterface;
@@ -12,6 +18,10 @@ export interface PrivyStrk20AdapterConfig {
   chainId: constants.StarknetChainId;
   proverUrl: string;
   discoveryUrl: string;
+  /** STRK fee token the pool charges per apply_actions. Defaults to the canonical STRK address. */
+  feeTokenAddress?: string;
+  /** UX callback fired while the STRK allowance prerequisite is being handled. */
+  onApprovalStatus?: (status: ApprovalStatus) => void;
 }
 
 export interface Strk20ExecuteReceipt {
@@ -170,6 +180,10 @@ export class PrivyStrk20Adapter {
     buildSim: (transfers: PrivateTransfersLike, node: ProviderInterface) => Promise<ExecuteResultLike>,
     buildExec: (transfers: PrivateTransfersLike) => Promise<ExecuteResultLike>,
   ): Promise<Strk20ExecuteReceipt> {
+    // The pool charges a STRK fee on every apply_actions call. Approve before the expensive
+    // prover call — an approval + wait here is far cheaper than a ~20s proof that reverts.
+    await this.ensureAllowance(user);
+
     const transfers = await this.getTransfers(user);
     const node = this.getNode(user);
 
@@ -254,6 +268,23 @@ export class PrivyStrk20Adapter {
       throw new Error("Account has no RPC provider; cannot run fee estimation.");
     }
     return provider;
+  }
+
+  /**
+   * STRK20 allowance prerequisite (Privy lane only). Reads the pool's `get_fee_amount()` once and
+   * ensures the account has approved enough STRK for the pool to charge it. Approval is an ordinary
+   * ERC20 `approve` — it never goes through the privacy prover.
+   */
+  private async ensureAllowance(user: PrivyStrk20User): Promise<void> {
+    const provider = this.getNode(user);
+    const requiredAmount = await readPoolFee(provider, this.config.poolContractAddress);
+    await ensurePrivacyPoolAllowance(
+      user.account,
+      this.config.feeTokenAddress ?? STRK_TOKEN_ADDRESS,
+      this.config.poolContractAddress,
+      requiredAmount,
+      { onStatus: this.config.onApprovalStatus },
+    );
   }
 
   /**

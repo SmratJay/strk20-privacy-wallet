@@ -38,6 +38,9 @@ function privyErrorToMessage(err: any): string {
   if (/not deployed|not found|contract not found|is not deployed/i.test(lower)) {
     return 'Your Starknet account is not deployed yet. Fund it with a small amount of Sepolia ETH/STRK via the faucet, then retry.';
   }
+  if (/allow|approve|spend/i.test(lower)) {
+    return 'Could not approve STRK spending for the privacy pool.';
+  }
   if (/insufficient.*balance|not enough.*funds|insufficient funds|out of fee|fee.*insufficient/i.test(lower)) {
     return 'You need a small amount of STRK in your Starknet account for network fees. Fund it via the Sepolia faucet, then retry.';
   }
@@ -219,7 +222,11 @@ export const EnablePrivateReceiving: React.FC<{ onEnabled?: () => void }> = ({ o
                 ? privy.deployStatus === 'FINALIZING'
                   ? 'Waiting for account finality (~10 blocks)…'
                   : 'Deploying your account on-chain…'
-                : 'Preparing registration…'
+                : privy.approvalStatus === 'approving'
+                  ? 'Approval required — approving STRK for private payments…'
+                  : privy.approvalStatus === 'confirmed'
+                    ? 'Approval confirmed — generating privacy proof…'
+                    : 'Preparing registration…'
               : 'Approve the privacy setup in your wallet…')}
           {(state.step === 'SUBMITTED' || state.step === 'CONFIRMING') && 'Waiting for confirmation…'}
         </div>
