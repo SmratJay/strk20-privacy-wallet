@@ -221,7 +221,7 @@ export class PrivyStrk20Adapter {
     } catch {
       // Fall back to defaults; the node still charges actual usage within these caps.
     }
-    const gasAmount = 10_000_000_000n;
+    const gasAmount = 1_210_000_000n;
     // eslint-disable-next-line no-console
     console.log("[PrivyStrk20Adapter.resolveResourceBounds]", {
       l1GasPrice: l1.toString(),

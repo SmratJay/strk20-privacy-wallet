@@ -151,9 +151,9 @@ describe("PrivyStrk20Adapter fee-estimation flow", () => {
     // Bounds come from gas prices × 2 headroom.
     const submitDetails = account.execute.mock.calls[0][1];
     expect(submitDetails.resourceBounds).toEqual({
-      l1_gas: { max_amount: 10_000_000_000n, max_price_per_unit: 200n },
-      l2_gas: { max_amount: 10_000_000_000n, max_price_per_unit: 4n },
-      l1_data_gas: { max_amount: 10_000_000_000n, max_price_per_unit: 2n },
+      l1_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 200n },
+      l2_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 4n },
+      l1_data_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 2n },
     });
     expect(submitDetails.proofFacts).toEqual(REAL_PROOF.proofFacts);
     expect(submitDetails.proof).toBe(REAL_PROOF.data);
