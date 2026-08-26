@@ -148,12 +148,13 @@ describe("PrivyStrk20Adapter fee-estimation flow", () => {
 
     // estimateFee threw the PROOF0 rejection and was NOT used for the bounds.
     expect(account.estimateInvokeFee).toHaveBeenCalledTimes(1);
-    // Bounds come from gas prices × 2 headroom.
+    // Bounds come from gas prices × 2 headroom, with per-resource V3 ceilings
+    // (L2 gas capped at the live Sepolia ceiling; L1/L1-data at the demo's values).
     const submitDetails = account.execute.mock.calls[0][1];
     expect(submitDetails.resourceBounds).toEqual({
-      l1_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 200n },
+      l1_gas: { max_amount: 1n, max_price_per_unit: 200n },
       l2_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 4n },
-      l1_data_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 2n },
+      l1_data_gas: { max_amount: 10_000n, max_price_per_unit: 2n },
     });
     expect(submitDetails.proofFacts).toEqual(REAL_PROOF.proofFacts);
     expect(submitDetails.proof).toBe(REAL_PROOF.data);

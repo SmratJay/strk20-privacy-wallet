@@ -221,19 +221,23 @@ export class PrivyStrk20Adapter {
     } catch {
       // Fall back to defaults; the node still charges actual usage within these caps.
     }
-    const gasAmount = 1_210_000_000n;
+    const l2GasAmount = 1_210_000_000n;
+    const l1GasAmount = 1n;
+    const l1DataGasAmount = 10_000n;
     // eslint-disable-next-line no-console
     console.log("[PrivyStrk20Adapter.resolveResourceBounds]", {
       l1GasPrice: l1.toString(),
       l2GasPrice: l2.toString(),
       l1DataGasPrice: l1Data.toString(),
-      maxAmount: gasAmount.toString(),
+      l2GasMaxAmount: l2GasAmount.toString(),
+      l1GasMaxAmount: l1GasAmount.toString(),
+      l1DataGasMaxAmount: l1DataGasAmount.toString(),
       multiplier: 2,
     });
     return {
-      l1_gas: { max_amount: gasAmount, max_price_per_unit: l1 * 2n },
-      l2_gas: { max_amount: gasAmount, max_price_per_unit: l2 * 2n },
-      l1_data_gas: { max_amount: gasAmount, max_price_per_unit: l1Data * 2n },
+      l1_gas: { max_amount: l1GasAmount, max_price_per_unit: l1 * 2n },
+      l2_gas: { max_amount: l2GasAmount, max_price_per_unit: l2 * 2n },
+      l1_data_gas: { max_amount: l1DataGasAmount, max_price_per_unit: l1Data * 2n },
     };
   }
 
