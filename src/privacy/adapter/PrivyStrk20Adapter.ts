@@ -100,54 +100,36 @@ export class PrivyStrk20Adapter {
   }
 
   async register(user: PrivyStrk20User): Promise<Strk20ExecuteReceipt> {
-    const transfers = await this.getTransfers(user);
-    const node = this.getNode(user);
-    const sim = await transfers
-      .build({ autoRegister: true })
-      .register()
-      .simulate({ node });
-    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
-    const result = await transfers.build({ autoRegister: true }).register().execute();
-    return this.submit(user, result, resourceBounds);
+    return this.runWithBounds(
+      user,
+      (t, node) => t.build({ autoRegister: true }).register().simulate({ node }),
+      (t) => t.build({ autoRegister: true }).register().execute(),
+    );
   }
 
   async shield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
-    const transfers = await this.getTransfers(user);
-    const node = this.getNode(user);
     const opts = { autoDiscover: { notes: "refresh", channels: "refresh" } };
-    const sim = await transfers
-      .build(opts)
-      .with(token, (t) => t.deposit({ amount: amountBase }))
-      .surplusTo(user.address)
-      .simulate({ node });
-    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
-    const result = await transfers
-      .build(opts)
-      .with(token, (t) => t.deposit({ amount: amountBase }))
-      .surplusTo(user.address)
-      .execute();
-    return this.submit(user, result, resourceBounds);
+    return this.runWithBounds(
+      user,
+      (t, node) =>
+        t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).simulate({ node }),
+      (t) =>
+        t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).execute(),
+    );
   }
 
   async unshield(user: PrivyStrk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
-    const transfers = await this.getTransfers(user);
-    const node = this.getNode(user);
     const opts = {
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
-    const sim = await transfers
-      .build(opts)
-      .with(token, (t) => t.withdraw({ amount: amountBase }))
-      .surplusTo(user.address)
-      .simulate({ node });
-    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
-    const result = await transfers
-      .build(opts)
-      .with(token, (t) => t.withdraw({ amount: amountBase }))
-      .surplusTo(user.address)
-      .execute();
-    return this.submit(user, result, resourceBounds);
+    return this.runWithBounds(
+      user,
+      (t, node) =>
+        t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).simulate({ node }),
+      (t) =>
+        t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).execute(),
+    );
   }
 
   async transfer(
@@ -156,24 +138,103 @@ export class PrivyStrk20Adapter {
     amountBase: bigint,
     recipient: string,
   ): Promise<Strk20ExecuteReceipt> {
-    const transfers = await this.getTransfers(user);
-    const node = this.getNode(user);
     const opts = {
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
-    const sim = await transfers
-      .build(opts)
-      .with(token, (t) => t.transfer({ recipient, amount: amountBase }))
-      .surplusTo(user.address)
-      .simulate({ node });
-    const resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
-    const result = await transfers
-      .build(opts)
-      .with(token, (t) => t.transfer({ recipient, amount: amountBase }))
-      .surplusTo(user.address)
-      .execute();
+    return this.runWithBounds(
+      user,
+      (t, node) =>
+        t
+          .build(opts)
+          .with(token, (x) => x.transfer({ recipient, amount: amountBase }))
+          .surplusTo(user.address)
+          .simulate({ node }),
+      (t) =>
+        t
+          .build(opts)
+          .with(token, (x) => x.transfer({ recipient, amount: amountBase }))
+          .surplusTo(user.address)
+          .execute(),
+    );
+  }
+
+  /**
+   * RC5 fee-estimation flow: `simulate()` (CallMockProofProvider, mock proof, PROOF0 proofFacts)
+   * → `estimateFee`. On public Sepolia the node's blockifier rejects the PROOF0 proof version
+   * ("Proof version PROOF0 is not allowed under this protocol version") for fee estimation, so we
+   * fall back to gas-price-derived resource bounds (2x headroom) and submit the real proof directly.
+   */
+  private async runWithBounds(
+    user: PrivyStrk20User,
+    buildSim: (transfers: PrivateTransfersLike, node: ProviderInterface) => Promise<ExecuteResultLike>,
+    buildExec: (transfers: PrivateTransfersLike) => Promise<ExecuteResultLike>,
+  ): Promise<Strk20ExecuteReceipt> {
+    const transfers = await this.getTransfers(user);
+    const node = this.getNode(user);
+
+    const sim = await buildSim(transfers, node);
+    let resourceBounds: ResourceBoundsBN;
+    try {
+      resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
+    } catch (err) {
+      if (this.isProofVersionRejected(err)) {
+        // eslint-disable-next-line no-console
+        console.warn("[PrivyStrk20Adapter] estimateFee rejected the PROOF0 proof version; using gas-price resource bounds.", {
+          message: err instanceof Error ? err.message : err,
+        });
+        resourceBounds = await this.resolveResourceBounds(user);
+      } else {
+        throw err;
+      }
+    }
+
+    const result = await buildExec(transfers);
     return this.submit(user, result, resourceBounds);
+  }
+
+  /** True when the node rejected the STRK20 PROOF0 proof version under its protocol. */
+  private isProofVersionRejected(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /proof version|not allowed under this protocol version|is not allowed under/i.test(msg);
+  }
+
+  /**
+   * Compute resource bounds from the current block's gas prices (2x headroom), the way the
+   * starkware demo does for public testnets where estimateFee rejects STRK20 proof facts.
+   */
+  private async resolveResourceBounds(user: PrivyStrk20User): Promise<ResourceBoundsBN> {
+    const provider = this.getNode(user);
+    let l1 = 1n;
+    let l2 = 1n;
+    let l1Data = 1n;
+    try {
+      const block = (await provider.getBlockWithTxHashes("latest")) as unknown as {
+        l1_gas_price?: { price_in_fri?: unknown };
+        l2_gas_price?: { price_in_fri?: unknown };
+        l1_data_gas_price?: { price_in_fri?: unknown };
+      };
+      const toFelt = (v: unknown): bigint => (v != null ? BigInt(String(v)) : 1n);
+      l1 = toFelt(block?.l1_gas_price?.price_in_fri) || 1n;
+      l2 = toFelt(block?.l2_gas_price?.price_in_fri) || 1n;
+      l1Data = toFelt(block?.l1_data_gas_price?.price_in_fri) || 1n;
+    } catch {
+      // Fall back to defaults; the node still charges actual usage within these caps.
+    }
+    const gasAmount = 10_000_000_000n;
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.resolveResourceBounds]", {
+      l1GasPrice: l1.toString(),
+      l2GasPrice: l2.toString(),
+      l1DataGasPrice: l1Data.toString(),
+      maxAmount: gasAmount.toString(),
+      multiplier: 2,
+    });
+    return {
+      l1_gas: { max_amount: gasAmount, max_price_per_unit: l1 * 2n },
+      l2_gas: { max_amount: gasAmount, max_price_per_unit: l2 * 2n },
+      l1_data_gas: { max_amount: gasAmount, max_price_per_unit: l1Data * 2n },
+    };
   }
 
   async getPrivateBalance(user: PrivyStrk20User, token: string): Promise<bigint> {
