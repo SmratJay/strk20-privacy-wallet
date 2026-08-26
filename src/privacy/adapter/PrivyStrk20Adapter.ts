@@ -127,6 +127,8 @@ export class PrivyStrk20Adapter {
         t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).simulate({ node }),
       (t) =>
         t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).execute(),
+      // A shield pulls the deposit amount (transferFrom) + the STRK pool fee from the account.
+      { depositToken: token, depositAmount: amountBase },
     );
   }
 
@@ -183,10 +185,12 @@ export class PrivyStrk20Adapter {
     user: PrivyStrk20User,
     buildSim: (transfers: PrivateTransfersLike, node: ProviderInterface) => Promise<ExecuteResultLike>,
     buildExec: (transfers: PrivateTransfersLike) => Promise<ExecuteResultLike>,
+    allowance?: { depositToken?: string; depositAmount?: bigint },
   ): Promise<Strk20ExecuteReceipt> {
-    // The pool charges a STRK fee on every apply_actions call. Approve before the expensive
-    // prover call — an approval + wait here is far cheaper than a ~20s proof that reverts.
-    await this.ensureAllowance(user);
+    // The pool charges a STRK fee on every apply_actions call; a shield additionally pulls the
+    // deposit amount from the account. Approve before the expensive prover call — an approval +
+    // wait here is far cheaper than a ~20s proof that reverts.
+    await this.ensureAllowance(user, allowance);
 
     const transfers = await this.getTransfers(user);
     const node = this.getNode(user);
@@ -276,19 +280,39 @@ export class PrivyStrk20Adapter {
 
   /**
    * STRK20 allowance prerequisite (Privy lane only). Reads the pool's `get_fee_amount()` once and
-   * ensures the account has approved enough STRK for the pool to charge it. Approval is an ordinary
-   * ERC20 `approve` — it never goes through the privacy prover.
+   * ensures the account has approved what the pool will pull from it:
+   *   - the STRK pool fee on every apply_actions (collect_fee transfers STRK from the caller), plus
+   *     the deposit amount when the deposit token IS STRK (a shield transferFrom pulls it from the
+   *     caller);
+   *   - when the deposit token is NOT STRK, a separate allowance on the deposit token for the
+   *     deposit amount.
+   * Approval is an ordinary ERC20 `approve` — it never goes through the privacy prover.
    */
-  private async ensureAllowance(user: PrivyStrk20User): Promise<void> {
+  private async ensureAllowance(
+    user: PrivyStrk20User,
+    deposit?: { depositToken?: string; depositAmount?: bigint },
+  ): Promise<void> {
     const provider = this.getNode(user);
-    const requiredAmount = await readPoolFee(provider, this.config.poolContractAddress);
-    await ensurePrivacyPoolAllowance(
-      user.account,
-      this.config.feeTokenAddress ?? STRK_TOKEN_ADDRESS,
-      this.config.poolContractAddress,
-      requiredAmount,
-      { onStatus: this.config.onApprovalStatus },
-    );
+    const feeToken = this.config.feeTokenAddress ?? STRK_TOKEN_ADDRESS;
+    const fee = await readPoolFee(provider, this.config.poolContractAddress);
+
+    const depositToken = deposit?.depositToken;
+    const depositAmount = deposit?.depositAmount ?? 0n;
+    const depositIsFeeToken =
+      depositToken !== undefined && depositToken.toLowerCase() === feeToken.toLowerCase();
+
+    // STRK allowance covers the fee, plus the deposit amount when depositing STRK itself.
+    const strkRequired = fee + (depositIsFeeToken ? depositAmount : 0n);
+    await ensurePrivacyPoolAllowance(user.account, feeToken, this.config.poolContractAddress, strkRequired, {
+      onStatus: this.config.onApprovalStatus,
+    });
+
+    // Depositing a non-STRK token pulls that token from the account too — separate allowance.
+    if (depositToken !== undefined && !depositIsFeeToken) {
+      await ensurePrivacyPoolAllowance(user.account, depositToken, this.config.poolContractAddress, depositAmount, {
+        onStatus: this.config.onApprovalStatus,
+      });
+    }
   }
 
   /**

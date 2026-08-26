@@ -230,3 +230,93 @@ describe("PrivyStrk20Adapter: allowance before proving + PROOF0 fallback intact"
     expect(src).not.toMatch(/allowance/i);
   });
 });
+
+describe("PrivyStrk20Adapter allowance formula (contract-verified: fee always STRK, shield pulls deposit token)", () => {
+  // First allowance read returns `initialAllowance`; post-approval reads return a large value so a
+  // successful approve lets the operation continue (letting us assert the approve target).
+  function makeFormulaAccount(initialAllowance: bigint) {
+    let allowanceReads = 0;
+    const approveCalls: any[] = [];
+    const provider = {
+      callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
+        if (entrypoint === "get_fee_amount") return [felt128(FEE)];
+        if (entrypoint === "allowance") {
+          allowanceReads += 1;
+          const v = allowanceReads === 1 ? initialAllowance : 1000n * 10n ** 18n;
+          return [felt128(v), "0x0"];
+        }
+        return ["0x0"];
+      }),
+      waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED" })),
+      getBlockWithTxHashes: vi.fn(async () => ({
+        l1_gas_price: { price_in_fri: "0x64" },
+        l2_gas_price: { price_in_fri: "0x2" },
+        l1_data_gas_price: { price_in_fri: "0x1" },
+      })),
+    };
+    const estimateInvokeFee = vi.fn(async () => ({
+      resourceBounds: {
+        l1_gas: { max_amount: 1n, max_price_per_unit: 200n },
+        l2_gas: { max_amount: 1_210_000_000n, max_price_per_unit: 4n },
+        l1_data_gas: { max_amount: 10_000n, max_price_per_unit: 2n },
+      },
+      overall_fee: 100n,
+      unit: "FRI",
+    }));
+    const execute = vi.fn(async function (this: unknown, call: any) {
+      if (!this) throw new Error("unbound");
+      if (call?.entrypoint === "approve") approveCalls.push(call);
+      return { transaction_hash: "0xtx" };
+    });
+    const account = { address: "0xowner", signer: {}, provider, execute, estimateInvokeFee };
+    const adapter = new PrivyStrk20Adapter({
+      poolContractAddress: POOL,
+      chainId: constants.StarknetChainId.SN_SEPOLIA,
+      proverUrl: "",
+      discoveryUrl: "",
+    });
+    return { user: { account: account as any, address: "0xowner", viewingKey: 1n }, approveCalls, adapter };
+  }
+
+  const SHIELD = 42n * 10n ** 18n; // 42 STRK
+
+  it("shield 42 STRK + fee 2 with allowance 8 => approval REQUIRED with target >= 44 STRK", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(8n * 10n ** 18n);
+    await adapter.shield(user, STRK_TOKEN_ADDRESS, SHIELD);
+    expect(approveCalls.length).toBe(1);
+    expect(approveCalls[0].contractAddress).toBe(STRK_TOKEN_ADDRESS);
+    expect(BigInt(approveCalls[0].calldata[1])).toBeGreaterThanOrEqual(44n * 10n ** 18n);
+  });
+
+  it("shield 42 STRK + fee 2 with allowance 44 => no approval", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(44n * 10n ** 18n);
+    await adapter.shield(user, STRK_TOKEN_ADDRESS, SHIELD);
+    expect(approveCalls.length).toBe(0);
+  });
+
+  it("shield 42 STRK + fee 2 with allowance 43 => approval REQUIRED (target >= 44 STRK)", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(43n * 10n ** 18n);
+    await adapter.shield(user, STRK_TOKEN_ADDRESS, SHIELD);
+    expect(approveCalls.length).toBe(1);
+    expect(BigInt(approveCalls[0].calldata[1])).toBeGreaterThanOrEqual(44n * 10n ** 18n);
+  });
+
+  it("transfer requires fee only: allowance 8 STRK (>= 2 fee) => no approval", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(8n * 10n ** 18n);
+    await adapter.transfer(user, STRK_TOKEN_ADDRESS, 5n * 10n ** 18n, "0xrecipient");
+    expect(approveCalls.length).toBe(0);
+  });
+
+  it("transfer requires fee only: allowance 1 STRK (< 2 fee) => approval with default 10 STRK target", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(1n * 10n ** 18n);
+    await adapter.transfer(user, STRK_TOKEN_ADDRESS, 5n * 10n ** 18n, "0xrecipient");
+    expect(approveCalls.length).toBe(1);
+    expect(BigInt(approveCalls[0].calldata[1])).toBe(10n * 10n ** 18n);
+  });
+
+  it("unshield requires fee only: allowance 8 STRK => no approval", async () => {
+    const { user, approveCalls, adapter } = makeFormulaAccount(8n * 10n ** 18n);
+    await adapter.unshield(user, STRK_TOKEN_ADDRESS, 5n * 10n ** 18n);
+    expect(approveCalls.length).toBe(0);
+  });
+});

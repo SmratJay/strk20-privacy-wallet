@@ -153,7 +153,8 @@ describe("PrivyStrk20Adapter passes autoSetup: true", () => {
   it("shield/transfer/unshield build() opts contain autoSetup: true and keep autoDiscover", async () => {
     h.buildOpts.length = 0;
     const fee = 2n * 10n ** 18n;
-    const allowance = 10n * 10n ** 18n;
+    // Generous allowance so no approval is triggered for the 100-STRK shield (fee + deposit).
+    const allowance = 1000n * 10n ** 18n;
     const provider = {
       callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
         if (entrypoint === "get_fee_amount") return ["0x" + fee.toString(16)];

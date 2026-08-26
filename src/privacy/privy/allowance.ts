@@ -114,7 +114,13 @@ export async function ensurePrivacyPoolAllowance(
 ): Promise<AllowanceResult> {
   const provider = accountProvider(account);
   const rpc = safeProviderUrl(provider);
-  const target = opts.target ?? DEFAULT_STRK_ALLOWANCE_TARGET;
+  // Dynamic target: never approve less than the required allowance (e.g. a 42-STRK shield needs
+  // 44 STRK approved, not just the 10-STRK default); still grant at least the default headroom.
+  const target =
+    opts.target ??
+    (requiredAmount > DEFAULT_STRK_ALLOWANCE_TARGET
+      ? requiredAmount
+      : DEFAULT_STRK_ALLOWANCE_TARGET);
 
   const log = (msg: string, data?: unknown) => {
     // eslint-disable-next-line no-console
