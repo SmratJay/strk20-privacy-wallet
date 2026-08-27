@@ -70,6 +70,7 @@ function makeAccount() {
         return ["0x0"];
       }),
       waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED" })),
+      getBlockNumber: vi.fn(async () => 14_000_000),
     },
     estimateInvokeFee,
     execute,
@@ -139,6 +140,7 @@ describe("PrivyStrk20Adapter fee-estimation flow", () => {
           return ["0x0"];
         }),
         waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED" })),
+        getBlockNumber: vi.fn(async () => 14_000_000),
         getBlockWithTxHashes: vi.fn(async () => ({
           l1_gas_price: { price_in_fri: "0x64" }, // 100
           l2_gas_price: { price_in_fri: "0x2" }, // 2

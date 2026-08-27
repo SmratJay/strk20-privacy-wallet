@@ -138,10 +138,13 @@ export class PrivyStrk20Adapter {
   }
 
   async register(user: PrivyStrk20User): Promise<Strk20ExecuteReceipt> {
+    // Prove against a block safely behind the chain head (same rule as shield) so the pool's
+    // account validation does not reject the proof as "too recent".
+    const provingBlockId = await this.getSafeProvingBlock(user);
     return this.runWithBounds(
       user,
       (t, node) => t.build({ autoRegister: true }).register().simulate({ node }),
-      (t) => t.build({ autoRegister: true }).register().execute(),
+      (t) => t.build({ autoRegister: true }).register().execute({ provingBlockId }),
     );
   }
 
@@ -181,12 +184,13 @@ export class PrivyStrk20Adapter {
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
+    const provingBlockId = await this.getSafeProvingBlock(user);
     return this.runWithBounds(
       user,
       (t, node) =>
         t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).simulate({ node }),
       (t) =>
-        t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).execute(),
+        t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).execute({ provingBlockId }),
     );
   }
 
@@ -201,6 +205,7 @@ export class PrivyStrk20Adapter {
       autoDiscover: { notes: "refresh", channels: "refresh" },
       autoSelectNotes: "naive",
     };
+    const provingBlockId = await this.getSafeProvingBlock(user);
     return this.runWithBounds(
       user,
       (t, node) =>
@@ -214,7 +219,7 @@ export class PrivyStrk20Adapter {
           .build(opts)
           .with(token, (x) => x.transfer({ recipient, amount: amountBase }))
           .surplusTo(user.address)
-          .execute(),
+          .execute({ provingBlockId }),
     );
   }
 
