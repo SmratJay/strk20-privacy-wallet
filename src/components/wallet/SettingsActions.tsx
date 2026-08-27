@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, AlertCircle, Rocket, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertCircle, Rocket, ShieldCheck, RefreshCw } from 'lucide-react';
 import { usePrivyWallet } from '@/context/PrivyWalletContext';
 
 type ActionState = 'idle' | 'pending' | 'error';
@@ -24,6 +24,7 @@ export const SettingsActions: React.FC = () => {
 
   const [accountAction, setAccountAction] = useState<ActionState>('idle');
   const [privacyAction, setPrivacyAction] = useState<ActionState>('idle');
+  const [retrying, setRetrying] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [privacyError, setPrivacyError] = useState<string | null>(null);
 
@@ -65,28 +66,33 @@ export const SettingsActions: React.FC = () => {
   }, [privy, privyConnected, accountStatus]);
 
   const handleEnablePrivacy = useCallback(async () => {
-    if (!privyConnected || privacyStatus === 'enabled') return;
+    if (!privyConnected || privacyStatus !== 'disabled') return;
     setPrivacyAction('pending');
     setPrivacyError(null);
     try {
       const ok = await privy.enablePrivacy();
-      if (ok) {
-        await privy.refreshPrivacyRegistrationStatus();
-        setPrivacyAction('idle');
-      } else {
-        await privy.refreshPrivacyRegistrationStatus();
-        if (privy.privacyStatus === 'enabled') {
-          setPrivacyAction('idle');
-          return;
-        }
+      if (!ok) {
         setPrivacyError('Privacy registration did not complete. Ensure the account is enabled and funded, then retry.');
         setPrivacyAction('error');
+      } else {
+        setPrivacyAction('idle');
       }
     } catch {
       setPrivacyError('Privacy registration did not complete. Ensure the account is enabled and funded, then retry.');
       setPrivacyAction('error');
     }
   }, [privy, privyConnected, privacyStatus]);
+
+  const handleRetryPrivacy = useCallback(async () => {
+    if (!privyConnected) return;
+    setRetrying(true);
+    setPrivacyError(null);
+    try {
+      await privy.refreshPrivacyRegistrationStatus();
+    } finally {
+      setRetrying(false);
+    }
+  }, [privy, privyConnected]);
 
   const accountBusy = accountAction === 'pending' || accountStatus === 'pending';
   const privacyBusy = privacyAction === 'pending' || privacyStatus === 'pending';
@@ -149,24 +155,44 @@ export const SettingsActions: React.FC = () => {
             <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-emerald-300 shrink-0">
               <CheckCircle2 className="w-4 h-4" /> Privacy Enabled
             </span>
-          ) : (
+          ) : privacyStatus === 'pending' ? (
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-zinc-300 shrink-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Enabling…
+            </span>
+          ) : privacyStatus === 'disabled' ? (
             <button
               onClick={handleEnablePrivacy}
               disabled={!privyConnected || privacyBusy || privacyBlocked}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-500 hover:bg-violet-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[12px] font-semibold transition-colors shrink-0"
             >
-              {privacyBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {privacyBusy ? 'Enabling…' : 'Enable Privacy Transactions'}
+              Enable Privacy Transactions
+            </button>
+          ) : (
+            // unknown | error — do NOT present "Enable Privacy Transactions" as though we
+            // know it is disabled; offer a Retry instead.
+            <button
+              onClick={handleRetryPrivacy}
+              disabled={!privyConnected || retrying}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-200 text-[12px] font-semibold transition-colors shrink-0"
+            >
+              {retrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {retrying ? 'Checking…' : 'Retry'}
             </button>
           )}
         </div>
-        {privacyBlocked && privacyStatus !== 'enabled' && privyConnected ? (
+        {privacyBlocked && privacyStatus === 'disabled' && privyConnected ? (
           <p className="text-[11px] text-amber-300/90">Enable your Account first, then enable Privacy Transactions.</p>
         ) : null}
-        {privacyStatus === 'error' || privacyError ? (
+        {(privacyStatus === 'error' || privacyStatus === 'unknown') && !privacyError ? (
+          <div className="flex items-start gap-2 text-[12px] text-amber-300">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>Privacy status unavailable — could not verify with the discovery service.</span>
+          </div>
+        ) : null}
+        {privacyError ? (
           <div className="flex items-start gap-2 text-[12px] text-rose-300">
             <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span>{privacyError || 'Privacy status could not be determined.'}</span>
+            <span>{privacyError}</span>
           </div>
         ) : null}
       </div>

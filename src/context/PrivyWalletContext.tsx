@@ -24,6 +24,7 @@ import {
   type ApprovalStatus,
 } from "@/privacy/privy/allowance";
 import { loadOrCreateViewingKey } from "@/privacy/privy/viewingKeyStore";
+import { withRetry } from "@/privacy/privy/statusProbe";
 import { getNetworkConfig, normalizeEndpointUrl } from "@/config/networks";
 import { waitForStrk20Confirmation } from "@/services/strk20WalletApiService";
 
@@ -32,6 +33,13 @@ const SEPOLIA_POOL =
   "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
 const PROVER_URL = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_PROVER_URL);
 const DISCOVERY_URL = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL);
+
+/** How many times to retry a transient discovery failure (e.g. 503) before surfacing "error". */
+const STATUS_RETRY_ATTEMPTS = 3;
+/** Base backoff (ms) between privacy-status retries. */
+const STATUS_RETRY_BASE_MS = 500;
+/** Delay before a bounded background re-verify of privacy status (indexer catch-up). */
+const STATUS_REVERIFY_DELAY_MS = 5000;
 
 interface ResolvedWallet {
   id: string;
@@ -240,25 +248,50 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     }
   }, [updateAccount]);
 
-  /** Re-detect privacy registration from the pool's preflight/discovery state. */
+  /** Re-detect privacy registration from the pool's preflight/discovery state, with bounded
+   *  retries so a transient 503 does not surface as a hard error. Never maps a discovery
+   *  failure to "disabled" (that would cause spurious re-registration attempts). */
   const refreshPrivacyRegistrationStatus = useCallback(async (): Promise<void> => {
     const r = resolvedRef.current;
     if (!r) {
       updatePrivacy("unknown");
       return;
     }
+    const user = { account: r.account, address: r.address, viewingKey: r.viewingKey };
     try {
-      const registration = await buildAdapter().getPrivacyRegistration(
-        { account: r.account, address: r.address, viewingKey: r.viewingKey },
-        STRK_TOKEN_ADDRESS,
+      const registration = await withRetry(
+        () => buildAdapter().getPrivacyRegistration(user, STRK_TOKEN_ADDRESS),
+        STATUS_RETRY_ATTEMPTS,
+        STATUS_RETRY_BASE_MS,
       );
       const enabled = registration === "registered";
       updatePrivacy(enabled ? "enabled" : "disabled");
       setPrivateReceivingEnabled(enabled);
     } catch {
+      // Exhausted retries — surface as unknown/unavailable, never "disabled".
       updatePrivacy("error");
     }
   }, [updatePrivacy]);
+
+  // Bounded background re-verify of privacy status (used after a confirmed registration whose
+  // immediate reconciliation hit a transient discovery 503).
+  const privacyReverifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePrivacyReverify = useCallback(() => {
+    if (privacyReverifyTimerRef.current) clearTimeout(privacyReverifyTimerRef.current);
+    privacyReverifyTimerRef.current = setTimeout(() => {
+      privacyReverifyTimerRef.current = null;
+      if (privacyStatusRef.current !== "enabled" && privacyStatusRef.current !== "disabled") {
+        void refreshPrivacyRegistrationStatus();
+      }
+    }, STATUS_REVERIFY_DELAY_MS);
+  }, [refreshPrivacyRegistrationStatus]);
+
+  // Clear any pending re-verify timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (privacyReverifyTimerRef.current) clearTimeout(privacyReverifyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!ready || !authenticated || !user?.id) return;
@@ -474,8 +507,9 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   /**
    * Register the STRK20 viewing key in the privacy pool and reconcile against on-chain state.
    * Ensures the account is deployed first, submits the registration, waits for on-chain
-   * acceptance, then re-reads the pool's registration state. Returns true only when the pool
-   * confirms the registration exists — never from the submit call alone.
+   * acceptance, then re-reads the pool's registration state. A confirmed registration
+   * transaction is treated as SUCCESS even if a later discovery refresh returns 503 — the
+   * status is re-verified in the background (bounded) until the pool reports it as observable.
    */
   const enablePrivacy = useCallback(async (): Promise<boolean> => {
     const r = resolvedRef.current;
@@ -489,26 +523,38 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
 
     updatePrivacy("pending");
     setApprovalStatus("idle");
+
+    let transactionHash: string;
     try {
       const user = requireReady();
       const receipt = await buildAdapter((s) => setApprovalStatus(s)).register(user);
-      const result = await waitForStrk20Confirmation(receipt.transactionHash);
-      if (result === "REVERTED") {
-        updatePrivacy("disabled");
-        return false;
-      }
-      // CONFIRMED / PENDING / UNKNOWN: reconcile against the pool's authoritative state.
-      await refreshPrivacyRegistrationStatus();
-      return privacyStatusRef.current === "enabled";
+      transactionHash = receipt.transactionHash;
     } catch {
-      // A discovery/prover failure AFTER a successful submit must not overwrite a successful
-      // on-chain registration — reconcile first, then only report failure if truly unregistered.
+      // The submit itself failed (before/at broadcast). Reconcile: if the pool already shows
+      // registered (a prior attempt landed), treat as success; otherwise surface unavailable.
       await refreshPrivacyRegistrationStatus();
       if (privacyStatusRef.current === "enabled") return true;
       updatePrivacy("error");
       return false;
     }
-  }, [enableAccount, requireReady, updatePrivacy, refreshPrivacyRegistrationStatus]);
+
+    const result = await waitForStrk20Confirmation(transactionHash);
+    if (result === "REVERTED") {
+      updatePrivacy("disabled");
+      return false;
+    }
+
+    // Confirmed (or still pending) on-chain — the transaction is NOT a failure. Reconcile the
+    // authoritative pool state with bounded retries; a transient 503 here must not downgrade
+    // the confirmed registration to a failure.
+    await refreshPrivacyRegistrationStatus();
+    if (privacyStatusRef.current === "enabled") return true;
+
+    // Discovery is temporarily unavailable but the transaction succeeded: keep the transaction
+    // successful and re-verify in the background (bounded) until it is observable.
+    schedulePrivacyReverify();
+    return true;
+  }, [enableAccount, requireReady, updatePrivacy, refreshPrivacyRegistrationStatus, schedulePrivacyReverify]);
 
   const getPrivateBalance = useCallback(
     async (token: string) => {
