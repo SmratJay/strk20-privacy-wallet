@@ -88,7 +88,7 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ onOpenWaitlist }) => {
         <div className="flex items-center gap-2">
           {/* Direct Launch App Button */}
           <Link
-            href="/app"
+            href="/wallet"
             className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-syne font-bold text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/60 transition-all cursor-pointer"
           >
             <Shield className="w-3 h-3 text-[#F08A3C]" />
@@ -140,7 +140,7 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ onOpenWaitlist }) => {
               The Club & Collectibles
             </a>
             <Link
-              href="/app"
+              href="/wallet"
               className="px-3 py-2 rounded-xl text-[#F08A3C] font-bold flex items-center justify-between"
             >
               <span>Launch App</span>
