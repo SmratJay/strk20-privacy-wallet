@@ -169,6 +169,7 @@ describe("PrivyStrk20Adapter: allowance before proving + PROOF0 fallback intact"
       return { transaction_hash: "0xtx" };
     });
     const provider = {
+      getBlockNumber: vi.fn(async () => 1_000_000),
       callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
         if (entrypoint === "get_fee_amount") return [felt128(FEE)];
         if (entrypoint === "allowance") {
@@ -238,6 +239,7 @@ describe("PrivyStrk20Adapter allowance formula (contract-verified: fee always ST
     let allowanceReads = 0;
     const approveCalls: any[] = [];
     const provider = {
+      getBlockNumber: vi.fn(async () => 1_000_000),
       callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
         if (entrypoint === "get_fee_amount") return [felt128(FEE)];
         if (entrypoint === "allowance") {

@@ -156,6 +156,7 @@ describe("PrivyStrk20Adapter passes autoSetup: true", () => {
     // Generous allowance so no approval is triggered for the 100-STRK shield (fee + deposit).
     const allowance = 1000n * 10n ** 18n;
     const provider = {
+      getBlockNumber: vi.fn(async () => 1_000_000),
       callContract: vi.fn(async ({ entrypoint }: { entrypoint: string }) => {
         if (entrypoint === "get_fee_amount") return ["0x" + fee.toString(16)];
         if (entrypoint === "allowance") return ["0x" + allowance.toString(16), "0x0"];

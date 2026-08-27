@@ -72,6 +72,15 @@ interface PrivateTransfersLike {
 
 type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTransfersLike;
 
+/**
+ * STRK20 account validation rejects a proof whose block is too recent ("The proof block number X
+ * is too recent. The maximum allowed block number is Y."). Proving against `latest` races that
+ * validation headroom (observed ~5 blocks), so shields prove against a block a safety margin
+ * behind the current chain head. Sepolia blocks are produced in seconds, so a 10-block margin is
+ * a short real-time window while remaining comfortably older than the observed validation gap.
+ */
+const PROVING_SAFETY_MARGIN = 10;
+
 let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
 
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
@@ -121,12 +130,19 @@ export class PrivyStrk20Adapter {
     // autoSetup: opens the self-channel + STRK subchannel in the same apply_actions proof when
     // missing (protocol requires subchannel_exists before CreateEncNote — SUBCHANNEL_NOT_FOUND).
     const opts = { autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } };
+    // Prove against a block safely behind the current chain head so account validation does not
+    // reject the proof as "too recent" (do NOT prove against `latest`).
+    const provingBlockId = await this.getSafeProvingBlock(user);
     return this.runWithBounds(
       user,
       (t, node) =>
         t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).simulate({ node }),
       (t) =>
-        t.build(opts).with(token, (x) => x.deposit({ amount: amountBase })).surplusTo(user.address).execute(),
+        t
+          .build(opts)
+          .with(token, (x) => x.deposit({ amount: amountBase }))
+          .surplusTo(user.address)
+          .execute({ provingBlockId }),
       // A shield pulls the deposit amount (transferFrom) + the STRK pool fee from the account.
       { depositToken: token, depositAmount: amountBase },
     );
@@ -276,6 +292,25 @@ export class PrivyStrk20Adapter {
       throw new Error("Account has no RPC provider; cannot run fee estimation.");
     }
     return provider;
+  }
+
+  /**
+   * Choose the block the SDK proves against for a shield. Reads the current chain head from the
+   * account's existing RPC provider and steps back PROVING_SAFETY_MARGIN blocks so the resulting
+   * proof references a block old enough to pass STRK20 account validation. Selected per-execution
+   * (never cached) so it always tracks the live chain head.
+   */
+  private async getSafeProvingBlock(user: PrivyStrk20User): Promise<{ block_number: number }> {
+    const provider = this.getNode(user);
+    const currentBlock = await provider.getBlockNumber();
+    const provingBlock = Math.max(currentBlock - PROVING_SAFETY_MARGIN, 0);
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.getSafeProvingBlock]", {
+      currentBlock,
+      safetyMargin: PROVING_SAFETY_MARGIN,
+      provingBlock,
+    });
+    return { block_number: provingBlock };
   }
 
   /**
