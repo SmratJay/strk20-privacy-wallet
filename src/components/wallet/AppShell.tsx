@@ -19,7 +19,7 @@ import { useToast } from '@/components/Toast';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Home', icon: Lock },
+  { href: '/wallet', label: 'Wallet', icon: Lock },
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
   { href: '/activity', label: 'Activity', icon: Clock },
