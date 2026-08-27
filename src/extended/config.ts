@@ -13,7 +13,9 @@ export interface ExtendedEnvironment {
   apiBaseUrl: string;
   /** Base URL for onboarding endpoints. */
   onboardingUrl: string;
-  /** EIP-712 signing domain name. */
+  /** Auth host value signed into AccountRegistration / Login messages. */
+  authHost: string;
+  /** EIP-712 signing domain name (EVM path). */
   signingDomain: string;
   /** SNIP-12 StarkNet domain used for message separation. */
   starknetDomain: ExtendedStarknetDomain;
@@ -26,6 +28,7 @@ export interface ExtendedEnvironment {
 export const EXTENDED_TESTNET: ExtendedEnvironment = {
   apiBaseUrl: 'https://api.starknet.sepolia.extended.exchange/api/v1',
   onboardingUrl: 'https://api.starknet.sepolia.extended.exchange',
+  authHost: 'starknet.sepolia.extended.exchange',
   signingDomain: 'starknet.sepolia.extended.exchange',
   starknetDomain: { name: 'Perpetuals', version: 'v0', chainId: 'SN_SEPOLIA', revision: 1 },
   collateralDecimals: 6,
@@ -35,6 +38,7 @@ export const EXTENDED_TESTNET: ExtendedEnvironment = {
 export const EXTENDED_MAINNET: ExtendedEnvironment = {
   apiBaseUrl: 'https://api.starknet.extended.exchange/api/v1',
   onboardingUrl: 'https://api.starknet.extended.exchange',
+  authHost: 'extended.exchange',
   signingDomain: 'extended.exchange',
   starknetDomain: { name: 'Perpetuals', version: 'v0', chainId: 'SN_MAIN', revision: 1 },
   collateralDecimals: 6,
@@ -61,5 +65,6 @@ export function getExtendedEnvironment(): ExtendedEnvironment {
     apiBaseUrl: base,
     onboardingUrl: fromEnv('NEXT_PUBLIC_EXTENDED_ONBOARDING_URL', EXTENDED_TESTNET.onboardingUrl),
     signingDomain: fromEnv('NEXT_PUBLIC_EXTENDED_SIGNING_DOMAIN', EXTENDED_TESTNET.signingDomain),
+    authHost: fromEnv('NEXT_PUBLIC_EXTENDED_AUTH_HOST', EXTENDED_TESTNET.authHost),
   };
 }

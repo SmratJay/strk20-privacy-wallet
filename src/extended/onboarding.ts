@@ -14,6 +14,17 @@
 import { pedersen, privateKeyFromEthSignature, starkKeyOf, starkSign } from './crypto';
 import { getExtendedEnvironment } from './config';
 import type { AccountInfo, ApiResponse } from './types';
+import type { WalletSignature } from './typedData';
+// Pure SNIP-12 typed-data builders (no runtime starknet dependency — see typedData.ts).
+export {
+  buildStarknetDomain,
+  accountCreationTypedData,
+  accountRegistrationTypedData,
+  loginTypedData,
+  serializeStarknetSignature,
+  type StarknetDomainMessage,
+  type WalletSignature,
+} from './typedData';
 
 export interface StarkKeyPair {
   privateKey: string; // 0x hex
@@ -110,4 +121,115 @@ export async function onboard(params: OnboardParams): Promise<OnboardedAccount> 
   }
 
   return { account: json.data.defaultAccount, keyPair };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────
+// Native Starknet-wallet onboarding (current Extended web app flow, traced from the
+// frontend bundles + verified against the live API).
+//
+// A Starknet wallet (Braavos / Argent / Ready / Privy) signs SNIP-12 typed data:
+//   - "AccountCreation"  → L2 Stark key pair is derived from the signature (grindKey over r)
+//   - "AccountRegistration" → becomes `l1Signature` (serialized `[r, s]` JSON)
+// then the app POSTs `/auth/register` with `walletType: "STARKNET"`.
+// ─────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Derive the L2 Stark key pair from a Starknet wallet signature (grindKey over `r`).
+ * Matches `generate_private_key_from_eth_signature(r || s)` used by the web app.
+ */
+export function deriveStarknetKeyPair(sig: WalletSignature): StarkKeyPair {
+  const rHex = BigInt(sig.r).toString(16).padStart(64, '0');
+  const sHex = BigInt(sig.s).toString(16).padStart(64, '0');
+  // ethSigToPrivate only uses the first 32 bytes (`r`); pad a full 65-byte EVM sig with v=00.
+  const fullSig = '0x' + rHex + sHex + '00';
+  return deriveKeyPairFromSignature(fullSig);
+}
+
+/** Build the `POST /auth/register` body for a native Starknet wallet. */
+export function buildStarknetRegisterPayload(params: {
+  wallet: string;
+  l1Signature: string; // serialized AccountRegistration signature
+  keyPair: StarkKeyPair;
+  host: string;
+  time: string;
+  referralCode?: string | null;
+  accountIndex?: number;
+}): Record<string, unknown> {
+  const accountIndex = params.accountIndex ?? 0;
+  const l2Message = pedersen(BigInt(params.wallet), BigInt(params.keyPair.publicKey));
+  const l2Signature = starkSign(l2Message, params.keyPair.privateKey);
+  return {
+    l1Signature: params.l1Signature,
+    l2Key: params.keyPair.publicKey,
+    l2Signature,
+    referralCode: params.referralCode ?? null,
+    accountCreation: {
+      host: params.host,
+      accountIndex,
+      wallet: params.wallet,
+      tosAccepted: true,
+      action: 'REGISTER',
+      time: params.time,
+    },
+    walletType: 'STARKNET',
+  };
+}
+
+/** Build the `POST /auth/login` body for a native Starknet wallet. */
+export function buildStarknetLoginPayload(params: {
+  walletAddress: string;
+  l1Signature: string; // serialized Login signature
+  host: string;
+  time: string;
+}): Record<string, unknown> {
+  return {
+    l1Signature: params.l1Signature,
+    login: { host: params.host, action: 'LOGIN', time: params.time },
+    walletType: 'STARKNET',
+    walletAddress: params.walletAddress,
+  };
+}
+
+export interface RegisterResult {
+  status: string;
+  cookies: string[];
+}
+
+/**
+ * POST `/auth/register` for a native Starknet wallet. Returns the status string and any
+ * session cookies set by Extended (used for subsequent authenticated API calls).
+ */
+export async function registerStarknetWallet(
+  payload: Record<string, unknown>,
+  opts?: { rememberMe?: boolean },
+): Promise<RegisterResult> {
+  const env = getExtendedEnvironment();
+  const query = opts?.rememberMe ? '?rememberMe=true' : '';
+  const res = await fetch(`${env.onboardingUrl}/auth/register${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'orrange/0.1' },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Extended register failed (HTTP ${res.status})${text ? `: ${text}` : ''}`);
+  const cookies = res.headers.getSetCookie?.() ?? [];
+  return { status: text.replace(/"/g, ''), cookies };
+}
+
+/** POST `/auth/login` for a native Starknet wallet (re-auth). Returns session cookies. */
+export async function loginStarknetWallet(
+  payload: Record<string, unknown>,
+  opts?: { rememberMe?: boolean },
+): Promise<RegisterResult> {
+  const env = getExtendedEnvironment();
+  const query = opts?.rememberMe ? '?rememberMe=true' : '';
+  const res = await fetch(`${env.onboardingUrl}/auth/login${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'orrange/0.1' },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Extended login failed (HTTP ${res.status})${text ? `: ${text}` : ''}`);
+  const cookies = res.headers.getSetCookie?.() ?? [];
+  return { status: text.replace(/"/g, ''), cookies };
 }

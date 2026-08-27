@@ -125,4 +125,29 @@ export class ExtendedAdapter {
     const res = await fetch(`/api/extended/order?id=${id}`, { method: 'DELETE', cache: 'no-store' });
     if (!res.ok) throw new Error(await readError(res));
   }
+
+  // ─── Native Starknet wallet onboarding ─────────────────────────────────────────
+
+  /**
+   * Natively onboard a connected Starknet wallet to Extended. The wallet signs SNIP-12
+   * "AccountCreation" + "AccountRegistration" typed data in the browser; the signatures
+   * are sent to our server which derives the L2 key server-side and registers with
+   * `/auth/register`. The L2 private key never leaves the server.
+   */
+  async onboardStarknet(params: {
+    wallet: string;
+    accountCreationSig: { r: string; s: string };
+    accountRegistrationSig: { r: string; s: string };
+    time?: string;
+    referralCode?: string | null;
+  }): Promise<{ token: string; status: string; wallet: string }> {
+    const res = await fetch('/api/extended/onboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(await readError(res));
+    return (await res.json()) as { token: string; status: string; wallet: string };
+  }
 }

@@ -18,6 +18,9 @@ import {
   X,
 } from 'lucide-react';
 import { useExtended } from '@/hooks/useExtended';
+import { useWallet } from '@/context/WalletContext';
+import { accountCreationTypedData, accountRegistrationTypedData } from '@/extended/typedData';
+import { getExtendedEnvironment } from '@/extended/config';
 import type { Position } from '@/extended/types';
 
 const fmt = (v: string | number | undefined, dp = 2): string => {
@@ -33,6 +36,11 @@ const signed = (v: string | undefined, dp = 2): string => {
   return `${sign}${fmt(v, dp)}`;
 };
 
+const shortAddress = (addr: string | null | undefined): string => {
+  if (!addr) return '—';
+  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+};
+
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="min-w-0">
@@ -44,11 +52,43 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 export default function ExtendedPage() {
   const ext = useExtended();
+  const { wallet: connectedWallet } = useWallet();
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'LIMIT' | 'MARKET'>('LIMIT');
   const [qty, setQty] = useState('0.001');
   const [price, setPrice] = useState('');
   const [accountTab, setAccountTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY'>('POSITIONS');
+  const [onboardState, setOnboardState] = useState<{ loading: boolean; status?: string; error?: string }>({ loading: false });
+
+  const starknetAccount = (connectedWallet?.walletAccount ?? null) as
+    | { signMessage(typedData: unknown): Promise<{ r: unknown; s: unknown }> }
+    | null;
+  const starknetAddress = connectedWallet?.address ?? null;
+
+  const handleNativeOnboard = async () => {
+    setOnboardState({ loading: true });
+    try {
+      const account = connectedWallet?.walletAccount;
+      const address = connectedWallet?.address;
+      if (!account || !address) throw new Error('No Starknet wallet connected.');
+      const env = getExtendedEnvironment();
+      const time = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      const creationSig = await account.signMessage(accountCreationTypedData(address, env.starknetDomain));
+      const registrationSig = await account.signMessage(
+        accountRegistrationTypedData(address, env.authHost, time, env.starknetDomain),
+      );
+      const result = await ext.adapter.onboardStarknet({
+        wallet: address,
+        accountCreationSig: { r: String(creationSig.r), s: String(creationSig.s) },
+        accountRegistrationSig: { r: String(registrationSig.r), s: String(registrationSig.s) },
+        time,
+      });
+      setOnboardState({ loading: false, status: result.status });
+      await ext.refreshStatus();
+    } catch (err) {
+      setOnboardState({ loading: false, error: err instanceof Error ? err.message : 'Onboarding failed.' });
+    }
+  };
 
   const mark = ext.market?.marketStats.markPrice ?? '0';
   const effectivePrice = orderType === 'MARKET' ? mark : price || mark;
@@ -146,26 +186,50 @@ export default function ExtendedPage() {
                 <div>
                   <div className="text-sm font-bold font-mono">Extended credentials not configured on the server</div>
                   <div className="text-[11px] text-zinc-500">
-                    Set <span className="font-mono text-zinc-300">EXTENDED_API_KEY</span>,{' '}
-                    <span className="font-mono text-zinc-300">EXTENDED_STARK_PRIVATE_KEY</span>,{' '}
-                    <span className="font-mono text-zinc-300">EXTENDED_STARK_PUBLIC_KEY</span> and{' '}
-                    <span className="font-mono text-zinc-300">EXTENDED_VAULT_ID</span> in the server
-                    environment. Markets load without an account.
+                    {starknetAccount
+                      ? `A Starknet wallet is connected (${shortAddress(starknetAddress)}). Onboard it natively with one signature pair, or set the server EXTENDED_* env.`
+                      : 'Connect a Starknet wallet to onboard natively, or set the server EXTENDED_* env. Markets load without an account.'}
                   </div>
                 </div>
               </div>
-              <a
-                href="https://starknet.sepolia.extended.exchange/api-management"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
-              >
+              <div className="flex items-center gap-2">
+                {starknetAccount && (
+                  <button
+                    onClick={() => void handleNativeOnboard()}
+                    disabled={onboardState.loading}
+                    className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50"
+                  >
+                    {onboardState.loading ? (
+                      <span className="flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Signing…</span>
+                    ) : (
+                      'Onboard with wallet'
+                    )}
+                  </button>
+                )}
+                <a
+                  href="https://starknet.sepolia.extended.exchange/api-management"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
+                >
                 Get API credentials
               </a>
+            </div>
             </div>
           )}
           {ext.statusError && (
             <div className="mt-3 text-[11px] text-rose-400 font-mono">Status error: {ext.statusError}</div>
+          )}
+          {onboardState.status && (
+            <div className="mt-3 flex items-center gap-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded p-2">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Extended onboard response: {onboardState.status} (wallet {shortAddress(starknetAddress)})
+            </div>
+          )}
+          {onboardState.error && (
+            <div className="mt-3 text-[11px] text-rose-400 font-mono border border-rose-500/30 bg-rose-500/10 rounded p-2 break-words">
+              Onboarding error: {onboardState.error}
+            </div>
           )}
         </div>
 
