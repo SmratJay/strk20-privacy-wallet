@@ -68,6 +68,8 @@ interface PrivateTransfersLike {
   discoverNotes(params?: { tokens?: string[] }): Promise<{
     notes: Map<bigint, ShieldedNote[]>;
   }>;
+  /** SDK readiness check (preflight) → SetupRequirement numeric enum: 0 = Register. */
+  discoverRequirement(recipient: string, token: string): Promise<number>;
 }
 
 type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTransfersLike;
@@ -333,6 +335,21 @@ export class PrivyStrk20Adapter {
     const { notes } = await transfers.discoverNotes({ tokens: [token] });
     const tokenNotes = notes.get(BigInt(token)) ?? [];
     return tokenNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }
+
+  /**
+   * Authoritative on-chain STRK20 registration check: queries the discovery provider's
+   * `/v1/sync/preflight_check` for the user's own address and returns whether the viewing key
+   * is registered in the pool. `SetupRequirement.Register` (0) means NOT registered; any other
+   * value (SetupChannel / SetupToken / Ready) means the viewing key IS registered on-chain.
+   */
+  async getPrivacyRegistration(
+    user: PrivyStrk20User,
+    token: string,
+  ): Promise<"registered" | "unregistered"> {
+    const transfers = await this.getTransfers(user);
+    const requirement = await transfers.discoverRequirement(user.address, token);
+    return requirement === 0 ? "unregistered" : "registered";
   }
 
   private getNode(user: PrivyStrk20User): ProviderInterface {

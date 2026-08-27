@@ -2,15 +2,19 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Wallet, EyeOff, Globe, Info, Copy, Check, LogOut, ChevronRight, ExternalLink } from 'lucide-react';
+import { Wallet, EyeOff, Globe, Info, Copy, Check, LogOut, ChevronRight, ExternalLink, SlidersHorizontal } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { EnablePrivateReceiving } from '@/components/wallet/EnablePrivateReceiving';
+import { SettingsActions } from '@/components/wallet/SettingsActions';
 import { useWallet } from '@/context/WalletContext';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 import { copyToClipboard, shortenAddress } from '@/utils/formatters';
 
 export default function SettingsPage() {
   const { wallet, networkId, setNetworkId, privateReceivingState } = useWallet();
+  const privy = usePrivyWallet();
+  const privyConnected = privy.authenticated && privy.account !== null;
   const [copied, setCopied] = useState(false);
 
   const handleCopyAddress = async () => {
@@ -41,6 +45,16 @@ export default function SettingsPage() {
         <div className="pt-2 space-y-1">
           <h1 className="text-2xl font-semibold text-zinc-100">Settings</h1>
         </div>
+
+        <Section title="Actions" icon={<SlidersHorizontal className="w-4 h-4" />}>
+          {privyConnected ? (
+            <SettingsActions />
+          ) : (
+            <div className="px-5 py-4 text-sm text-zinc-400">
+              Connect your wallet to manage account deployment and STRK20 privacy transactions.
+            </div>
+          )}
+        </Section>
 
         <Section title="Wallet" icon={<Wallet className="w-4 h-4" />}>
           {wallet.isConnected && wallet.address ? (
@@ -84,7 +98,7 @@ export default function SettingsPage() {
         </Section>
 
         <Section title="Privacy" icon={<EyeOff className="w-4 h-4" />}>
-          {wallet.isConnected && privateReceivingState === 'NEEDS_REGISTRATION' ? (
+          {!privyConnected && wallet.isConnected && privateReceivingState === 'NEEDS_REGISTRATION' ? (
             <div className="p-4">
               <EnablePrivateReceiving />
             </div>

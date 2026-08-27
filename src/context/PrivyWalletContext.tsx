@@ -48,6 +48,12 @@ export type DeployStatus =
   | "READY"
   | "ERROR";
 
+/** Authoritative account-deployment status, reconciled against on-chain state. */
+export type AccountStatus = "unknown" | "not_deployed" | "pending" | "enabled" | "error";
+
+/** Authoritative STRK20 privacy-registration status, reconciled against pool state. */
+export type PrivacyStatus = "unknown" | "disabled" | "pending" | "enabled" | "error";
+
 export interface PrivyWalletContextValue {
   isAvailable: boolean;
   ready: boolean;
@@ -67,6 +73,18 @@ export interface PrivyWalletContextValue {
   deployError: string | null;
   /** STRK allowance prerequisite progress (approving STRK for the privacy pool). */
   approvalStatus: ApprovalStatus;
+  /** Authoritative account-deployment status (unknown/not_deployed/pending/enabled/error). */
+  accountStatus: AccountStatus;
+  /** Authoritative STRK20 privacy-registration status (unknown/disabled/pending/enabled/error). */
+  privacyStatus: PrivacyStatus;
+  /** Re-detect whether the derived Ready account is deployed on-chain. */
+  refreshAccountDeploymentStatus: () => Promise<void>;
+  /** Re-detect whether the STRK20 viewing key is registered in the pool. */
+  refreshPrivacyRegistrationStatus: () => Promise<void>;
+  /** Deploy the derived Ready account (if not deployed) and reconcile against chain state. */
+  enableAccount: () => Promise<boolean>;
+  /** Register the STRK20 viewing key in the pool (after ensuring the account is deployed). */
+  enablePrivacy: () => Promise<boolean>;
   login: (opts?: { email?: string; google?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   /** Deploy the derived Ready account if not already deployed. Resolves true when READY. */
@@ -93,6 +111,12 @@ const UNAVAILABLE: PrivyWalletContextValue = {
   deploying: false,
   deployError: null,
   approvalStatus: "idle",
+  accountStatus: "unknown",
+  privacyStatus: "unknown",
+  refreshAccountDeploymentStatus: async () => {},
+  refreshPrivacyRegistrationStatus: async () => {},
+  enableAccount: async () => { throw new Error("Privy is not configured."); },
+  enablePrivacy: async () => { throw new Error("Privy is not configured."); },
   login: async () => {},
   logout: async () => {},
   deploy: async () => { throw new Error("Privy is not configured."); },
@@ -187,6 +211,55 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     setDeployError(err);
   };
 
+  // Authoritative status state (mirrored in refs so async callbacks read fresh values).
+  const [accountStatus, setAccountStatus] = useState<AccountStatus>("unknown");
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyStatus>("unknown");
+  const accountStatusRef = useRef<AccountStatus>("unknown");
+  const privacyStatusRef = useRef<PrivacyStatus>("unknown");
+  const updateAccount = useCallback((s: AccountStatus) => {
+    accountStatusRef.current = s;
+    setAccountStatus(s);
+  }, []);
+  const updatePrivacy = useCallback((s: PrivacyStatus) => {
+    privacyStatusRef.current = s;
+    setPrivacyStatus(s);
+  }, []);
+
+  /** Re-detect account deployment from on-chain class-hash state (not React/localStorage). */
+  const refreshAccountDeploymentStatus = useCallback(async (): Promise<void> => {
+    const r = resolvedRef.current;
+    if (!r) {
+      updateAccount("unknown");
+      return;
+    }
+    try {
+      const deployed = await isAccountDeployed(r.provider, r.address);
+      updateAccount(deployed ? "enabled" : "not_deployed");
+    } catch {
+      updateAccount("error");
+    }
+  }, [updateAccount]);
+
+  /** Re-detect privacy registration from the pool's preflight/discovery state. */
+  const refreshPrivacyRegistrationStatus = useCallback(async (): Promise<void> => {
+    const r = resolvedRef.current;
+    if (!r) {
+      updatePrivacy("unknown");
+      return;
+    }
+    try {
+      const registration = await buildAdapter().getPrivacyRegistration(
+        { account: r.account, address: r.address, viewingKey: r.viewingKey },
+        STRK_TOKEN_ADDRESS,
+      );
+      const enabled = registration === "registered";
+      updatePrivacy(enabled ? "enabled" : "disabled");
+      setPrivateReceivingEnabled(enabled);
+    } catch {
+      updatePrivacy("error");
+    }
+  }, [updatePrivacy]);
+
   useEffect(() => {
     if (!ready || !authenticated || !user?.id) return;
     let cancelled = false;
@@ -222,21 +295,31 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
   useEffect(() => {
     if (!resolved) {
       setDeploy("UNKNOWN");
+      updateAccount("unknown");
+      updatePrivacy("unknown");
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
         const deployed = await isAccountDeployed(resolved.provider, resolved.address);
-        if (!cancelled) setDeploy(deployed ? "READY" : "NOT_DEPLOYED");
+        if (!cancelled) {
+          setDeploy(deployed ? "READY" : "NOT_DEPLOYED");
+          updateAccount(deployed ? "enabled" : "not_deployed");
+        }
       } catch {
-        if (!cancelled) setDeploy("UNKNOWN");
+        if (!cancelled) {
+          setDeploy("UNKNOWN");
+          updateAccount("unknown");
+        }
       }
+      // Reconstruct privacy registration from the pool regardless of account state.
+      await refreshPrivacyRegistrationStatus();
     })();
     return () => {
       cancelled = true;
     };
-  }, [resolved]);
+  }, [resolved, updateAccount, updatePrivacy, refreshPrivacyRegistrationStatus]);
 
   /**
    * Deploy the derived Ready account via DEPLOY_ACCOUNT (signed through the existing Privy
@@ -290,6 +373,27 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     }
   }, [deploy]);
 
+  /**
+   * Deploy/initialize the Starknet account (if not already deployed) and reconcile against
+   * on-chain state. Unlike `deploy()`, a finality timeout does NOT produce a false "error" —
+   * the account status is always re-read from the chain afterwards, so a successfully deployed
+   * account reports `enabled` even if the ~10-block finality wait did not complete.
+   */
+  const enableAccount = useCallback(async (): Promise<boolean> => {
+    const r = resolvedRef.current;
+    if (!r) throw new Error("Privy wallet is not ready. Connect first.");
+    const alreadyEnabled = accountStatusRef.current === "enabled";
+    if (alreadyEnabled) return true;
+    updateAccount("pending");
+    try {
+      await deploy();
+    } catch {
+      // Reconcile against chain state below regardless of the deploy helper's outcome.
+    }
+    await refreshAccountDeploymentStatus();
+    return accountStatusRef.current === "enabled";
+  }, [deploy, updateAccount, refreshAccountDeploymentStatus]);
+
   const login = useCallback(
     async (opts?: { email?: string; google?: boolean }) => {
       setError(null);
@@ -316,8 +420,10 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     setPrivateReceivingEnabled(false);
     deployPromiseRef.current = null;
     setDeploy("UNKNOWN");
+    updateAccount("unknown");
+    updatePrivacy("unknown");
     await privyLogout();
-  }, [privyLogout]);
+  }, [privyLogout, updateAccount, updatePrivacy]);
 
   const requireReady = useCallback((): { account: Account; address: string; viewingKey: bigint } => {
     if (!resolved) throw new Error("Privy wallet is not ready. Connect first.");
@@ -358,10 +464,51 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     await ensureReady();
     const user = requireReady();
     setApprovalStatus("idle");
+    updatePrivacy("pending");
+    // NOTE: no optimistic enable — `privateReceivingEnabled`/`privacyStatus` are only set to
+    // "enabled" after `refreshPrivacyRegistrationStatus()` reconciles against the pool.
     const receipt = await buildAdapter((s) => setApprovalStatus(s)).register(user);
-    setPrivateReceivingEnabled(true);
     return receipt;
-  }, [requireReady, ensureReady]);
+  }, [requireReady, ensureReady, updatePrivacy]);
+
+  /**
+   * Register the STRK20 viewing key in the privacy pool and reconcile against on-chain state.
+   * Ensures the account is deployed first, submits the registration, waits for on-chain
+   * acceptance, then re-reads the pool's registration state. Returns true only when the pool
+   * confirms the registration exists — never from the submit call alone.
+   */
+  const enablePrivacy = useCallback(async (): Promise<boolean> => {
+    const r = resolvedRef.current;
+    if (!r) throw new Error("Privy wallet is not ready. Connect first.");
+
+    // Privacy registration requires a deployed (and finalized) account.
+    if (accountStatusRef.current !== "enabled") {
+      const deployed = await enableAccount();
+      if (!deployed) return false;
+    }
+
+    updatePrivacy("pending");
+    setApprovalStatus("idle");
+    try {
+      const user = requireReady();
+      const receipt = await buildAdapter((s) => setApprovalStatus(s)).register(user);
+      const result = await waitForStrk20Confirmation(receipt.transactionHash);
+      if (result === "REVERTED") {
+        updatePrivacy("disabled");
+        return false;
+      }
+      // CONFIRMED / PENDING / UNKNOWN: reconcile against the pool's authoritative state.
+      await refreshPrivacyRegistrationStatus();
+      return privacyStatusRef.current === "enabled";
+    } catch {
+      // A discovery/prover failure AFTER a successful submit must not overwrite a successful
+      // on-chain registration — reconcile first, then only report failure if truly unregistered.
+      await refreshPrivacyRegistrationStatus();
+      if (privacyStatusRef.current === "enabled") return true;
+      updatePrivacy("error");
+      return false;
+    }
+  }, [enableAccount, requireReady, updatePrivacy, refreshPrivacyRegistrationStatus]);
 
   const getPrivateBalance = useCallback(
     async (token: string) => {
@@ -387,6 +534,12 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       deploying: deployStatus === "DEPLOYING" || deployStatus === "FINALIZING",
       deployError,
       approvalStatus,
+      accountStatus,
+      privacyStatus,
+      refreshAccountDeploymentStatus,
+      refreshPrivacyRegistrationStatus,
+      enableAccount,
+      enablePrivacy,
       login,
       logout,
       deploy,
@@ -396,7 +549,7 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       register,
       getPrivateBalance,
     }),
-    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, approvalStatus, login, logout, deploy, shield, unshield, transfer, register, getPrivateBalance],
+    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, approvalStatus, accountStatus, privacyStatus, refreshAccountDeploymentStatus, refreshPrivacyRegistrationStatus, enableAccount, enablePrivacy, login, logout, deploy, shield, unshield, transfer, register, getPrivateBalance],
   );
 
   return <PrivyWalletContext.Provider value={value}>{children}</PrivyWalletContext.Provider>;
