@@ -98,6 +98,14 @@ export class PrivyStrk20Adapter {
 
   constructor(config: PrivyStrk20AdapterConfig) {
     this.config = config;
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.constructor]", {
+      poolContractAddress: config.poolContractAddress,
+      chainId: config.chainId,
+      proverUrl: config.proverUrl,
+      discoveryUrl: config.discoveryUrl,
+      feeTokenAddress: config.feeTokenAddress ?? STRK_TOKEN_ADDRESS,
+    });
   }
 
   async getTransfers(user: PrivyStrk20User): Promise<PrivateTransfersLike> {
@@ -106,6 +114,15 @@ export class PrivyStrk20Adapter {
     if (existing) return existing;
 
     const createPrivateTransfers = await loadCreatePrivateTransfers();
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.getTransfers]", {
+      userAddress: user.address,
+      provingProvider: { url: this.config.proverUrl, chainId: this.config.chainId },
+      discoveryProvider: { url: this.config.discoveryUrl },
+      poolContractAddress: this.config.poolContractAddress,
+      // The SDK discovery provider queries these endpoints BEFORE the prover is contacted.
+      discoveryPaths: ["/v1/sync/outgoing_state", "/v1/sync/incoming_state"],
+    });
     const transfers = createPrivateTransfers({
       account: { address: user.address, signer: user.account.signer },
       viewingKeyProvider: { getViewingKey: async () => user.viewingKey },
@@ -133,6 +150,14 @@ export class PrivyStrk20Adapter {
     // Prove against a block safely behind the current chain head so account validation does not
     // reject the proof as "too recent" (do NOT prove against `latest`).
     const provingBlockId = await this.getSafeProvingBlock(user);
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.shield]", {
+      token,
+      amountBase: amountBase.toString(),
+      provingBlockId,
+      proverUrl: this.config.proverUrl,
+      discoveryUrl: this.config.discoveryUrl,
+    });
     return this.runWithBounds(
       user,
       (t, node) =>
@@ -211,7 +236,11 @@ export class PrivyStrk20Adapter {
     const transfers = await this.getTransfers(user);
     const node = this.getNode(user);
 
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.runWithBounds]", { stage: "simulate", starting: true });
     const sim = await buildSim(transfers, node);
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.runWithBounds]", { stage: "simulate", completed: true });
     let resourceBounds: ResourceBoundsBN;
     try {
       resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
@@ -227,7 +256,27 @@ export class PrivyStrk20Adapter {
       }
     }
 
-    const result = await buildExec(transfers);
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.runWithBounds]", {
+      stage: "execute",
+      starting: true,
+      // execute() runs SDK discovery (outgoing_state / incoming_state) BEFORE the prover call.
+      note: "discovery precedes CAPTURE_PROVER_REQUEST",
+    });
+    let result: ExecuteResultLike;
+    try {
+      result = await buildExec(transfers);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[PrivyStrk20Adapter.runWithBounds]", {
+        stage: "execute",
+        failed: true,
+        message: err instanceof Error ? err.message : err,
+      });
+      throw err;
+    }
+    // eslint-disable-next-line no-console
+    console.log("[PrivyStrk20Adapter.runWithBounds]", { stage: "execute", completed: true });
     return this.submit(user, result, resourceBounds);
   }
 
@@ -299,8 +348,13 @@ export class PrivyStrk20Adapter {
    * account's existing RPC provider and steps back PROVING_SAFETY_MARGIN blocks so the resulting
    * proof references a block old enough to pass STRK20 account validation. Selected per-execution
    * (never cached) so it always tracks the live chain head.
+   *
+   * Returns a plain block NUMBER. The SDK consumes it two ways: the prover converts it to
+   * `{ block_number }` for `starknet_proveTransaction`, and the discovery indexer expects a raw
+   * primitive (integer / hex / block-tag) for `block_ref` — it REJECTS the `{ block_number }`
+   * object form with HTTP 422, which stopped shields after fee estimation and before proving.
    */
-  private async getSafeProvingBlock(user: PrivyStrk20User): Promise<{ block_number: number }> {
+  private async getSafeProvingBlock(user: PrivyStrk20User): Promise<number> {
     const provider = this.getNode(user);
     const currentBlock = await provider.getBlockNumber();
     const provingBlock = Math.max(currentBlock - PROVING_SAFETY_MARGIN, 0);
@@ -310,7 +364,7 @@ export class PrivyStrk20Adapter {
       safetyMargin: PROVING_SAFETY_MARGIN,
       provingBlock,
     });
-    return { block_number: provingBlock };
+    return provingBlock;
   }
 
   /**

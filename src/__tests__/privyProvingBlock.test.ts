@@ -2,7 +2,9 @@
  * @file privyProvingBlock.test.ts
  * @description STRK20 shield must NOT prove against `latest` — account validation rejects proofs
  * whose block is too recent. The adapter must select a proving block a safety margin behind the
- * current chain head and pass it to the SDK execute() as provingBlockId.
+ * current chain head and pass it to the SDK execute() as a plain provingBlockId number (the SDK
+ * converts it to `{ block_number }` for the prover, and the discovery indexer accepts the integer
+ * as `block_ref` — it rejects the object form with HTTP 422).
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -93,11 +95,11 @@ describe("PrivyStrk20Adapter shield proving block selection", () => {
 
     expect(provider.getBlockNumber).toHaveBeenCalled();
     expect(h.executeOpts.length).toBe(1);
-    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: { block_number?: number } })
+    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: number })
       .provingBlockId;
     expect(provingBlockId).toBeDefined();
-    expect(provingBlockId!.block_number).toBe(currentBlock - SAFETY_MARGIN);
-    expect(provingBlockId!.block_number).toBeLessThan(currentBlock);
+    expect(provingBlockId!).toBe(currentBlock - SAFETY_MARGIN);
+    expect(provingBlockId!).toBeLessThan(currentBlock);
   });
 
   it("never proves against `latest` for a shield", async () => {
@@ -107,11 +109,11 @@ describe("PrivyStrk20Adapter shield proving block selection", () => {
 
     await adapter.shield(user, "0xtoken", 100n);
 
-    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: { block_number?: number } })
+    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: number })
       .provingBlockId;
-    expect(provingBlockId).toEqual({ block_number: currentBlock - SAFETY_MARGIN });
+    expect(provingBlockId).toBe(currentBlock - SAFETY_MARGIN);
     // The proof must reference a numeric block, never the string "latest".
-    expect(provingBlockId!.block_number).toBeLessThan(currentBlock);
+    expect(provingBlockId!).toBeLessThan(currentBlock);
   });
 
   it("clamps the proving block at 0 when the chain head is below the margin", async () => {
@@ -121,8 +123,8 @@ describe("PrivyStrk20Adapter shield proving block selection", () => {
 
     await adapter.shield(user, "0xtoken", 100n);
 
-    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: { block_number?: number } })
+    const provingBlockId = (h.executeOpts[0] as { provingBlockId?: number })
       .provingBlockId;
-    expect(provingBlockId!.block_number).toBe(0);
+    expect(provingBlockId!).toBe(0);
   });
 });

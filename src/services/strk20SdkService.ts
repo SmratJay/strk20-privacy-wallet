@@ -40,7 +40,7 @@
  */
 
 import type { AccountInterface, BigNumberish } from 'starknet';
-import { getNetworkConfig } from '@/config/networks';
+import { getNetworkConfig, normalizeEndpointUrl } from '@/config/networks';
 import { savePendingPayout, updatePendingPayoutStatus } from '../protocol/witnessStore';
 
 export const STRK20_SEPOLIA_POOL =
@@ -203,7 +203,7 @@ export class Strk20SdkService {
   private transfersCache = new Map<string, PrivateTransfersLike>();
 
   private proverUrl(): string {
-    const url = process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+    const url = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_PROVER_URL);
     if (!url) {
       throw new Error(
         'STRK20_SDK: NEXT_PUBLIC_STRK20_PROVER_URL is not configured. Deploy/point to the operator proving service.'
@@ -213,7 +213,7 @@ export class Strk20SdkService {
   }
 
   private discoveryUrl(): string {
-    const url = process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+    const url = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL);
     if (!url) {
       throw new Error(
         'STRK20_SDK: NEXT_PUBLIC_STRK20_DISCOVERY_URL is not configured. Deploy/point to the operator discovery service.'

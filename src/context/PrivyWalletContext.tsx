@@ -24,14 +24,14 @@ import {
   type ApprovalStatus,
 } from "@/privacy/privy/allowance";
 import { loadOrCreateViewingKey } from "@/privacy/privy/viewingKeyStore";
-import { getNetworkConfig } from "@/config/networks";
+import { getNetworkConfig, normalizeEndpointUrl } from "@/config/networks";
 import { waitForStrk20Confirmation } from "@/services/strk20WalletApiService";
 
 const SEPOLIA_POOL =
   process.env.NEXT_PUBLIC_STRK20_SEPOLIA_POOL ||
   "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
-const PROVER_URL = process.env.NEXT_PUBLIC_STRK20_PROVER_URL || "";
-const DISCOVERY_URL = process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL || "";
+const PROVER_URL = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_PROVER_URL);
+const DISCOVERY_URL = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL);
 
 interface ResolvedWallet {
   id: string;

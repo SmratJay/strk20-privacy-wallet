@@ -7,6 +7,16 @@ export interface TokenInfo {
   default?: boolean;
 }
 
+/**
+ * Strip trailing slashes from an endpoint URL so the STRK20 SDK can safely append path
+ * segments (e.g. `${base}/v1/sync/outgoing_state`). The indexer rejects double-slashes
+ * (HTTP 404) when the base already ends in `/`, so a clean single-slash base is required.
+ * Also normalizes the prover base URL (no path is appended there, but consistency is free).
+ */
+export function normalizeEndpointUrl(url: string | undefined): string {
+  return (url ?? "").replace(/\/+$/, "");
+}
+
 export type NetworkId = 'mainnet' | 'sepolia';
 
 export interface NetworkConfig {

@@ -12,6 +12,8 @@
  * missing — the UI surfaces the exact state and fails closed for privacy operations.
  */
 
+import { normalizeEndpointUrl } from '@/config/networks';
+
 export interface Strk20OperatorStatus {
   proverConfigured: boolean;
   discoveryConfigured: boolean;
@@ -26,8 +28,8 @@ function isNonEmpty(v: string | undefined): boolean {
 }
 
 export async function checkStrk20OperatorStatus(): Promise<Strk20OperatorStatus> {
-  const proverUrl = process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
-  const discoveryUrl = process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+  const proverUrl = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_PROVER_URL);
+  const discoveryUrl = normalizeEndpointUrl(process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL);
 
   const proverConfigured = isNonEmpty(proverUrl);
   const discoveryConfigured = isNonEmpty(discoveryUrl);
