@@ -177,14 +177,14 @@ export const PrivacyDeskSection: React.FC = () => {
               {/* Action Buttons */}
               <div className="grid grid-cols-2 gap-4">
                 <Link
-                  href="/app"
+                  href="/wallet"
                   className="py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-syne font-black text-sm text-center transition-all shadow-lg flex items-center justify-center gap-2"
                 >
                   <span>Private Long STRK</span>
                   <ArrowUpRight className="w-4 h-4" />
                 </Link>
                 <Link
-                  href="/app"
+                  href="/wallet"
                   className="py-3 rounded-2xl bg-rose-500 hover:bg-rose-400 text-white font-syne font-black text-sm text-center transition-all shadow-lg flex items-center justify-center gap-2"
                 >
                   <span>Private Short STRK</span>
@@ -228,7 +228,7 @@ export const PrivacyDeskSection: React.FC = () => {
               </div>
 
               <Link
-                href="/app"
+                href="/wallet"
                 className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#C45B2C] to-[#F08A3C] text-black font-syne font-black text-sm text-center block transition-all shadow-lg hover:brightness-110"
               >
                 Shield STRK into Confidential Pool ⚡
@@ -315,10 +315,10 @@ export const PrivacyDeskSection: React.FC = () => {
               </div>
 
               <Link
-                href="/app"
+                href="/wallet"
                 className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#8F3F1F] via-[#C45B2C] to-[#F08A3C] text-white font-syne font-black text-sm text-center block transition-all shadow-lg hover:brightness-110"
               >
-                Launch App &amp; Export Audit Keys
+                Launch Wallet &amp; Export Audit Keys
               </Link>
             </div>
           )}

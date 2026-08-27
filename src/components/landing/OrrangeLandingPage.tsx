@@ -90,12 +90,8 @@ export const OrrangeLandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-6 text-xs font-syne text-zinc-400">
-            <Link href="/app" className="hover:text-[#F08A3C] transition-colors flex items-center gap-1">
-              <span>Launch Product App</span>
-              <Shield className="w-3 h-3" />
-            </Link>
             <Link href="/wallet" className="hover:text-[#F08A3C] transition-colors flex items-center gap-1">
-              <span>Consumer Wallet</span>
+              <span>Launch Wallet App</span>
               <Shield className="w-3 h-3" />
             </Link>
             <a 

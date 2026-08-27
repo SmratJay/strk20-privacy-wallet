@@ -110,6 +110,12 @@ export class ProvingService {
             method,
             params,
         };
+        if (method === "starknet_proveTransaction") {
+            console.log(
+                "CAPTURE_PROVER_REQUEST",
+                JSON.stringify(body)
+            );
+        }
         let json;
         if (this.ohttpClient) {
             json = await this.ohttpClient.post("", body);
