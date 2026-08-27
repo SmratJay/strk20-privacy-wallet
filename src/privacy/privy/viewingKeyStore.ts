@@ -1,4 +1,4 @@
-import { hash } from "starknet";
+import { ec, hash } from "starknet";
 import type { PrivySigningClient } from "./types";
 import { normalizePrivySignature } from "./signing";
 
@@ -13,11 +13,36 @@ export function viewingKeyChallenge(): string {
   return "0x" + hash.starknetKeccak(DOMAIN).toString(16);
 }
 
+/**
+ * Canonicalize a STRK20 viewing key to the scalar range accepted by the privacy pool.
+ *
+ * The pool requires a canonical STARK-curve private scalar: `1 <= k <= MAX_VIEWING_KEY`, where
+ * `MAX_VIEWING_KEY = floor(n / 2)` and `n` is the STARK curve order (vendored SDK
+ * `interfaces.js`: `MAX_VIEWING_KEY = ec.starkCurve.CURVE.n / 2n`; `validation.js`
+ * `assertViewingKey` enforces `[1, MAX_VIEWING_KEY]`). A key in the upper half `(n/2, n)` is
+ * rejected on-chain with `PRIVATE_KEY_NOT_CANONICAL`.
+ *
+ * A Poseidon hash output is a field element in `[0, p)` with `p ≈ n`, so ~half of all derived
+ * keys land above `n/2`. The canonical reduction is `k' = n - k` when `k > n/2`: because the
+ * curve is symmetric about the x-axis, `k` and `n - k` derive the SAME public-key x-coordinate,
+ * so the on-chain identity is unchanged while the scalar becomes acceptable. `0` (a multiple of
+ * `n`) maps to `1`. The derivation inputs are untouched, so the same signature still yields the
+ * same (now canonical) key on every device.
+ */
+export function canonicalizeViewingKey(k: bigint): bigint {
+  const n = ec.starkCurve.CURVE.n;
+  const max = n / 2n;
+  let key = k % n;
+  if (key === 0n) key = 1n;
+  if (key > max) key = n - key;
+  return key;
+}
+
 export function deriveViewingKeyFromSignature(r: string | bigint, s: string | bigint): bigint {
   const pre = BigInt(hash.computePoseidonHash(BigInt(r), BigInt(s)));
   const domain = hash.starknetKeccak(DOMAIN);
   const k = BigInt(hash.computePoseidonHash(pre, domain));
-  return k === 0n ? 1n : k;
+  return canonicalizeViewingKey(k);
 }
 
 function subtle(): SubtleCrypto {
@@ -92,7 +117,17 @@ export async function loadOrCreateViewingKey(
   client: PrivySigningClient,
 ): Promise<bigint> {
   const cached = await readCachedViewingKey(userId);
-  if (cached !== null) return cached;
+  if (cached !== null) {
+    // Canonicalize on read too: a stale non-canonical key could have been cached before
+    // canonicalization existed. Reflection preserves the derived public-key x-coordinate and
+    // the pool rejects non-canonical keys at registration, so such an account has no on-chain
+    // state yet — rewriting the cache is safe. In-range (canonical) keys are returned unchanged.
+    const canonical = canonicalizeViewingKey(cached);
+    if (canonical !== cached) {
+      await writeCachedViewingKey(userId, canonical);
+    }
+    return canonical;
+  }
 
   const challenge = viewingKeyChallenge();
   const raw = await client.signHash(walletId, challenge);
