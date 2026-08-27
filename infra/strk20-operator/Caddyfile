@@ -1,0 +1,37 @@
+# STRK20 discovery service reverse-proxy (Caddy) — CORS for the browser.
+#
+# The STRK20 SDK (IndexerDiscoveryProvider) calls POST /v1/sync/{incoming_state,outgoing_state,
+# preflight_check,history} and GET /health directly from the browser. The browser enforces CORS
+# on BOTH the OPTIONS preflight AND the actual response — including 5xx responses.
+#
+# Observed failure: when the indexer's backing RPC is briefly unavailable, the service returns
+# 503. If that 503 response lacks Access-Control-Allow-Origin, the browser reports the request as
+# a generic "Fetch API cannot load ... due to access control checks" failure and masks the real
+# 503 status. This config pins the production frontend origin (NOT a wildcard) and applies the
+# CORS headers to every response path — success, preflight, and error.
+
+discovery.orrange.xyz {
+    # CORS for the production frontend origin. Pin the exact origin instead of `*` so the
+    # request stays credential-safe (no `Access-Control-Allow-Credentials` needed).
+    @frontend origin https://strk20-privacy-wallet.vercel.app
+    header @frontend Access-Control-Allow-Origin "https://strk20-privacy-wallet.vercel.app"
+    header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type"
+    header Access-Control-Expose-Headers "*"
+    header Vary "Origin"
+
+    # Preflight: short-circuit OPTIONS with 204 (CORS headers above are still applied).
+    @preflight method OPTIONS
+    respond @preflight 204
+
+    reverse_proxy localhost:8080
+
+    # Apply CORS headers to error responses too (502/503/504), so the browser never masks a
+    # transient service outage as an access-control failure.
+    handle_errors {
+        header Access-Control-Allow-Origin "https://strk20-privacy-wallet.vercel.app"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        respond "{err.status_code}"
+    }
+}
