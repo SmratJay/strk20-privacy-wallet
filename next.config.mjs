@@ -13,7 +13,17 @@ const nextConfig = {
     return [
       {
         source: '/app',
-        destination: '/terminal',
+        destination: '/wallet',
+        permanent: true,
+      },
+      {
+        source: '/terminal',
+        destination: '/extended',
+        permanent: true,
+      },
+      {
+        source: '/perps',
+        destination: '/extended',
         permanent: true,
       },
     ];

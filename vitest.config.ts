@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     testTimeout: 60000,
     hookTimeout: 120000,
+    exclude: ['**/perps-experiment/**', '**/node_modules/**'],
   },
   resolve: {
     alias: {

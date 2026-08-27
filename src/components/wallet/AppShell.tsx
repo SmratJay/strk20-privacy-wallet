@@ -12,6 +12,7 @@ import {
   Lock,
   Copy,
   Check,
+  TrendingUp,
 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: '/wallet', label: 'Wallet', icon: Lock },
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
+  { href: '/extended', label: 'Extended', icon: TrendingUp },
   { href: '/activity', label: 'Activity', icon: Clock },
   { href: '/settings', label: 'Settings', icon: SettingsIcon },
 ];

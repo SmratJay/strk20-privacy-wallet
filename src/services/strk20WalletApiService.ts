@@ -11,9 +11,8 @@
  *   - writes financial state to localStorage
  *   - falls back to public ERC-20 transfers
  *
- * This lane is SEPARATE from PEL private perps (LANE B: raw SDK + computeAndInvoke to
- * PELPerpsSTRK20Bridge), which lives in src/services/strk20SdkService.ts and still
- * requires the operator proving/discovery stack.
+ * This lane is SEPARATE from the legacy PEL private perps engine (now isolated under
+ * `perps-experiment/` and no longer part of the production app).
  *
  * Authoritative spec: starkware-libs/starknet-specs `wallet-api/wallet_rpc.json` (v0.10.3).
  * Methods used here:

@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
-import { Wallet, EyeOff, Globe, Info, Copy, Check, LogOut, ChevronRight, ExternalLink, SlidersHorizontal } from 'lucide-react';
+import { Wallet, EyeOff, Globe, Info, Copy, Check, LogOut, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { EnablePrivateReceiving } from '@/components/wallet/EnablePrivateReceiving';
@@ -133,13 +132,6 @@ export default function SettingsPage() {
               Receive privately, spend freely. Built on the STRK20 privacy pool on Starknet.
             </p>
           </div>
-          <Link
-            href="/terminal"
-            className="w-full flex items-center justify-between px-5 py-3.5 text-[13px] text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/60 transition-colors"
-          >
-            <span>Advanced — PEL terminal (legacy)</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </Link>
         </Section>
       </div>
     </AppShell>
