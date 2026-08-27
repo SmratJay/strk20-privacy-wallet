@@ -5,21 +5,17 @@ import Link from 'next/link';
 import {
   Activity,
   ArrowLeftRight,
-  ArrowDownLeft,
-  ArrowUpRight,
   CheckCircle2,
-  ChevronRight,
-  CircleDollarSign,
   ExternalLink,
   Flame,
   Layers,
+  Loader2,
   Lock,
-  ShieldCheck,
+  Server,
   TrendingDown,
   TrendingUp,
   Wallet,
   X,
-  Loader2,
 } from 'lucide-react';
 import { useExtended } from '@/hooks/useExtended';
 import type { Position } from '@/extended/types';
@@ -48,7 +44,6 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 export default function ExtendedPage() {
   const ext = useExtended();
-  const [showConnect, setShowConnect] = useState(false);
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'LIMIT' | 'MARKET'>('LIMIT');
   const [qty, setQty] = useState('0.001');
@@ -63,11 +58,6 @@ export default function ExtendedPage() {
   const orderHistory = ext.orderHistory;
 
   const maxLeverage = useMemo(() => ext.market?.tradingConfig.maxLeverage ?? '1', [ext.market]);
-
-  const handleConnect = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (ext.account.apiKey) ext.connect(ext.account);
-  };
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans">
@@ -110,16 +100,23 @@ export default function ExtendedPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-5">
-        {/* Account / connect bar */}
+        {/* Server auth state */}
         <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4">
-          {ext.isConnected ? (
+          {ext.statusLoading ? (
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+              <span className="text-sm font-mono text-zinc-400">Checking Extended server credentials…</span>
+            </div>
+          ) : ext.isConnected ? (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className={`w-2 h-2 rounded-full ${ext.canTrade ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <Server className="w-4 h-4 text-emerald-400" />
                 <div>
-                  <div className="text-sm font-bold font-mono">Extended account connected</div>
+                  <div className="text-sm font-bold font-mono">Extended account connected (server)</div>
                   <div className="text-[11px] text-zinc-500 font-mono">
-                    {ext.canTrade ? 'Read + trade access' : 'Read-only (missing Stark keys for trading)'}
+                    {ext.canTrade
+                      ? 'Read + trade access — orders are signed server-side'
+                      : 'Read-only (server missing Stark keys for trading)'}
                   </div>
                 </div>
               </div>
@@ -128,46 +125,47 @@ export default function ExtendedPage() {
                   <Stat label="Equity" value={`$${fmt(ext.balance.equity)}`} accent="text-emerald-400" />
                   <Stat label="Balance" value={`$${fmt(ext.balance.balance)}`} />
                   <Stat label="Available" value={`$${fmt(ext.balance.availableForTrade)}`} />
-                  <Stat label="uPnL" value={`$${signed(ext.balance.unrealisedPnl)}`} accent={Number(ext.balance.unrealisedPnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
+                  <Stat
+                    label="uPnL"
+                    value={`$${signed(ext.balance.unrealisedPnl)}`}
+                    accent={Number(ext.balance.unrealisedPnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+                  />
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowConnect(true)}
-                  className="text-[11px] font-mono px-3 py-1.5 border border-zinc-700 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors"
-                >
-                  Edit keys
-                </button>
-                <button
-                  onClick={ext.disconnect}
-                  className="text-[11px] font-mono px-3 py-1.5 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 transition-colors"
-                >
-                  Disconnect
-                </button>
-              </div>
+              <button
+                onClick={ext.refreshStatus}
+                className="text-[11px] font-mono px-3 py-1.5 border border-zinc-700 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors"
+              >
+                Refresh
+              </button>
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Lock className="w-4 h-4 text-zinc-500" />
                 <div>
-                  <div className="text-sm font-bold font-mono">Connect your Extended account</div>
+                  <div className="text-sm font-bold font-mono">Extended credentials not configured on the server</div>
                   <div className="text-[11px] text-zinc-500">
-                    Paste your API key, Stark keys and vault id from the{' '}
-                    <a className="text-orange-400 hover:underline" href="https://starknet.sepolia.extended.exchange/api-management" target="_blank" rel="noopener noreferrer">
-                      Extended testnet API-management page
-                    </a>
-                    . Markets load without an account.
+                    Set <span className="font-mono text-zinc-300">EXTENDED_API_KEY</span>,{' '}
+                    <span className="font-mono text-zinc-300">EXTENDED_STARK_PRIVATE_KEY</span>,{' '}
+                    <span className="font-mono text-zinc-300">EXTENDED_STARK_PUBLIC_KEY</span> and{' '}
+                    <span className="font-mono text-zinc-300">EXTENDED_VAULT_ID</span> in the server
+                    environment. Markets load without an account.
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => setShowConnect(true)}
+              <a
+                href="https://starknet.sepolia.extended.exchange/api-management"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
               >
-                Connect account
-              </button>
+                Get API credentials
+              </a>
             </div>
+          )}
+          {ext.statusError && (
+            <div className="mt-3 text-[11px] text-rose-400 font-mono">Status error: {ext.statusError}</div>
           )}
         </div>
 
@@ -293,7 +291,7 @@ export default function ExtendedPage() {
 
               {!ext.isConnected ? (
                 <div className="p-8 text-center text-zinc-600 font-mono text-sm">
-                  Connect your Extended account to view positions and orders.
+                  Configure an Extended account on the server to view positions and orders.
                 </div>
               ) : accountTab === 'POSITIONS' ? (
                 positions.length === 0 ? (
@@ -528,7 +526,8 @@ export default function ExtendedPage() {
 
               {!ext.canTrade && (
                 <p className="text-[10px] text-zinc-600 font-mono">
-                  Trading requires your Stark L2 key pair + vault id (from Extended&apos;s API-management page).
+                  Trading requires the server EXTENDED_API_KEY / EXTENDED_STARK_PRIVATE_KEY /
+                  EXTENDED_STARK_PUBLIC_KEY / EXTENDED_VAULT_ID to be set. Orders are signed server-side.
                 </p>
               )}
 
@@ -548,85 +547,6 @@ export default function ExtendedPage() {
           it is not privacy-native yet. Private collateral / STRK20 bridging is a later phase.
         </p>
       </main>
-
-      {/* Connect modal */}
-      {showConnect && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-lg p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold font-mono flex items-center gap-2">
-                <CircleDollarSign className="w-4 h-4 text-orange-400" /> Extended account
-              </h3>
-              <button onClick={() => setShowConnect(false)} className="text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-
-            <form onSubmit={handleConnect} className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">API key</label>
-                <input
-                  type="text"
-                  value={ext.account.apiKey}
-                  onChange={(e) => ext.setAccount({ ...ext.account, apiKey: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  placeholder="X-API-KEY"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Stark private key</label>
-                <input
-                  type="password"
-                  value={ext.account.starkPrivateKey}
-                  onChange={(e) => ext.setAccount({ ...ext.account, starkPrivateKey: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  placeholder="0x…"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Stark public key</label>
-                <input
-                  type="text"
-                  value={ext.account.starkPublicKey}
-                  onChange={(e) => ext.setAccount({ ...ext.account, starkPublicKey: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  placeholder="0x…"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Vault ID (collateral position)</label>
-                <input
-                  type="text"
-                  value={ext.account.vaultId}
-                  onChange={(e) => ext.setAccount({ ...ext.account, vaultId: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  placeholder="123"
-                />
-              </div>
-
-              <p className="text-[10px] text-zinc-600 font-mono leading-relaxed">
-                Never share your Stark private key. It is only used locally to sign orders and is not
-                persisted or uploaded.
-              </p>
-
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="submit"
-                  disabled={!ext.account.apiKey}
-                  className="flex-1 py-2.5 rounded bg-orange-500 hover:bg-orange-400 text-black text-xs font-black uppercase tracking-wider disabled:opacity-40"
-                >
-                  Connect
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowConnect(false)}
-                  className="px-4 py-2.5 rounded border border-zinc-700 text-zinc-300 text-xs font-mono"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

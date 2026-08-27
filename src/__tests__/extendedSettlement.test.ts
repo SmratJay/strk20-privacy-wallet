@@ -157,6 +157,9 @@ describe('extended order settlement', () => {
     expect(body.nonce).toBe('456');
     expect(body.fee).toBe('0.0005');
     expect(body.selfTradeProtectionLevel).toBe('ACCOUNT');
+    // The external id is the order hash expressed as a decimal string (official SDK shape).
+    expect(typeof body.id).toBe('string');
+    expect(String(body.id)).toMatch(/^\d+$/);
     expect((body.settlement as { collateralPosition: string }).collateralPosition).toBe('123');
   });
 

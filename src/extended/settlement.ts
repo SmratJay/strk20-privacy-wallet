@@ -166,7 +166,7 @@ export function buildOrderRequest(params: OrderRequestParams): Record<string, un
 
   const externalId =
     params.externalId ??
-    '0x' + settlement.orderHash.toString(16).padStart(64, '0');
+    settlement.orderHash.toString(10);
 
   return {
     id: externalId,

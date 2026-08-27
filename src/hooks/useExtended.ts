@@ -1,39 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExtendedAdapter, type ExtendedAccountCredentials } from '@/extended/adapter';
+import { ExtendedAdapter, type PlaceOrderParams } from '@/extended/adapter';
 import type {
   Balance,
+  ExtendedAccountSnapshot,
   ExtendedOrder,
   Market,
   Orderbook,
   PlacedOrder,
   Position,
 } from '@/extended/types';
-import type { PlaceOrderParams } from '@/extended/adapter';
-
-export interface ExtendedAccountState {
-  apiKey: string;
-  starkPrivateKey: string;
-  starkPublicKey: string;
-  vaultId: string;
-}
-
-const EMPTY_ACCOUNT: ExtendedAccountState = {
-  apiKey: '',
-  starkPrivateKey: '',
-  starkPublicKey: '',
-  vaultId: '',
-};
-
-function readEnvAccount(): Partial<ExtendedAccountState> {
-  return {
-    apiKey: process.env.NEXT_PUBLIC_EXTENDED_API_KEY ?? '',
-    starkPrivateKey: process.env.NEXT_PUBLIC_EXTENDED_STARK_PRIVATE_KEY ?? '',
-    starkPublicKey: process.env.NEXT_PUBLIC_EXTENDED_STARK_PUBLIC_KEY ?? '',
-    vaultId: process.env.NEXT_PUBLIC_EXTENDED_VAULT_ID ?? '',
-  };
-}
 
 export function useExtended() {
   const adapter = useMemo(() => new ExtendedAdapter(), []);
@@ -43,7 +20,10 @@ export function useExtended() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [marketsError, setMarketsError] = useState<string | null>(null);
 
-  const [account, setAccount] = useState<ExtendedAccountState>(EMPTY_ACCOUNT);
+  const [status, setStatus] = useState<{ read: boolean; trade: boolean } | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
   const [balance, setBalance] = useState<Balance | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [openOrders, setOpenOrders] = useState<ExtendedOrder[]>([]);
@@ -55,18 +35,9 @@ export function useExtended() {
   const [lastPlacedOrder, setLastPlacedOrder] = useState<PlacedOrder | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const isConnected = useMemo(
-    () => account.apiKey.length > 0,
-    [account.apiKey],
-  );
-  const canTrade = useMemo(
-    () =>
-      account.apiKey.length > 0 &&
-      account.starkPrivateKey.length > 0 &&
-      account.starkPublicKey.length > 0 &&
-      account.vaultId.length > 0,
-    [account],
-  );
+  const isConnected = Boolean(status?.read);
+  const canRead = Boolean(status?.read);
+  const canTrade = Boolean(status?.trade);
 
   const market = useMemo(
     () => markets.find((m) => m.name === selectedMarket) ?? markets[0] ?? null,
@@ -99,62 +70,41 @@ export function useExtended() {
     }
   }, [adapter, selectedMarket]);
 
-  const applyCredentials = useCallback(
-    (creds: ExtendedAccountCredentials) => {
-      adapter.connect(creds);
-    },
-    [adapter],
-  );
+  const refreshStatus = useCallback(async () => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const s = await adapter.getStatus();
+      setStatus(s);
+      if (!s.read) {
+        setBalance(null);
+        setPositions([]);
+        setOpenOrders([]);
+        setOrderHistory([]);
+      }
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to read auth status.');
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [adapter]);
 
   const refreshAccount = useCallback(async () => {
-    if (!adapter.isConnected) return;
+    if (!status?.read) return;
     setAccountLoading(true);
     setAccountError(null);
     try {
-      const [bal, pos, open, history] = await Promise.allSettled([
-        adapter.getBalance(),
-        adapter.getPositions(),
-        adapter.getOpenOrders(),
-        adapter.getOrderHistory(),
-      ]);
-      if (bal.status === 'fulfilled') setBalance(bal.value);
-      if (pos.status === 'fulfilled') setPositions(pos.value);
-      if (open.status === 'fulfilled') setOpenOrders(open.value);
-      if (history.status === 'fulfilled') setOrderHistory(history.value.slice(0, 20));
+      const snapshot: ExtendedAccountSnapshot = await adapter.getAccountSnapshot();
+      setBalance(snapshot.balance);
+      setPositions(snapshot.positions);
+      setOpenOrders(snapshot.openOrders);
+      setOrderHistory(snapshot.history);
     } catch (err) {
       setAccountError(err instanceof Error ? err.message : 'Failed to load account data.');
     } finally {
       setAccountLoading(false);
     }
-  }, [adapter]);
-
-  const connect = useCallback(
-    (state: ExtendedAccountState) => {
-      setAccount(state);
-      setAccountError(null);
-      setBalance(null);
-      setPositions([]);
-      setOpenOrders([]);
-      setOrderHistory([]);
-      adapter.connect({
-        apiKey: state.apiKey,
-        starkPrivateKey: state.starkPrivateKey || undefined,
-        starkPublicKey: state.starkPublicKey || undefined,
-        vaultId: state.vaultId ? Number(state.vaultId) : undefined,
-      });
-      void refreshAccount();
-    },
-    [adapter, refreshAccount],
-  );
-
-  const disconnect = useCallback(() => {
-    adapter.disconnect();
-    setAccount(EMPTY_ACCOUNT);
-    setBalance(null);
-    setPositions([]);
-    setOpenOrders([]);
-    setOrderHistory([]);
-  }, [adapter]);
+  }, [adapter, status?.read]);
 
   const placeOrder = useCallback(
     async (params: Omit<PlaceOrderParams, 'market'> & { market?: string }) => {
@@ -212,23 +162,15 @@ export function useExtended() {
     [adapter, refreshAccount],
   );
 
-  // Seed from env (convenience for the hackathon demo) without auto-connecting.
-  useEffect(() => {
-    const env = readEnvAccount();
-    if (env.apiKey || env.starkPrivateKey || env.starkPublicKey || env.vaultId) {
-      setAccount({
-        apiKey: env.apiKey ?? '',
-        starkPrivateKey: env.starkPrivateKey ?? '',
-        starkPublicKey: env.starkPublicKey ?? '',
-        vaultId: env.vaultId ?? '',
-      });
-    }
-  }, []);
-
   // Load markets once.
   useEffect(() => {
     void refreshMarkets();
   }, [refreshMarkets]);
+
+  // Load server auth status once.
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
 
   // Poll orderbook for the selected market.
   useEffect(() => {
@@ -237,14 +179,14 @@ export function useExtended() {
     return () => clearInterval(t);
   }, [refreshOrderbook]);
 
-  // Poll account data while connected.
-  const accountConnectedRef = useRef(isConnected);
-  accountConnectedRef.current = isConnected;
+  // Poll account data while the server has read credentials.
+  const statusRef = useRef(status);
+  statusRef.current = status;
   useEffect(() => {
-    if (!isConnected) return;
+    if (!status?.read) return;
     const t = setInterval(refreshAccount, 10000);
     return () => clearInterval(t);
-  }, [isConnected, refreshAccount]);
+  }, [status?.read, refreshAccount]);
 
   return {
     adapter,
@@ -255,9 +197,12 @@ export function useExtended() {
     orderbook,
     marketsLoading,
     marketsError,
-    account,
-    setAccount,
+    status,
+    statusLoading,
+    statusError,
+    refreshStatus,
     isConnected,
+    canRead,
     canTrade,
     balance,
     positions,
@@ -265,8 +210,6 @@ export function useExtended() {
     orderHistory,
     accountLoading,
     accountError,
-    connect,
-    disconnect,
     refreshAccount,
     refreshMarkets,
     placeOrder,

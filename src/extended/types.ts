@@ -177,3 +177,31 @@ export interface Leverage {
   market: string;
   leverage: string;
 }
+
+export interface Fees {
+  market: string;
+  makerFeeRate: string;
+  takerFeeRate: string;
+  builderFeeRate: string;
+}
+
+export interface StarknetDomainInfo {
+  name: string;
+  version: string;
+  chainId: string;
+  revision: number;
+}
+
+/** Server-side auth/status report (never carries secrets). */
+export interface ExtendedStatus {
+  read: boolean;
+  trade: boolean;
+}
+
+/** Snapshot returned by the server account route. */
+export interface ExtendedAccountSnapshot {
+  balance: Balance | null;
+  positions: Position[];
+  openOrders: ExtendedOrder[];
+  history: ExtendedOrder[];
+}

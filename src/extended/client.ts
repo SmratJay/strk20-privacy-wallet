@@ -13,11 +13,13 @@ import type {
   AccountInfo,
   Balance,
   ExtendedOrder,
+  Fees,
   Leverage,
   Market,
   Orderbook,
   PlacedOrder,
   Position,
+  StarknetDomainInfo,
 } from './types';
 
 export class ExtendedApiError extends Error {
@@ -104,7 +106,16 @@ export class ExtendedClient {
     return this.request<Market['marketStats']>(`/info/markets/${encodeURIComponent(market)}/stats`);
   }
 
+  /** Current SNIP-12 StarkNet domain (fetched live, matches the official SDK). */
+  getStarknetDomain(): Promise<StarknetDomainInfo> {
+    return this.request<StarknetDomainInfo>('/info/starknet');
+  }
+
   // ─── Private read-only (API key) ───────────────────────────────────────────────
+
+  getFees(market: string): Promise<Fees[]> {
+    return this.request<Fees[]>(`/user/fees?market=${encodeURIComponent(market)}`);
+  }
 
   getAccountInfo(): Promise<AccountInfo> {
     return this.request<AccountInfo>('/user/account/info');

@@ -1,33 +1,26 @@
 /**
  * @file src/extended/adapter.ts
- * @description High-level adapter for the Extended Exchange integration.
+ * @description Client-facing adapter for the Extended Exchange integration.
  *
- * This is the single modular surface the Dapp talks to. It wraps the REST client and the
- * settlement/onboarding signing so the UI never touches crypto or HTTP details. It is
- * deliberately kept behind a clean interface so private collateral / STRK20 bridging can be
- * layered on later without changing the UI.
+ * This is the single modular surface the Dapp talks to.
+ *   - Public market data is fetched directly from Extended's public REST API.
+ *   - Private account reads and signed orders go through the app's own server routes
+ *     (`/api/extended/*`) so API keys and Stark private keys never reach the browser.
+ *
+ * It is deliberately kept behind a clean interface so private collateral / STRK20 bridging
+ * can be layered on later without changing the UI.
  */
 
 import { ExtendedClient } from './client';
 import { getExtendedEnvironment, type ExtendedEnvironment } from './config';
-import { buildOrderRequest, generateNonce } from './settlement';
 import type {
-  AccountInfo,
-  Balance,
-  ExtendedOrder,
-  Leverage,
+  ExtendedAccountSnapshot,
+  ExtendedStatus,
   Market,
   Orderbook,
   PlacedOrder,
   Position,
 } from './types';
-
-export interface ExtendedAccountCredentials {
-  apiKey: string;
-  starkPrivateKey?: string;
-  starkPublicKey?: string;
-  vaultId?: number;
-}
 
 export interface PlaceOrderParams {
   market: string;
@@ -40,10 +33,18 @@ export interface PlaceOrderParams {
   postOnly?: boolean;
 }
 
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return body.error ?? `Request failed (HTTP ${res.status}).`;
+  } catch {
+    return `Request failed (HTTP ${res.status}).`;
+  }
+}
+
 export class ExtendedAdapter {
   private env: ExtendedEnvironment;
   private client: ExtendedClient;
-  private credentials: ExtendedAccountCredentials | null = null;
 
   constructor(env?: ExtendedEnvironment) {
     this.env = env ?? getExtendedEnvironment();
@@ -54,49 +55,7 @@ export class ExtendedAdapter {
     return this.env;
   }
 
-  /** Attach trading credentials (API key for reads; keys + vault for writes). */
-  connect(credentials: ExtendedAccountCredentials): void {
-    this.credentials = credentials;
-    this.client.setApiKey(credentials.apiKey);
-  }
-
-  disconnect(): void {
-    this.credentials = null;
-    this.client.setApiKey(null);
-  }
-
-  get isConnected(): boolean {
-    return this.credentials !== null;
-  }
-
-  /** True when reads (balance/positions/orders) are possible. */
-  get canRead(): boolean {
-    return Boolean(this.credentials?.apiKey);
-  }
-
-  /** True when writes (place/cancel orders) are possible. */
-  get canTrade(): boolean {
-    const c = this.credentials;
-    return Boolean(c?.apiKey && c?.starkPrivateKey && c?.starkPublicKey && c?.vaultId !== undefined);
-  }
-
-  private requireRead(): ExtendedAccountCredentials {
-    if (!this.canRead) {
-      throw new Error('No Extended API key. Connect your Extended account to read balances and positions.');
-    }
-    return this.credentials!;
-  }
-
-  private requireTrade(): ExtendedAccountCredentials {
-    if (!this.canTrade) {
-      throw new Error(
-        'Extended trading is not configured. Provide an API key, Stark private/public key, and vault id.',
-      );
-    }
-    return this.credentials!;
-  }
-
-  // ─── Public market data ─────────────────────────────────────────────────────────
+  // ─── Public market data (no auth, direct) ──────────────────────────────────────
 
   getMarkets(): Promise<Market[]> {
     return this.client.getMarkets();
@@ -115,68 +74,32 @@ export class ExtendedAdapter {
     return this.client.getOrderbook(name);
   }
 
-  async getMarkPrice(name: string): Promise<string> {
-    const market = await this.client.getMarket(name);
-    return market.marketStats.markPrice;
+  // ─── Auth / private state (via server routes; no secrets client-side) ──────────
+
+  /** Whether the server has Extended credentials configured (read / trade). */
+  async getStatus(): Promise<ExtendedStatus> {
+    const res = await fetch('/api/extended/status', { cache: 'no-store' });
+    if (!res.ok) throw new Error(await readError(res));
+    return (await res.json()) as ExtendedStatus;
   }
 
-  // ─── Private read ───────────────────────────────────────────────────────────────
-
-  getAccountInfo(): Promise<AccountInfo> {
-    this.requireRead();
-    return this.client.getAccountInfo();
+  /** Balance / positions / open orders / history from the server-configured account. */
+  async getAccountSnapshot(): Promise<ExtendedAccountSnapshot> {
+    const res = await fetch('/api/extended/account', { cache: 'no-store' });
+    if (!res.ok) throw new Error(await readError(res));
+    return (await res.json()) as ExtendedAccountSnapshot;
   }
 
-  getBalance(): Promise<Balance> {
-    this.requireRead();
-    return this.client.getBalance();
-  }
-
-  getPositions(): Promise<Position[]> {
-    this.requireRead();
-    return this.client.getPositions();
-  }
-
-  getOpenOrders(): Promise<ExtendedOrder[]> {
-    this.requireRead();
-    return this.client.getOpenOrders();
-  }
-
-  getOrderHistory(): Promise<ExtendedOrder[]> {
-    this.requireRead();
-    return this.client.getOrderHistory();
-  }
-
-  getLeverage(market: string): Promise<Leverage> {
-    this.requireRead();
-    return this.client.getLeverage(market);
-  }
-
-  // ─── Private write ──────────────────────────────────────────────────────────────
-
+  /** Place a real signed order (signed server-side). */
   async placeOrder(params: PlaceOrderParams): Promise<PlacedOrder> {
-    const creds = this.requireTrade();
-    const market = await this.getMarket(params.market);
-    if (market.type !== 'PERPETUAL') {
-      throw new Error(`Market ${params.market} is not a perpetual market.`);
-    }
-
-    const body = buildOrderRequest({
-      market,
-      side: params.side,
-      qty: params.qty,
-      price: params.price,
-      type: params.type ?? 'LIMIT',
-      timeInForce: params.timeInForce ?? 'GTT',
-      vaultId: creds.vaultId!,
-      privateKey: creds.starkPrivateKey!,
-      publicKey: creds.starkPublicKey!,
-      reduceOnly: params.reduceOnly,
-      postOnly: params.postOnly,
-      domain: this.env.starknetDomain,
+    const res = await fetch('/api/extended/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      cache: 'no-store',
     });
-
-    return this.client.placeOrder(body);
+    if (!res.ok) throw new Error(await readError(res));
+    return (await res.json()) as PlacedOrder;
   }
 
   async placeMarketOrder(params: Omit<PlaceOrderParams, 'type' | 'timeInForce'>): Promise<PlacedOrder> {
@@ -198,18 +121,8 @@ export class ExtendedAdapter {
     });
   }
 
-  cancelOrder(id: number): Promise<unknown> {
-    this.requireTrade();
-    return this.client.cancelOrder(id);
-  }
-
-  updateLeverage(market: string, leverage: string): Promise<Leverage> {
-    this.requireTrade();
-    return this.client.updateLeverage(market, leverage);
-  }
-
-  /** Generate a fresh order nonce (used for idempotency bookkeeping). */
-  newNonce(): number {
-    return generateNonce();
+  async cancelOrder(id: number): Promise<void> {
+    const res = await fetch(`/api/extended/order?id=${id}`, { method: 'DELETE', cache: 'no-store' });
+    if (!res.ok) throw new Error(await readError(res));
   }
 }
