@@ -13,6 +13,7 @@ import {
   Copy,
   Check,
   TrendingUp,
+  Repeat,
 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
@@ -21,6 +22,7 @@ import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
 const NAV_ITEMS = [
   { href: '/wallet', label: 'Wallet', icon: Lock },
+  { href: '/swap', label: 'Swap', icon: Repeat },
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
   { href: '/extended', label: 'Extended', icon: TrendingUp },
