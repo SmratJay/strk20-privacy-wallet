@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       s: BigInt(String(accountRegistrationSig.s)),
     });
 
-    const time = body.time ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const time = body.time ?? new Date().toISOString();
     const payload = buildStarknetRegisterPayload({
       wallet,
       l1Signature,

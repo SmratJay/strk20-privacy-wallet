@@ -158,11 +158,10 @@ export function buildStarknetRegisterPayload(params: {
   const accountIndex = params.accountIndex ?? 0;
   const l2Message = pedersen(BigInt(params.wallet), BigInt(params.keyPair.publicKey));
   const l2Signature = starkSign(l2Message, params.keyPair.privateKey);
-  return {
+  const payload: Record<string, unknown> = {
     l1Signature: params.l1Signature,
     l2Key: params.keyPair.publicKey,
     l2Signature,
-    referralCode: params.referralCode ?? null,
     accountCreation: {
       host: params.host,
       accountIndex,
@@ -173,6 +172,9 @@ export function buildStarknetRegisterPayload(params: {
     },
     walletType: 'STARKNET',
   };
+  // The web app sends no `referralCode` key when there is no code (axios drops `undefined`).
+  if (params.referralCode) payload.referralCode = params.referralCode;
+  return payload;
 }
 
 /** Build the `POST /auth/login` body for a native Starknet wallet. */

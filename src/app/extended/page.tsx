@@ -72,7 +72,7 @@ export default function ExtendedPage() {
       const address = connectedWallet?.address;
       if (!account || !address) throw new Error('No Starknet wallet connected.');
       const env = getExtendedEnvironment();
-      const time = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      const time = new Date().toISOString();
       const creationSig = await account.signMessage(accountCreationTypedData(address, env.starknetDomain));
       const registrationSig = await account.signMessage(
         accountRegistrationTypedData(address, env.authHost, time, env.starknetDomain),
@@ -86,7 +86,13 @@ export default function ExtendedPage() {
       setOnboardState({ loading: false, status: result.status });
       await ext.refreshStatus();
     } catch (err) {
-      setOnboardState({ loading: false, error: err instanceof Error ? err.message : 'Onboarding failed.' });
+      const msg = err instanceof Error ? err.message : 'Onboarding failed.';
+      // Backend-blocked onboarding: surface a clean, non-technical message instead of
+      // exposing the HTTP 500 from Extended's Starknet registration handler.
+      const clean = /HTTP 5\d\d|Failed to fetch|network/i.test(msg)
+        ? 'Extended account authorization is temporarily unavailable. Try again later, or use provisioned API credentials.'
+        : msg;
+      setOnboardState({ loading: false, error: clean });
     }
   };
 
@@ -187,7 +193,7 @@ export default function ExtendedPage() {
                   <div className="text-sm font-bold font-mono">Extended credentials not configured on the server</div>
                   <div className="text-[11px] text-zinc-500">
                     {starknetAccount
-                      ? `A Starknet wallet is connected (${shortAddress(starknetAddress)}). Onboard it natively with one signature pair, or set the server EXTENDED_* env.`
+                      ? `A Starknet wallet is connected (${shortAddress(starknetAddress)}). Native wallet onboarding can be temporarily unavailable on testnet; provisioned server credentials always work for trading.`
                       : 'Connect a Starknet wallet to onboard natively, or set the server EXTENDED_* env. Markets load without an account.'}
                   </div>
                 </div>

@@ -23,7 +23,7 @@ import { privateKeyFromEthSignature } from '../extended/crypto';
 const DOMAIN = { name: 'Perpetuals', version: 'v0', chainId: 'SN_SEPOLIA', revision: 1 };
 const HOST = 'starknet.sepolia.extended.exchange';
 const WALLET = '0x4796c6b81b78a353d00aecbd015f3ce15a77c6df41b824e943e127563ec4515';
-const TIME = '2026-08-27T22:53:33Z';
+const TIME = '2026-08-27T22:53:33.123Z';
 
 describe('native Starknet onboarding', () => {
   it('builds the StarkNet domain with revision as a shortstring string', () => {
@@ -117,6 +117,48 @@ describe('native Starknet onboarding', () => {
     });
   });
 
+  it('omits referralCode from the register payload when no code is provided (frontend behavior)', () => {
+    const keyPair = deriveStarknetKeyPair({ r: '0x1', s: '0x2' });
+    const payload = buildStarknetRegisterPayload({
+      wallet: WALLET,
+      l1Signature: '["123","456"]',
+      keyPair,
+      host: HOST,
+      time: TIME,
+      referralCode: null,
+    });
+    expect(payload).not.toHaveProperty('referralCode');
+  });
+
+  it('includes referralCode when one is provided', () => {
+    const keyPair = deriveStarknetKeyPair({ r: '0x1', s: '0x2' });
+    const payload = buildStarknetRegisterPayload({
+      wallet: WALLET,
+      l1Signature: '["123","456"]',
+      keyPair,
+      host: HOST,
+      time: TIME,
+      referralCode: 'ORRANGE',
+    });
+    expect(payload.referralCode).toBe('ORRANGE');
+  });
+
+  it('preserves the frontend time format (ISO with milliseconds) in the register payload', () => {
+    const keyPair = deriveStarknetKeyPair({ r: '0x1', s: '0x2' });
+    const withMs = '2026-08-28T04:00:00.849Z';
+    const payload = buildStarknetRegisterPayload({
+      wallet: WALLET,
+      l1Signature: '["123","456"]',
+      keyPair,
+      host: HOST,
+      time: withMs,
+    });
+    expect(payload.accountCreation).toMatchObject({ time: withMs });
+    // The typed data builder signs the exact same time string.
+    const td = accountRegistrationTypedData(WALLET, HOST, withMs, DOMAIN) as any;
+    expect(td.message.time).toBe(withMs);
+  });
+
   it('builds the /auth/login payload for a native Starknet wallet', () => {
     const payload = buildStarknetLoginPayload({ walletAddress: WALLET, l1Signature: '["1","2"]', host: HOST, time: TIME });
     expect(payload).toEqual({
@@ -125,6 +167,38 @@ describe('native Starknet onboarding', () => {
       walletType: 'STARKNET',
       walletAddress: WALLET,
     });
+  });
+
+  it('captures the exact /auth/register wire contract for a native Starknet wallet (regression)', () => {
+    // Traced byte-for-byte from the CURRENT Extended web-app register mutation
+    // (actions: POST /auth/register, body below; query ?rememberMe=true).
+    const keyPair = deriveStarknetKeyPair({ r: '0x1', s: '0x2' });
+    const wire = buildStarknetRegisterPayload({
+      wallet: WALLET,
+      l1Signature: '["123","456"]',
+      keyPair,
+      host: HOST,
+      time: TIME,
+      referralCode: null,
+    });
+    expect(JSON.parse(JSON.stringify(wire))).toEqual({
+      l1Signature: '["123","456"]',
+      l2Key: keyPair.publicKey,
+      l2Signature: { r: expect.any(String), s: expect.any(String) },
+      accountCreation: {
+        host: HOST,
+        accountIndex: 0,
+        wallet: WALLET,
+        tosAccepted: true,
+        action: 'REGISTER',
+        time: TIME,
+      },
+      walletType: 'STARKNET',
+    });
+    // Every Starknet l2Signature component is a 0x-prefixed hex string (frontend: addHexPrefix(r.toString(16))).
+    const sig = wire.l2Signature as { r: string; s: string };
+    expect(sig.r).toMatch(/^0x[0-9a-f]+$/);
+    expect(sig.s).toMatch(/^0x[0-9a-f]+$/);
   });
 
   it('POSTs to /auth/register with the native Starknet payload and captures cookies', async () => {
