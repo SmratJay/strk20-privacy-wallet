@@ -107,6 +107,20 @@ There is **no standalone registration RPC**. Registration is *transparent*: the 
 
 - **Starknet Sepolia** (primary, validated). Network is auto-synced from the connected wallet.
 
+## Umbra Launch
+
+> **Privacy is a property of the trade, not the market.**
+
+`/launch` is a memecoin launchpad with a private execution layer. The market is a single
+canonical public bonding curve (price, liquidity, curve state, graduation all on-chain and
+public). A trade can be executed **publicly** (your wallet calls the curve) or **privately**
+through the STRK20 privacy pool: shielded STRK note → `PrivateCurveExecutor` → the *same*
+curve → shielded memecoin note (and the reverse for selling).
+
+See `docs/UMBRA_LAUNCH.md` for the architecture, privacy/threat model, exact STRK20 flow,
+deployment, and the 3-minute demo script. Contracts live in `umbra-launch-contracts/`
+(48/48 snforge tests passing; existing PEL perps contracts untouched).
+
 ## Getting started
 
 ```bash

@@ -67,9 +67,25 @@
     "shieldMainnet": "PENDING_OPERATOR_SERVICES",
     "openPerpMainnet": "PENDING_OPERATOR_SERVICES",
     "closePerpMainnet": "PENDING_OPERATOR_SERVICES",
-    "unshieldMainnet": "PENDING_OPERATOR_SERVICES"
+    "unshieldMainnet": "PENDING_OPERATOR_SERVICES",
+    "privateBuyMainnet": "PENDING_CONTRACT_DEPLOY",
+    "privateSellMainnet": "PENDING_CONTRACT_DEPLOY"
+  },
+  "umbra_launch": {
+    "note": "UMBRA LAUNCH private memecoin trades (docs/UMBRA_LAUNCH.md). The three required mainnet transactions that touch the STRK20 pool are a STRK shield/register and one PRIVATE BUY + one PRIVATE SELL through the PrivateCurveExecutor. Real hashes are recorded here from actual chain/wallet responses after the launch contracts are deployed (scripts/launch_deploy.mjs) and the mainnet pool operator prover/discovery services are live. NEVER fabricated.",
+    "contracts": {
+      "Memecoin": "DECLARED_ON_DEPLOY",
+      "BondingCurve": "DECLARED_ON_DEPLOY",
+      "PrivateCurveExecutor": "DECLARED_ON_DEPLOY",
+      "GraduationRouter": "DEPLOYED_ON_DEPLOY",
+      "TokenFactory": "DEPLOYED_ON_DEPLOY"
+    },
+    "transactions": {
+      "privateBuy": "PENDING",
+      "privateSell": "PENDING"
+    }
   },
   "demo_video": "",
   "demo_url": "",
-  "demo_note": "Demo video/URL to be published at submission; a locally-verifiable live devnet demo is runnable via `npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts`."
+  "demo_note": "Demo video/URL to be published at submission; a locally-verifiable live devnet demo is runnable via `npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts`. UMBRA LAUNCH private-buy/private-sell flow is runnable via the /launch UI once contracts are deployed (scripts/launch_deploy.mjs)."
 }

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight, Rocket } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { PublicBalanceCard } from '@/components/wallet/PublicBalanceCard';
@@ -49,7 +49,16 @@ export default function WalletPage() {
             <BalanceCard />
 
             {/* Primary actions */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
+              <Link
+                href="/launch"
+                className="flex flex-col items-center gap-2 rounded-2xl border border-violet-500/30 bg-violet-500/5 py-4 hover:bg-violet-500/10 transition-colors"
+              >
+                <div className="w-9 h-9 rounded-full bg-violet-500/15 text-violet-300 flex items-center justify-center">
+                  <Rocket className="w-4 h-4" />
+                </div>
+                <span className="text-[13px] font-medium text-zinc-100">Launch</span>
+              </Link>
               <Link
                 href="/send"
                 className="flex flex-col items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/60 py-4 hover:bg-zinc-900/60 transition-colors"
