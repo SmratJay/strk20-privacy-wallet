@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import { ArrowRight, ArrowUpRight, LockKeyhole } from 'lucide-react';
-import { EyeballSticker, FlameHeartSticker, MintedCoinSticker, PixelShadesSticker } from './InteractiveStickers';
 
 interface HeroSectionProps {
   onJoinWaitlist: (input: string) => void;
@@ -20,11 +19,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onJoinWaitlist, onOpen
 
   return (
     <section id="hero" className="landing-panel landing-candy-light flex min-h-[calc(100svh-5rem)] items-center justify-center px-5 pb-24 pt-36 sm:px-8 sm:pb-28 sm:pt-40">
-      <div className="landing-blob left-[-7rem] top-[9rem] hidden sm:block"><MintedCoinSticker size={154} /></div>
-      <div className="landing-blob right-[-2rem] top-[8rem] hidden sm:block"><EyeballSticker size={150} /></div>
-      <div className="landing-blob bottom-[-2rem] left-[-3rem] hidden md:block"><FlameHeartSticker size={220} /></div>
-      <div className="landing-blob bottom-[5rem] right-[-2rem] hidden lg:block"><PixelShadesSticker size={210} /></div>
-
       <div className="relative z-10 flex w-full max-w-5xl flex-col items-center text-center">
         <div className="landing-sticker-label mb-8"><span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_10px_#34d399]" /> ORRANGE WAITLIST / LIVE PREVIEW</div>
         <h1 className="landing-scene-heading max-w-full text-[#1d111d] drop-shadow-[0_10px_0_rgba(255,255,255,.23)]">ORRANGE</h1>

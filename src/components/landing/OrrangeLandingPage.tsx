@@ -10,6 +10,7 @@ import { PrivacyDeskSection } from './PrivacyDeskSection';
 import { ClubSection } from './ClubSection';
 import { FloatingBottomDock } from './FloatingBottomDock';
 import { WaitlistModal } from './WaitlistModal';
+import { ScrollReveal } from './ScrollReveal';
 import { ArrowUpRight, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
 
 /**
@@ -61,13 +62,16 @@ export const OrrangeLandingPage: React.FC = () => {
       <FloatingNav onOpenWaitlist={handleOpenWaitlistModal} />
 
       {/* Section 1: Hero ("ORRANGE") */}
-      <HeroSection 
-        onJoinWaitlist={handleJoinWaitlist} 
-        onOpenWaitlistModal={handleOpenWaitlistModal} 
-      />
+      <ScrollReveal>
+        <HeroSection
+          onJoinWaitlist={handleJoinWaitlist}
+          onOpenWaitlistModal={handleOpenWaitlistModal}
+        />
+      </ScrollReveal>
 
       {/* Scene 2: the reason */}
-      <section id="reason" className="landing-panel landing-candy-orange flex min-h-[calc(100svh-2rem)] items-center justify-center px-5 py-32 sm:px-8 sm:py-40">
+      <ScrollReveal>
+        <section id="reason" className="landing-panel landing-candy-orange flex min-h-[calc(100svh-2rem)] items-center justify-center px-5 py-32 sm:px-8 sm:py-40">
         <div className="pointer-events-none absolute -bottom-20 -left-12 h-72 w-72 rounded-full bg-[#ffdd8c]/45 blur-3xl" />
         <div className="pointer-events-none absolute -right-12 top-14 h-64 w-64 rounded-full bg-[#ef315a]/25 blur-3xl" />
         <div className="relative z-10 mx-auto max-w-5xl text-center">
@@ -82,33 +86,41 @@ export const OrrangeLandingPage: React.FC = () => {
             ].map(({ Icon, title, copy }) => <div key={title} className="rounded-2xl border border-white/35 bg-white/20 p-4 backdrop-blur-sm"><Icon className="h-5 w-5 text-[#7a2231]" /><div className="mt-5 font-space text-sm font-bold text-[#4c1e2a]">{title}</div><p className="mt-1 text-xs leading-5 text-[#783943]">{copy}</p></div>)}
           </div>
         </div>
-      </section>
+        </section>
+      </ScrollReveal>
 
       {/* Section 2: Founders & Ladder ("Climb in.") */}
-      <FoundersSection 
-        onOpenWaitlistModal={handleOpenWaitlistModal} 
-      />
+      <ScrollReveal delay={1}>
+        <FoundersSection
+          onOpenWaitlistModal={handleOpenWaitlistModal}
+        />
+      </ScrollReveal>
 
       {/* Section 3: Privacy Desk ("YOUR ENTIRE PRIVACY DESK.") */}
-      <PrivacyDeskSection />
+      <ScrollReveal delay={1}><PrivacyDeskSection /></ScrollReveal>
 
       {/* Section 4: The Club ("WELCOME TO THE CLUB.") */}
-      <ClubSection 
-        onOpenWaitlistModal={handleOpenWaitlistModal} 
-      />
+      <ScrollReveal delay={2}>
+        <ClubSection
+          onOpenWaitlistModal={handleOpenWaitlistModal}
+        />
+      </ScrollReveal>
 
       {/* Scene 5: FAQ / product truth */}
-      <section id="faq" className="landing-panel landing-candy-night min-h-[46rem] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
+      <ScrollReveal delay={1}>
+        <section id="faq" className="landing-panel landing-candy-night min-h-[46rem] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
         <div className="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[0.75fr_1.25fr] lg:gap-24">
           <div className="lg:pt-4"><div className="landing-kicker mb-6 text-[#ffb45c]">05 / PRODUCT TRUTH</div><h2 className="landing-scene-heading text-[#f8f1ea]">QUESTIONS,<br /><span className="text-[#ffb45c]">ANSWERED.</span></h2><p className="mt-8 max-w-sm text-base leading-7 text-[#b8a59a]">Privacy is easier to trust when the boundaries are clear. Here is what ORRANGE does — and what it does not pretend to do.</p></div>
           <div className="border-t border-white/10">
             {FAQ_ITEMS.map((item, index) => { const isOpen = openFaq === index; return <div key={item.question} className={`border-b border-white/10 ${isOpen ? 'border-l-2 border-l-[#ffb45c]' : 'border-l-2 border-l-transparent'}`}><button type="button" onClick={() => setOpenFaq(isOpen ? -1 : index)} aria-expanded={isOpen} className="flex w-full items-center gap-4 px-4 py-5 text-left sm:px-6"><span className="font-mono text-[10px] text-[#ffb45c]">0{index + 1}</span><span className="flex-1 font-space text-base font-semibold text-[#f8f1ea] sm:text-lg">{item.question}</span><span className="font-space text-xl font-light text-[#ffb45c]">{isOpen ? '−' : '+'}</span></button>{isOpen && <div className="px-12 pb-6 text-sm leading-6 text-[#a99589] sm:px-16">{item.answer}</div>}</div>; })}
           </div>
         </div>
-      </section>
+        </section>
+      </ScrollReveal>
 
       {/* Global Landing Footer */}
-      <footer className="landing-panel landing-candy-night mx-3 max-w-none space-y-8 border-white/[0.08] px-5 py-14 text-center sm:mx-4 sm:px-8 lg:px-12">
+      <ScrollReveal delay={2}>
+        <footer className="landing-panel landing-candy-night mx-3 max-w-none space-y-8 border-white/[0.08] px-5 py-14 text-center sm:mx-4 sm:px-8 lg:px-12">
         <div className="-mx-5 overflow-hidden border-b border-white/[0.08] pb-8 sm:-mx-8 lg:-mx-12">
           <div className="flex w-max animate-marquee items-center gap-10 whitespace-nowrap font-bebas text-6xl tracking-[0.02em] text-white/[0.09] sm:text-8xl">{Array.from({ length: 4 }, (_, index) => <span key={index}>JOIN THE QUIET SIDE <span className="text-[#ffb45c]">✦</span></span>)}</div>
         </div>
@@ -133,7 +145,8 @@ export const OrrangeLandingPage: React.FC = () => {
           <div>Non-custodial interface / Wallet-owned privacy</div>
         </div>
         <div className="landing-display select-none text-[clamp(5rem,17vw,15rem)] leading-[0.62] text-white/[0.035]">ORRANGE</div>
-      </footer>
+        </footer>
+      </ScrollReveal>
 
       {/* Pinned Bottom Floating Dock (Matching screenshots) */}
       <FloatingBottomDock 

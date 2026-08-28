@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ArrowUpRight, EyeOff, KeyRound, LockKeyhole, ScanLine, ShieldCheck, TrendingUp } from 'lucide-react';
-import { GoatSticker, MeltingTongueSticker, NoCapSticker, PixelShadesSticker } from './InteractiveStickers';
 
 type DeskTab = 'TRADE' | 'SHIELD' | 'STEALTH' | 'COLLECT';
 const TABS: { id: DeskTab; label: string; Icon: typeof ShieldCheck }[] = [
@@ -19,10 +18,6 @@ export const PrivacyDeskSection: React.FC = () => {
 
   return (
     <section id="desk" className="landing-panel landing-candy-coral flex min-h-[calc(100svh-2rem)] items-center justify-center px-5 py-32 sm:px-8 sm:py-40">
-      <div className="absolute left-[2%] top-[10%] hidden rotate-[-8deg] sm:block"><MeltingTongueSticker size={108} /></div>
-      <div className="absolute left-[16%] top-[25%] hidden rotate-6 md:block"><NoCapSticker size={98} /></div>
-      <div className="absolute right-[4%] top-[9%] hidden rotate-6 sm:block"><PixelShadesSticker size={150} /></div>
-      <div className="absolute bottom-[11%] right-[10%] hidden rotate-[-8deg] md:block"><GoatSticker size={112} /></div>
       <div className="pointer-events-none absolute -bottom-12 left-1/3 h-64 w-64 rounded-full bg-[#ffdf85]/35 blur-3xl" />
 
       <div className="relative z-10 flex w-full max-w-6xl flex-col items-center text-center">
@@ -31,12 +26,12 @@ export const PrivacyDeskSection: React.FC = () => {
         <p className="landing-poster-copy mx-auto mt-9 max-w-2xl text-[#752f38]">One clean desk for shielded payments, private transfers, and the wallet boundary behind them.</p>
 
         <div className="mt-12 w-full max-w-4xl rounded-[2rem] border border-white/60 bg-white/30 p-2 shadow-[0_24px_60px_rgba(108,28,44,.18)] backdrop-blur-xl sm:p-3">
-          <div className="rounded-[1.55rem] border border-white/45 bg-[#1b101b]/95 p-4 text-left shadow-2xl sm:p-6">
+          <div className={`desk-card-shell desk-card-${activeTab.toLowerCase()} rounded-[1.55rem] border border-white/45 bg-[#1b101b]/95 p-4 text-left shadow-2xl sm:p-6`}>
             <div className="flex flex-wrap items-center justify-between gap-3 px-1 pb-4 font-mono text-[9px] uppercase tracking-[0.15em] text-[#c9a3a5]"><span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ORRANGE / DESK</span><span className="flex items-center gap-2 text-[#ffb45c]"><ScanLine className="h-3 w-3" /> Testnet preview</span></div>
             <div className="rounded-[1.2rem] border border-white/10 bg-[#0e090d] p-4 sm:p-5">
               <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5"><div><div className="font-space text-xl font-semibold text-white">Privacy Desk</div><div className="mt-1 font-mono text-[9px] uppercase tracking-[0.15em] text-[#887078]">Make a move / choose a surface</div></div><div className="hidden rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 sm:block">Wallet connected</div></div>
               <div className="mt-5 grid grid-cols-4 gap-1 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-1" role="tablist" aria-label="Privacy desk modes">{TABS.map(({ id, label, Icon }) => <button key={id} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all sm:gap-2 sm:text-[10px] ${activeTab === id ? 'bg-[#fff6f0] text-[#26131e] shadow-lg' : 'text-[#9e8188] hover:bg-white/[0.06] hover:text-white'}`}><Icon className="h-3.5 w-3.5" />{label}</button>)}</div>
-              <div className="mt-6 min-h-[17rem]">{activeTab === 'SHIELD' && <ShieldPanel />}{activeTab === 'STEALTH' && <SendPanel />}{activeTab === 'COLLECT' && <KeysPanel />}{activeTab === 'TRADE' && <TradePanel leverage={leverage} setLeverage={setLeverage} />}</div>
+              <div key={activeTab} className={`desk-content-switch desk-card-${activeTab.toLowerCase()} mt-6 min-h-[17rem]`}>{activeTab === 'SHIELD' && <ShieldPanel />}{activeTab === 'STEALTH' && <SendPanel />}{activeTab === 'COLLECT' && <KeysPanel />}{activeTab === 'TRADE' && <TradePanel leverage={leverage} setLeverage={setLeverage} />}</div>
             </div>
             <div className="flex items-center justify-between px-1 pt-3 font-mono text-[9px] uppercase tracking-[0.13em] text-[#887078]"><span>Product preview / no fabricated balances</span><Link href="/wallet" className="text-[#ffb45c] hover:text-white">Open wallet →</Link></div>
           </div>
