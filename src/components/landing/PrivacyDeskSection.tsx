@@ -2,19 +2,10 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import {
-  ArrowRight,
-  ArrowUpRight,
-  EyeOff,
-  KeyRound,
-  LockKeyhole,
-  ScanLine,
-  ShieldCheck,
-  TrendingUp,
-} from 'lucide-react';
+import { ArrowRight, ArrowUpRight, EyeOff, KeyRound, LockKeyhole, ScanLine, ShieldCheck, TrendingUp } from 'lucide-react';
+import { GoatSticker, MeltingTongueSticker, NoCapSticker, PixelShadesSticker } from './InteractiveStickers';
 
 type DeskTab = 'TRADE' | 'SHIELD' | 'STEALTH' | 'COLLECT';
-
 const TABS: { id: DeskTab; label: string; Icon: typeof ShieldCheck }[] = [
   { id: 'TRADE', label: 'Trade', Icon: TrendingUp },
   { id: 'SHIELD', label: 'Shield', Icon: ShieldCheck },
@@ -27,126 +18,39 @@ export const PrivacyDeskSection: React.FC = () => {
   const [leverage, setLeverage] = useState(25);
 
   return (
-    <section id="desk" className="relative overflow-hidden border-t border-white/[0.07] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_35%,rgba(184,76,27,0.24),transparent_34rem)]" />
-      <div className="landing-grid pointer-events-none absolute inset-0 opacity-25" />
+    <section id="desk" className="landing-panel landing-candy-coral flex min-h-[calc(100svh-2rem)] items-center justify-center px-5 py-32 sm:px-8 sm:py-40">
+      <div className="absolute left-[2%] top-[10%] hidden rotate-[-8deg] sm:block"><MeltingTongueSticker size={108} /></div>
+      <div className="absolute left-[16%] top-[25%] hidden rotate-6 md:block"><NoCapSticker size={98} /></div>
+      <div className="absolute right-[4%] top-[9%] hidden rotate-6 sm:block"><PixelShadesSticker size={150} /></div>
+      <div className="absolute bottom-[11%] right-[10%] hidden rotate-[-8deg] md:block"><GoatSticker size={112} /></div>
+      <div className="pointer-events-none absolute -bottom-12 left-1/3 h-64 w-64 rounded-full bg-[#ffdf85]/35 blur-3xl" />
 
-      <div className="relative mx-auto grid max-w-6xl gap-14 lg:grid-cols-[0.72fr_1.28fr] lg:items-start lg:gap-24">
-        <div className="lg:sticky lg:top-28">
-          <div className="landing-kicker mb-6 flex items-center gap-3"><span className="h-px w-8 bg-[#ffb45c]/70" />03 / PRIVACY DESK</div>
-          <h2 className="landing-display max-w-lg text-[clamp(4.8rem,10vw,8.8rem)] text-[#f8f1ea]">
-            YOUR<br /><span className="text-[#ffb45c]">QUIET</span><br />DESK.
-          </h2>
-          <p className="mt-8 max-w-sm text-base leading-7 text-[#b8a59a] sm:text-lg">
-            A single place to make funds private, send a shielded payment, and see the boundary between your wallet and the public chain.
-          </p>
-          <div className="mt-10 space-y-4 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">
-            <div className="flex items-center justify-between"><span>01 / Wallet</span><span className="text-[#ffb45c]">Owns the keys</span></div>
-            <div className="flex items-center justify-between"><span>02 / STRK20</span><span className="text-[#ffb45c]">Private pool</span></div>
-            <div className="flex items-center justify-between"><span>03 / Dapp</span><span className="text-[#ffb45c]">Never sees secrets</span></div>
+      <div className="relative z-10 flex w-full max-w-6xl flex-col items-center text-center">
+        <div className="landing-sticker-label mb-8 border-white/45 bg-white/25 text-[#6e2b39]"><span className="h-2 w-2 rounded-full bg-[#ef315a]" /> PRIVACY DESK / INTERACTIVE PREVIEW</div>
+        <h2 className="landing-scene-heading max-w-5xl text-[#641927]">PRIVATE MOVES,<br /><span className="text-[#fff4ed]">LIVE.</span></h2>
+        <p className="landing-poster-copy mx-auto mt-9 max-w-2xl text-[#752f38]">One clean desk for shielded payments, private transfers, and the wallet boundary behind them.</p>
+
+        <div className="mt-12 w-full max-w-4xl rounded-[2rem] border border-white/60 bg-white/30 p-2 shadow-[0_24px_60px_rgba(108,28,44,.18)] backdrop-blur-xl sm:p-3">
+          <div className="rounded-[1.55rem] border border-white/45 bg-[#1b101b]/95 p-4 text-left shadow-2xl sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-1 pb-4 font-mono text-[9px] uppercase tracking-[0.15em] text-[#c9a3a5]"><span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ORRANGE / DESK</span><span className="flex items-center gap-2 text-[#ffb45c]"><ScanLine className="h-3 w-3" /> Testnet preview</span></div>
+            <div className="rounded-[1.2rem] border border-white/10 bg-[#0e090d] p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5"><div><div className="font-space text-xl font-semibold text-white">Privacy Desk</div><div className="mt-1 font-mono text-[9px] uppercase tracking-[0.15em] text-[#887078]">Make a move / choose a surface</div></div><div className="hidden rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 sm:block">Wallet connected</div></div>
+              <div className="mt-5 grid grid-cols-4 gap-1 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-1" role="tablist" aria-label="Privacy desk modes">{TABS.map(({ id, label, Icon }) => <button key={id} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all sm:gap-2 sm:text-[10px] ${activeTab === id ? 'bg-[#fff6f0] text-[#26131e] shadow-lg' : 'text-[#9e8188] hover:bg-white/[0.06] hover:text-white'}`}><Icon className="h-3.5 w-3.5" />{label}</button>)}</div>
+              <div className="mt-6 min-h-[17rem]">{activeTab === 'SHIELD' && <ShieldPanel />}{activeTab === 'STEALTH' && <SendPanel />}{activeTab === 'COLLECT' && <KeysPanel />}{activeTab === 'TRADE' && <TradePanel leverage={leverage} setLeverage={setLeverage} />}</div>
+            </div>
+            <div className="flex items-center justify-between px-1 pt-3 font-mono text-[9px] uppercase tracking-[0.13em] text-[#887078]"><span>Product preview / no fabricated balances</span><Link href="/wallet" className="text-[#ffb45c] hover:text-white">Open wallet →</Link></div>
           </div>
         </div>
-
-        <div className="w-full">
-          <div className="landing-window rounded-[1.8rem] p-3 sm:p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-4 font-mono text-[9px] uppercase tracking-[0.14em] text-[#75645a]">
-              <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />ORRANGE / INTERACTIVE PREVIEW</span>
-              <span>NO SECRETS IN THE DAPP</span>
-            </div>
-            <div className="rounded-[1.35rem] border border-white/10 bg-[#0d0906] p-4 sm:p-6">
-              <div className="flex flex-col gap-5 border-b border-white/10 pb-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="font-space text-xl font-semibold tracking-[-0.04em] text-[#f8f1ea]">Privacy Desk</div>
-                  <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">Choose a surface to inspect</div>
-                </div>
-                <div className="flex items-center gap-2 rounded-full border border-[#ffb45c]/20 bg-[#f97316]/10 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-[#ffb45c]"><ScanLine className="h-3 w-3" /> Sepolia preview</div>
-              </div>
-
-              <div className="mt-5 grid grid-cols-4 gap-1 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-1" role="tablist" aria-label="Privacy desk modes">
-                {TABS.map(({ id, label, Icon }) => (
-                  <button key={id} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all sm:gap-2 sm:text-[10px] ${activeTab === id ? 'bg-[#f8f1ea] text-[#1b0e08] shadow-lg' : 'text-[#8e7b70] hover:bg-white/[0.05] hover:text-[#f8f1ea]'}`}>
-                    <Icon className="h-3.5 w-3.5" /> <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-6 min-h-[23rem]">
-                {activeTab === 'SHIELD' && (
-                  <div className="animate-in fade-in duration-300">
-                    <DeskHeader icon={<ShieldCheck className="h-5 w-5" />} title="Make funds private" status="LIVE FLOW" tone="orange" />
-                    <div className="mt-7 grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                      <DeskMetric label="FROM" value="Public balance" detail="Your connected wallet" />
-                      <ArrowRight className="hidden h-5 w-5 text-[#ffb45c] sm:block" />
-                      <DeskMetric label="TO" value="Private note" detail="STRK20 privacy pool" accent />
-                    </div>
-                    <div className="mt-7 rounded-2xl border border-[#ffb45c]/20 bg-[#f97316]/[0.07] p-4 font-mono text-xs text-[#c8b8ad]">
-                      <div className="flex items-center justify-between"><span className="text-[#75645a]">What happens</span><LockKeyhole className="h-4 w-4 text-[#ffb45c]" /></div>
-                      <p className="mt-3 max-w-xl leading-6">Your privacy wallet builds the note, generates the proof, and asks you to confirm. ORRANGE only requests the STRK20 action through the Wallet API.</p>
-                    </div>
-                    <Link href="/send?mode=deposit" className="landing-button mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#ffb45c] px-5 py-3.5 text-sm font-bold text-[#1b0e08] hover:bg-[#f8f1ea]">Make funds private <ArrowUpRight className="h-4 w-4" /></Link>
-                  </div>
-                )}
-
-                {activeTab === 'STEALTH' && (
-                  <div className="animate-in fade-in duration-300">
-                    <DeskHeader icon={<EyeOff className="h-5 w-5" />} title="Private transfer" status="LIVE FLOW" tone="green" />
-                    <div className="mt-7 space-y-3">
-                      <DeskMetric label="RECIPIENT" value="Starknet address" detail="Registered for private receiving" />
-                      <DeskMetric label="PAYMENT" value="Shielded STRK20" detail="Amount and token stay inside the private pool" accent />
-                    </div>
-                    <div className="mt-7 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300"><ArrowUpRight className="h-4 w-4" /></span><div><div className="font-space text-sm font-semibold text-[#f8f1ea]">Your wallet handles the sensitive work</div><div className="mt-1 font-mono text-[10px] text-[#75645a]">NOTES / DISCOVERY / PROOFS</div></div></div>
-                    <Link href="/send" className="landing-button mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#f8f1ea] px-5 py-3.5 text-sm font-bold text-[#1b0e08] hover:bg-[#ffb45c]">Open private send <ArrowUpRight className="h-4 w-4" /></Link>
-                  </div>
-                )}
-
-                {activeTab === 'TRADE' && (
-                  <div className="animate-in fade-in duration-300">
-                    <DeskHeader icon={<TrendingUp className="h-5 w-5" />} title="Private trading surface" status="COMING NEXT" tone="purple" />
-                    <div className="mt-7 rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
-                      <div className="flex items-end justify-between"><div><div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">Concept preview</div><div className="mt-2 font-space text-3xl font-semibold text-[#f8f1ea]">STRK / USD</div></div><div className="font-mono text-sm text-[#ffb45c]">{leverage}x</div></div>
-                      <div className="mt-6 h-28 rounded-xl bg-[linear-gradient(180deg,rgba(139,92,246,.13),transparent)] p-2"><svg viewBox="0 0 520 130" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true"><path d="M0 102 C42 96,48 76,80 84 S126 92,153 64 S194 76,222 48 S267 62,300 42 S340 49,370 23 S420 38,456 18 S490 26,520 9" fill="none" stroke="#c4b5fd" strokeWidth="3" /><path d="M0 102 C42 96,48 76,80 84 S126 92,153 64 S194 76,222 48 S267 62,300 42 S340 49,370 23 S420 38,456 18 S490 26,520 9 V130 H0Z" fill="#8b5cf6" opacity=".1" /></svg></div>
-                      <div className="mt-5"><div className="flex justify-between font-mono text-[10px] uppercase tracking-wider text-[#75645a]"><span>Experimental leverage</span><span className="text-[#c4b5fd]">{leverage}x</span></div><input aria-label="Experimental leverage preview" type="range" min="1" max="50" value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} className="mt-3 w-full accent-[#c4b5fd]" /></div>
-                    </div>
-                    <p className="mt-5 font-mono text-[10px] leading-5 text-[#75645a]">The trading surface is shown as an exploration of what comes next. The live product today is the STRK20 privacy wallet.</p>
-                  </div>
-                )}
-
-                {activeTab === 'COLLECT' && (
-                  <div className="animate-in fade-in duration-300">
-                    <DeskHeader icon={<KeyRound className="h-5 w-5" />} title="Selective access" status="MODEL" tone="amber" />
-                    <div className="mt-7 grid gap-3 sm:grid-cols-2">
-                      <DeskMetric label="VIEWING KEYS" value="Held by wallet" detail="The dapp never stores secrets" />
-                      <DeskMetric label="PROOFS" value="Generated on request" detail="Confirm in your privacy wallet" accent />
-                    </div>
-                    <div className="mt-7 border-l border-[#ffb45c]/50 pl-4 font-mono text-xs leading-6 text-[#b8a59a]">Privacy is not a promise to disappear. It is a boundary you can understand, operate, and selectively share when the product supports it.</div>
-                    <Link href="/settings" className="landing-button mt-7 inline-flex items-center gap-2 rounded-full border border-[#ffb45c]/40 px-5 py-3 text-xs font-bold uppercase tracking-[0.1em] text-[#ffb45c] hover:bg-[#f97316]/10">Inspect wallet controls <ArrowUpRight className="h-4 w-4" /></Link>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center justify-between px-2 pt-3 font-mono text-[9px] uppercase tracking-[0.13em] text-[#75645a]"><span>Product preview / no fabricated balances</span><Link href="/wallet" className="text-[#ffb45c] hover:text-[#f8f1ea]">Launch wallet →</Link></div>
-          </div>
-        </div>
+        <div className="mt-7 flex w-full max-w-4xl justify-between px-2 font-mono text-[9px] uppercase tracking-[0.14em] text-[#88414c]"><span>03 / DESK</span><span>Click the modes</span></div>
       </div>
     </section>
   );
 };
 
-const DeskHeader: React.FC<{ icon: React.ReactNode; title: string; status: string; tone: 'orange' | 'green' | 'purple' | 'amber' }> = ({ icon, title, status, tone }) => {
-  const toneClasses = {
-    orange: 'bg-[#f97316]/15 text-[#ffb45c] border-[#f97316]/30',
-    green: 'bg-emerald-400/10 text-emerald-300 border-emerald-400/25',
-    purple: 'bg-violet-400/10 text-violet-300 border-violet-400/25',
-    amber: 'bg-amber-300/10 text-amber-200 border-amber-300/25',
-  }[tone];
+const DeskHeader: React.FC<{ Icon: typeof ShieldCheck; title: string; status: string }> = ({ Icon, title, status }) => <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#ffb45c]/30 bg-[#f97316]/15 text-[#ffb45c]"><Icon className="h-4 w-4" /></span><div><h3 className="font-space text-base font-semibold text-white">{title}</h3><div className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-[#887078]">STRK20 / wallet api</div></div></div><span className="rounded-full border border-[#ffb45c]/25 bg-[#f97316]/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-[#ffb45c]">{status}</span></div>;
+const DeskMetric: React.FC<{ label: string; value: string; detail: string; accent?: boolean }> = ({ label, value, detail, accent }) => <div className={`rounded-2xl border p-4 ${accent ? 'border-[#ffb45c]/25 bg-[#f97316]/[0.08]' : 'border-white/10 bg-white/[0.025]'}`}><div className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#887078]">{label}</div><div className={`mt-2 font-space text-sm font-semibold ${accent ? 'text-[#ffb45c]' : 'text-white'}`}>{value}</div><div className="mt-1 text-xs leading-5 text-[#aa8e95]">{detail}</div></div>;
 
-  return <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl border ${toneClasses}`}>{icon}</span><div><h3 className="font-space text-lg font-semibold text-[#f8f1ea]">{title}</h3><div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#75645a]">STRK20 / wallet api</div></div></div><span className={`rounded-full border px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider ${toneClasses}`}>{status}</span></div>;
-};
-
-const DeskMetric: React.FC<{ label: string; value: string; detail: string; accent?: boolean }> = ({ label, value, detail, accent }) => (
-  <div className={`rounded-2xl border p-4 ${accent ? 'border-[#ffb45c]/25 bg-[#f97316]/[0.07]' : 'border-white/10 bg-white/[0.025]'}`}>
-    <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#75645a]">{label}</div>
-    <div className={`mt-3 font-space text-base font-semibold ${accent ? 'text-[#ffb45c]' : 'text-[#f8f1ea]'}`}>{value}</div>
-    <div className="mt-1 text-xs leading-5 text-[#8e7b70]">{detail}</div>
-  </div>
-);
+const ShieldPanel: React.FC = () => <div className="animate-in fade-in duration-300"><DeskHeader Icon={ShieldCheck} title="Make funds private" status="Live flow" /><div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center"><DeskMetric label="FROM" value="Public balance" detail="Your connected wallet" /><ArrowRight className="hidden h-4 w-4 text-[#ffb45c] sm:block" /><DeskMetric label="TO" value="Private note" detail="STRK20 privacy pool" accent /></div><div className="mt-5 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4"><LockKeyhole className="h-4 w-4 text-[#ffb45c]" /><p className="font-mono text-[10px] leading-5 text-[#aa8e95]">Your privacy wallet builds the note, generates the proof, and asks you to confirm.</p></div><Link href="/send?mode=deposit" className="landing-button mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#ffb45c] px-4 py-3 text-sm font-bold text-[#24111a] hover:bg-white">Make funds private <ArrowUpRight className="h-4 w-4" /></Link></div>;
+const SendPanel: React.FC = () => <div className="animate-in fade-in duration-300"><DeskHeader Icon={EyeOff} title="Private transfer" status="Live flow" /><div className="mt-6 grid gap-3 sm:grid-cols-2"><DeskMetric label="RECIPIENT" value="Starknet address" detail="Registered for private receiving" /><DeskMetric label="PAYMENT" value="Shielded STRK20" detail="Amount and token stay inside the pool" accent /></div><div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4 font-mono text-[10px] leading-5 text-[#b5a2a4]">The live product flow is private send. Stealth links remain a future surface, clearly marked as such.</div><Link href="/send" className="landing-button mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#fff6f0] px-4 py-3 text-sm font-bold text-[#24111a] hover:bg-[#ffb45c]">Open private send <ArrowUpRight className="h-4 w-4" /></Link></div>;
+const KeysPanel: React.FC = () => <div className="animate-in fade-in duration-300"><DeskHeader Icon={KeyRound} title="Wallet-owned privacy" status="Model" /><div className="mt-6 grid gap-3 sm:grid-cols-2"><DeskMetric label="VIEWING KEYS" value="Held by wallet" detail="The dapp never stores secrets" /><DeskMetric label="PROOFS" value="Generated on request" detail="Confirm in your privacy wallet" accent /></div><div className="mt-5 border-l border-[#ffb45c]/50 pl-4 font-mono text-[10px] leading-5 text-[#aa8e95]">Privacy works best when the boundary is visible: the wallet holds sensitive material, the dapp requests an action, and Starknet settles it.</div><Link href="/settings" className="landing-button mt-5 inline-flex items-center gap-2 rounded-full border border-[#ffb45c]/45 px-4 py-3 text-xs font-bold uppercase tracking-wider text-[#ffb45c] hover:bg-[#f97316]/10">Inspect controls <ArrowUpRight className="h-4 w-4" /></Link></div>;
+const TradePanel: React.FC<{ leverage: number; setLeverage: (value: number) => void }> = ({ leverage, setLeverage }) => <div className="animate-in fade-in duration-300"><DeskHeader Icon={TrendingUp} title="Private trading surface" status="Coming next" /><div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.025] p-4"><div className="flex items-end justify-between"><div><div className="font-mono text-[9px] uppercase tracking-wider text-[#887078]">Concept preview</div><div className="mt-2 font-space text-2xl font-semibold text-white">STRK / USD</div></div><span className="font-mono text-sm text-[#c4b5fd]">{leverage}x</span></div><div className="mt-5 h-20 rounded-xl bg-[linear-gradient(180deg,rgba(196,181,253,.15),transparent)]"><svg viewBox="0 0 520 100" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true"><path d="M0 80 C45 74 53 54 92 66 S140 74 172 48 S215 61 245 35 S292 50 320 28 S367 37 402 17 S452 29 520 8" fill="none" stroke="#c4b5fd" strokeWidth="3" /></svg></div><div className="mt-4 flex justify-between font-mono text-[9px] uppercase tracking-wider text-[#887078]"><span>Experimental leverage</span><span className="text-[#c4b5fd]">{leverage}x</span></div><input aria-label="Experimental leverage preview" type="range" min="1" max="50" value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} className="mt-2 w-full accent-[#c4b5fd]" /></div><p className="mt-4 font-mono text-[10px] leading-5 text-[#887078]">The trading surface is an exploration of what comes next. The live product today is the STRK20 privacy wallet.</p></div>;

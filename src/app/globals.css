@@ -67,9 +67,7 @@ select:focus-visible {
 .landing-shell {
   position: relative;
   isolation: isolate;
-  background:
-    radial-gradient(circle at 50% -8%, rgba(249, 115, 22, 0.14), transparent 34rem),
-    linear-gradient(180deg, #0A0705 0%, #100906 47%, #0A0705 100%);
+  background: #050405;
 }
 
 .landing-shell::before {
@@ -89,6 +87,129 @@ select:focus-visible {
     linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
   background-size: 72px 72px;
   mask-image: linear-gradient(to bottom, black, transparent 76%);
+}
+
+.landing-panel {
+  position: relative;
+  min-height: min(56rem, calc(100svh - 1.5rem));
+  margin: 0.8rem 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 2.25rem;
+  isolation: isolate;
+}
+
+.landing-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.13;
+  background-image: linear-gradient(135deg, rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(45deg, rgba(255,255,255,.18) 1px, transparent 1px);
+  background-size: 112px 112px, 76px 76px;
+  mask-image: linear-gradient(145deg, black, transparent 70%);
+}
+
+.landing-candy-light {
+  background: radial-gradient(circle at 50% 35%, #ffe9dc 0%, #ffc8b6 48%, #e89074 100%);
+  color: #22101a;
+}
+
+.landing-candy-orange {
+  background: radial-gradient(circle at 48% 20%, #ffbd78 0%, #ff754d 44%, #c93e39 100%);
+  color: #2b0a10;
+}
+
+.landing-candy-coral {
+  background: radial-gradient(circle at 45% 30%, #ffb1a0 0%, #fa6a5a 47%, #bb2c42 100%);
+  color: #2b0a10;
+}
+
+.landing-candy-night {
+  background: radial-gradient(circle at 45% 15%, #402027 0%, #160c16 46%, #070509 100%);
+  color: #f8f1ea;
+}
+
+.landing-scene-heading {
+  font-family: 'Bebas Neue', 'Impact', sans-serif;
+  font-size: clamp(5rem, 13vw, 12rem);
+  letter-spacing: -0.025em;
+  line-height: 0.8;
+}
+
+.landing-scene-nav {
+  position: sticky;
+  top: 1rem;
+  z-index: 40;
+  margin: 0 auto -5.5rem;
+  width: min(42rem, calc(100% - 2rem));
+}
+
+.landing-poster-copy {
+  max-width: 45rem;
+  text-align: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(1.15rem, 2.2vw, 1.65rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+.landing-blob {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+  filter: blur(0.2px) drop-shadow(0 30px 25px rgba(48, 7, 19, 0.24));
+}
+
+.landing-soft-orb {
+  width: 13rem;
+  height: 13rem;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 25%, #fff8f4 0 5%, #ffb39b 25%, #e84065 69%, #761b3b 100%);
+  box-shadow: inset -18px -20px 28px rgba(89, 13, 43, .35), inset 10px 8px 18px rgba(255,255,255,.5), 0 30px 40px rgba(70, 8, 32, .26);
+}
+
+.landing-sticker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 246, 240, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  padding: 0.45rem 0.8rem;
+  box-shadow: 0 10px 22px rgba(78, 16, 31, 0.12);
+  color: #5b2633;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.landing-dock-glow {
+  box-shadow: 0 15px 42px rgba(255, 54, 163, 0.28), 0 5px 15px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.6);
+}
+
+.landing-stat {
+  min-height: 3.15rem;
+  border: 1px solid rgba(255,255,255,.48);
+  color: #fff8f0;
+  box-shadow: 0 12px 30px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.35);
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.landing-stat:hover { transform: translateY(-2px); filter: brightness(1.06); }
+.landing-stat-purple { background: linear-gradient(110deg, #8729b8, #e839a5 60%, #ff7049); }
+.landing-stat-green { background: linear-gradient(110deg, #087b57, #12a967 60%, #5ddd91); }
+
+.landing-nav-glass {
+  background: rgba(255, 247, 243, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 18px 38px rgba(76, 22, 35, 0.16), inset 0 1px rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
 }
 
 .landing-glass {
@@ -257,6 +378,20 @@ select:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-panel {
+    min-height: 45rem;
+    margin: 0.55rem 0.55rem;
+    border-radius: 1.5rem;
+  }
+
+  .landing-scene-nav {
+    top: 0.55rem;
+    margin-bottom: -4.8rem;
+    width: calc(100% - 1.1rem);
   }
 }
 

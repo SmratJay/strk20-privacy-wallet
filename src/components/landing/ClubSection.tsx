@@ -2,48 +2,30 @@
 
 import React from 'react';
 import { ArrowUpRight, CircleDot, EyeOff, Sparkles } from 'lucide-react';
+import { FlameHeartSticker, GoatSticker, PixelPointerSticker, TarotBookSticker } from './InteractiveStickers';
 
-interface ClubSectionProps {
-  onOpenWaitlistModal: () => void;
-}
-
+interface ClubSectionProps { onOpenWaitlistModal: () => void; }
 const PASSES = [
-  { label: 'ORRANGE / PASS', title: 'GENESIS', meta: 'EARLY ACCESS', className: 'from-[#ffb45c] via-[#d76a24] to-[#6f2a12]' },
-  { label: 'ORRANGE / PASS', title: 'ZK GHOST', meta: 'CONCEPT TIER', className: 'from-[#f1d2b5] via-[#aa6542] to-[#3a1a12]' },
-  { label: 'ORRANGE / PASS', title: 'NIGHT SHIFT', meta: 'COMMUNITY LAYER', className: 'from-[#4d2113] via-[#a23e19] to-[#f97316]' },
+  { title: 'GENESIS', meta: 'EARLY ACCESS', color: 'from-[#ffdb80] via-[#f47a54] to-[#8c2e51]' },
+  { title: 'ZK GHOST', meta: 'CONCEPT TIER', color: 'from-[#ffd6c4] via-[#bf5b77] to-[#3a183a]' },
+  { title: 'NIGHT SHIFT', meta: 'COMMUNITY LAYER', color: 'from-[#ff9c74] via-[#d74748] to-[#6c193e]' },
 ];
 
 export const ClubSection: React.FC<ClubSectionProps> = ({ onOpenWaitlistModal }) => (
-  <section id="club" className="relative overflow-hidden border-t border-white/[0.07] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
-    <div className="pointer-events-none absolute right-[-10rem] top-1/4 h-[32rem] w-[32rem] rounded-full bg-[#f97316]/10 blur-[130px]" />
-    <div className="relative mx-auto max-w-6xl">
-      <div className="grid gap-12 lg:grid-cols-[0.7fr_1.3fr] lg:items-end lg:gap-24">
-        <div>
-          <div className="landing-kicker mb-6 flex items-center gap-3"><span className="h-px w-8 bg-[#ffb45c]/70" />04 / THE CIRCLE</div>
-          <h2 className="landing-display text-[clamp(4.8rem,11vw,9rem)] text-[#f8f1ea]">KEEP<br /><span className="text-[#ffb45c]">IT PRIVATE.</span></h2>
-        </div>
-        <div className="max-w-xl lg:pb-2">
-          <p className="font-space text-2xl font-semibold leading-[1.05] tracking-[-0.045em] text-[#f8f1ea] sm:text-4xl">A product layer for people who notice who is watching.</p>
-          <p className="mt-6 max-w-lg text-sm leading-6 text-[#b8a59a] sm:text-base">Passes, rituals, and community experiments will grow around the wallet over time. For now, this is the first frame: a quiet invitation to help shape it.</p>
-        </div>
+  <section id="club" className="landing-panel landing-candy-orange flex min-h-[calc(100svh-2rem)] items-center justify-center px-5 py-32 sm:px-8 sm:py-40">
+    <div className="absolute left-[4%] top-[8%] hidden rotate-[-12deg] sm:block"><TarotBookSticker size={120} /></div>
+    <div className="absolute right-[5%] top-[12%] hidden rotate-12 sm:block"><PixelPointerSticker size={72} /></div>
+    <div className="absolute bottom-[8%] left-[5%] hidden rotate-[-10deg] md:block"><FlameHeartSticker size={128} /></div>
+    <div className="absolute bottom-[11%] right-[8%] hidden rotate-6 md:block"><GoatSticker size={110} /></div>
+    <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center text-center">
+      <div className="landing-sticker-label mb-8 border-white/45 bg-white/25 text-[#64272d]"><span className="h-2 w-2 rounded-full bg-[#ef315a]" /> ORRANGE / COMMUNITY LAYER</div>
+      <h2 className="landing-scene-heading max-w-5xl text-[#5b1924]">WELCOME TO<br /><span className="text-[#fff4ed]">THE QUIET CLUB.</span></h2>
+      <p className="landing-poster-copy mx-auto mt-9 max-w-2xl text-[#702d35]">Passes, rituals, and culture for people who know privacy is not boring — it is a choice.</p>
+      <div className="mt-14 grid w-full max-w-5xl gap-4 md:grid-cols-3">
+        {PASSES.map((pass, index) => <div key={pass.title} className={`group relative min-h-[18rem] overflow-hidden rounded-[1.7rem] border border-white/60 bg-gradient-to-br ${pass.color} p-5 text-left shadow-[0_24px_44px_rgba(105,26,35,.18)] transition-transform duration-300 hover:-translate-y-2 ${index === 1 ? 'md:translate-y-8' : ''}`}><div className="absolute -right-12 -top-10 h-36 w-36 rounded-full border-[16px] border-white/25 transition-transform duration-500 group-hover:scale-125" /><div className="absolute bottom-9 right-5 opacity-25"><EyeOff className="h-24 w-24" /></div><div className="relative flex items-center justify-between font-mono text-[9px] font-bold uppercase tracking-[0.15em] text-[#33131c]"><span>ORRANGE / PASS</span><span>0{index + 1}</span></div><div className="relative mt-24"><div className="font-bebas text-5xl leading-none text-[#2f1119]">{pass.title}</div><div className="mt-3 flex items-center gap-2 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[#5c222d]"><CircleDot className="h-3 w-3" /> {pass.meta}</div></div><div className="absolute bottom-5 left-5 right-5 flex items-center justify-between border-t border-black/15 pt-3 font-mono text-[9px] font-bold uppercase tracking-wider text-[#5c222d]"><span>ORRANGE.LABS</span><span>CONCEPT</span></div></div>)}
       </div>
-
-      <div className="mt-16 grid gap-4 md:grid-cols-3">
-        {PASSES.map((pass, index) => (
-          <div key={pass.title} className={`group relative min-h-[20rem] overflow-hidden rounded-[1.6rem] border border-white/10 bg-gradient-to-br ${pass.className} p-5 text-[#170b06] shadow-2xl transition-transform duration-300 hover:-translate-y-2 ${index === 1 ? 'md:translate-y-10' : ''}`}>
-            <div className="absolute -right-12 -top-14 h-44 w-44 rounded-full border-[18px] border-white/20 transition-transform duration-500 group-hover:scale-125" />
-            <div className="absolute bottom-8 right-6 opacity-25"><EyeOff className="h-24 w-24" strokeWidth={1} /></div>
-            <div className="relative flex items-center justify-between font-mono text-[9px] font-bold uppercase tracking-[0.15em]"><span>{pass.label}</span><span>0{index + 1}</span></div>
-            <div className="relative mt-28 sm:mt-32"><div className="font-bebas text-5xl leading-none tracking-[0.02em]">{pass.title}</div><div className="mt-3 flex items-center gap-2 font-mono text-[9px] font-bold uppercase tracking-[0.14em]"><CircleDot className="h-3 w-3" /> {pass.meta}</div></div>
-            <div className="absolute bottom-5 left-5 right-5 flex items-center justify-between border-t border-black/20 pt-3 font-mono text-[9px] font-bold uppercase tracking-wider"><span>ORRANGE.LABS</span><span>NOT A CLAIM</span></div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-24 grid gap-8 border-t border-white/10 pt-8 sm:grid-cols-[1fr_auto] sm:items-end">
-        <div className="flex max-w-2xl items-start gap-4"><span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#ffb45c]/30 bg-[#f97316]/10 text-[#ffb45c]"><Sparkles className="h-4 w-4" /></span><div><div className="font-space text-lg font-semibold text-[#f8f1ea]">The culture layer is still being written.</div><p className="mt-2 text-sm leading-6 text-[#8e7b70]">Join early, see the real wallet first, and get a front-row seat as the rest takes shape.</p></div></div>
-        <button type="button" onClick={onOpenWaitlistModal} className="landing-button inline-flex items-center justify-center gap-2 rounded-full bg-[#f8f1ea] px-5 py-3.5 text-sm font-bold text-[#1b0e08] hover:bg-[#ffb45c]">Get on the list <ArrowUpRight className="h-4 w-4" /></button>
-      </div>
+      <div className="mt-24 flex max-w-3xl flex-col items-center gap-6 sm:flex-row sm:justify-between sm:text-left"><div className="flex items-start gap-3"><Sparkles className="mt-1 h-5 w-5 shrink-0 text-[#7a2231]" /><div><div className="font-space text-lg font-bold text-[#4d1b26]">The culture layer is still being written.</div><p className="mt-1 text-sm leading-6 text-[#783943]">Join early and get a front-row seat as ORRANGE grows around the wallet.</p></div></div><button type="button" onClick={onOpenWaitlistModal} className="landing-button inline-flex shrink-0 items-center gap-2 rounded-full bg-[#21121e] px-5 py-3.5 text-sm font-bold text-white hover:bg-[#f8f1ea] hover:text-[#21121e]">Get on the list <ArrowUpRight className="h-4 w-4" /></button></div>
+      <div className="mt-8 flex w-full max-w-5xl justify-between px-2 font-mono text-[9px] uppercase tracking-[0.14em] text-[#803b47]"><span>04 / CLUB</span><span>Concepts, not claims</span></div>
     </div>
   </section>
 );
