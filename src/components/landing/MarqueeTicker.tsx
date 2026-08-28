@@ -7,27 +7,25 @@ interface MarqueeTickerProps {
 }
 
 export const MarqueeTicker: React.FC<MarqueeTickerProps> = ({
-  customText = 'ORRANGE WAITLIST IS LIVE',
+  customText = 'ORRANGE / PRIVACY WALLET',
 }) => {
   const items = [
-    'ORRANGE WAITLIST IS LIVE',
-    'CONFIDENTIAL CASH ON STARKNET',
-    '1,000 FOUNDER PASSES CLAIMED',
-    'ZERO KNOWLEDGE PRIVACY',
-    'ORRANGE WAITLIST IS LIVE',
-    'STEALTH TRANSFERS & PRIVATE PERPS',
-    '50,000 OF 50,000 SEATS',
-    'CLIMB THE LADDER NOW',
+    customText,
+    'SHIELD / SEND / RECEIVE',
+    'STRK20 PRIVATE PAYMENTS',
+    'STARKNET NATIVE',
+    'WALLET-OWNED KEYS',
+    'TESTNET PREVIEW',
   ];
 
   return (
-    <div className="w-full overflow-hidden bg-gradient-to-r from-[#8F3F1F] via-[#C45B2C] to-[#A94A22] text-white py-2 border-b border-[#F08A3C]/30 select-none shadow-lg relative z-50">
+    <div className="relative z-50 w-full select-none overflow-hidden border-b border-[#ffb45c]/10 bg-[#0d0906]/90 py-2.5 text-[#a99589]">
       <div className="flex w-max animate-marquee space-x-8 whitespace-nowrap">
         {/* Double repeated sequence for smooth infinite scrolling */}
         {[...items, ...items, ...items].map((text, idx) => (
-          <div key={idx} className="flex items-center space-x-6 text-xs sm:text-[13px] font-syne font-extrabold tracking-wider uppercase text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+          <div key={idx} className="flex items-center space-x-6 font-mono text-[9px] font-bold uppercase tracking-[0.16em] sm:text-[10px]">
             <span>{text}</span>
-            <span className="text-[#fed7aa] text-[10px] transform rotate-45 inline-block">✦</span>
+            <span className="inline-block h-1 w-1 rotate-45 bg-[#ffb45c]" />
           </div>
         ))}
       </div>

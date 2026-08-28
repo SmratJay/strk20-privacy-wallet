@@ -7,9 +7,9 @@ import { PrivyAuthProvider } from '@/providers/PrivyAuthProvider';
 import { PrivyWalletProvider } from '@/context/PrivyWalletContext';
 
 export const metadata: Metadata = {
-  title: 'STRK20 Private Wallet',
+  title: 'ORRANGE — Starknet privacy wallet',
   description:
-    'Receive privately, spend freely. A consumer privacy wallet for STRK20 on Starknet.',
+    'A consumer privacy wallet for shielded STRK20 payments on Starknet.',
 };
 
 export default function RootLayout({

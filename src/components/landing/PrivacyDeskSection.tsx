@@ -2,330 +2,151 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { 
-  TrendingUp, 
-  ShieldCheck, 
-  QrCode, 
-  Key, 
-  ArrowRight, 
-  Sparkles, 
-  Lock, 
-  Layers,
+import {
+  ArrowRight,
   ArrowUpRight,
-  CheckCircle2,
-  Terminal
+  EyeOff,
+  KeyRound,
+  LockKeyhole,
+  ScanLine,
+  ShieldCheck,
+  TrendingUp,
 } from 'lucide-react';
-import { 
-  NoCapSticker, 
-  GoatSticker, 
-  MeltingTongueSticker, 
-  PixelShadesSticker 
-} from './InteractiveStickers';
+
+type DeskTab = 'TRADE' | 'SHIELD' | 'STEALTH' | 'COLLECT';
+
+const TABS: { id: DeskTab; label: string; Icon: typeof ShieldCheck }[] = [
+  { id: 'TRADE', label: 'Trade', Icon: TrendingUp },
+  { id: 'SHIELD', label: 'Shield', Icon: ShieldCheck },
+  { id: 'STEALTH', label: 'Send', Icon: EyeOff },
+  { id: 'COLLECT', label: 'Keys', Icon: KeyRound },
+];
 
 export const PrivacyDeskSection: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'TRADE' | 'SHIELD' | 'STEALTH' | 'COLLECT'>('TRADE');
+  const [activeTab, setActiveTab] = useState<DeskTab>('SHIELD');
   const [leverage, setLeverage] = useState(25);
-  const [stealthAmount, setStealthAmount] = useState('50');
-  const [stealthCreated, setStealthCreated] = useState(false);
 
   return (
-    <section 
-      id="desk" 
-      className="relative min-h-screen flex flex-col items-center justify-center px-4 py-20 sm:py-28 overflow-hidden"
-      style={{
-        background: 'radial-gradient(ellipse at 50% 40%, #A94A22 0%, #8F3F1F 35%, #0F0A07 85%)'
-      }}
-    >
-      {/* Subtle Pixel Grid Texture */}
-      <div className="absolute inset-0 pixel-grid-bg opacity-30 pointer-events-none" />
+    <section id="desk" className="relative overflow-hidden border-t border-white/[0.07] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_35%,rgba(184,76,27,0.24),transparent_34rem)]" />
+      <div className="landing-grid pointer-events-none absolute inset-0 opacity-25" />
 
-      {/* Floating Culture Stickers matching Screenshot 3 */}
-      <div className="absolute top-12 left-4 sm:left-14 lg:left-24 z-20 animate-float-medium hidden sm:block">
-        <MeltingTongueSticker size={88} />
-      </div>
-
-      <div className="absolute top-16 left-32 sm:left-48 lg:left-64 z-20 animate-float-slow hidden md:block">
-        <NoCapSticker size={95} />
-      </div>
-
-      <div className="absolute top-12 right-4 sm:right-14 lg:right-24 z-20 animate-float-slow hidden sm:block">
-        <PixelShadesSticker size={110} />
-      </div>
-
-      <div className="absolute top-28 right-16 sm:right-32 lg:right-48 z-20 animate-float-medium hidden md:block">
-        <GoatSticker size={85} />
-      </div>
-
-      {/* Main Content */}
-      <div className="relative z-10 max-w-5xl mx-auto flex flex-col items-center text-center space-y-8 w-full">
-        
-        {/* Massive Condensed Headline */}
-        <div className="space-y-1">
-          <h2 className="font-bebas text-6xl xs:text-7xl sm:text-8xl md:text-9xl text-[#FBF7F4] leading-[0.88] tracking-tight uppercase select-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.7)]">
-            YOUR ENTIRE <br />
-            <span className="text-white drop-shadow-[0_4px_16px_rgba(255,255,255,0.4)]">
-              PRIVACY DESK.
-            </span>
+      <div className="relative mx-auto grid max-w-6xl gap-14 lg:grid-cols-[0.72fr_1.28fr] lg:items-start lg:gap-24">
+        <div className="lg:sticky lg:top-28">
+          <div className="landing-kicker mb-6 flex items-center gap-3"><span className="h-px w-8 bg-[#ffb45c]/70" />03 / PRIVACY DESK</div>
+          <h2 className="landing-display max-w-lg text-[clamp(4.8rem,10vw,8.8rem)] text-[#f8f1ea]">
+            YOUR<br /><span className="text-[#ffb45c]">QUIET</span><br />DESK.
           </h2>
+          <p className="mt-8 max-w-sm text-base leading-7 text-[#b8a59a] sm:text-lg">
+            A single place to make funds private, send a shielded payment, and see the boundary between your wallet and the public chain.
+          </p>
+          <div className="mt-10 space-y-4 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">
+            <div className="flex items-center justify-between"><span>01 / Wallet</span><span className="text-[#ffb45c]">Owns the keys</span></div>
+            <div className="flex items-center justify-between"><span>02 / STRK20</span><span className="text-[#ffb45c]">Private pool</span></div>
+            <div className="flex items-center justify-between"><span>03 / Dapp</span><span className="text-[#ffb45c]">Never sees secrets</span></div>
+          </div>
         </div>
 
-        {/* Descriptive Pitch */}
-        <p className="font-sans text-sm sm:text-base md:text-lg text-zinc-200/90 max-w-2xl leading-relaxed font-medium">
-          Shielded STRK, stealth transfers, private perpetuals &amp; compliance keys — one clean, fast desk built for how the new generation actually moves money.
-        </p>
+        <div className="w-full">
+          <div className="landing-window rounded-[1.8rem] p-3 sm:p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-4 font-mono text-[9px] uppercase tracking-[0.14em] text-[#75645a]">
+              <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />ORRANGE / INTERACTIVE PREVIEW</span>
+              <span>NO SECRETS IN THE DAPP</span>
+            </div>
+            <div className="rounded-[1.35rem] border border-white/10 bg-[#0d0906] p-4 sm:p-6">
+              <div className="flex flex-col gap-5 border-b border-white/10 pb-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-space text-xl font-semibold tracking-[-0.04em] text-[#f8f1ea]">Privacy Desk</div>
+                  <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">Choose a surface to inspect</div>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border border-[#ffb45c]/20 bg-[#f97316]/10 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-[#ffb45c]"><ScanLine className="h-3 w-3" /> Sepolia preview</div>
+              </div>
 
-        {/* Floating Tab Switcher Pill Dock (Screenshot 3 & 4) */}
-        <div className="glass-pill rounded-full p-1.5 flex items-center gap-1 sm:gap-2 shadow-2xl border border-white/20 bg-black/40 backdrop-blur-2xl">
-          <button
-            onClick={() => setActiveTab('TRADE')}
-            className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-syne font-black transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'TRADE'
-                ? 'bg-white text-black shadow-lg scale-105'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            <span>TRADE</span>
-          </button>
+              <div className="mt-5 grid grid-cols-4 gap-1 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-1" role="tablist" aria-label="Privacy desk modes">
+                {TABS.map(({ id, label, Icon }) => (
+                  <button key={id} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all sm:gap-2 sm:text-[10px] ${activeTab === id ? 'bg-[#f8f1ea] text-[#1b0e08] shadow-lg' : 'text-[#8e7b70] hover:bg-white/[0.05] hover:text-[#f8f1ea]'}`}>
+                    <Icon className="h-3.5 w-3.5" /> <span>{label}</span>
+                  </button>
+                ))}
+              </div>
 
-          <button
-            onClick={() => setActiveTab('SHIELD')}
-            className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-syne font-black transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'SHIELD'
-                ? 'bg-white text-black shadow-lg scale-105'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>SHIELD</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('STEALTH')}
-            className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-syne font-black transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'STEALTH'
-                ? 'bg-white text-black shadow-lg scale-105'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <QrCode className="w-4 h-4" />
-            <span>STEALTH</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('COLLECT')}
-            className={`px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-syne font-black transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'COLLECT'
-                ? 'bg-white text-black shadow-lg scale-105'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <Key className="w-4 h-4" />
-            <span>COLLECT</span>
-          </button>
-        </div>
-
-        {/* Live Interactive Desk Simulator Card */}
-        <div className="w-full max-w-3xl glass-card-amber rounded-3xl p-6 sm:p-8 shadow-[0_25px_60px_rgba(0,0,0,0.8)] border border-[#C45B2C]/40 text-left transition-all relative overflow-hidden">
-          
-          {/* Active Tab 1: TRADE & PERPS */}
-          {activeTab === 'TRADE' && (
-            <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#C45B2C]/20 border border-[#C45B2C]/40 flex items-center justify-center text-[#F08A3C]">
-                    <TrendingUp className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-base sm:text-lg font-syne font-bold text-white flex items-center gap-2">
-                      <span>STRK-PERP</span>
-                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                        +14.82%
-                      </span>
+              <div className="mt-6 min-h-[23rem]">
+                {activeTab === 'SHIELD' && (
+                  <div className="animate-in fade-in duration-300">
+                    <DeskHeader icon={<ShieldCheck className="h-5 w-5" />} title="Make funds private" status="LIVE FLOW" tone="orange" />
+                    <div className="mt-7 grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                      <DeskMetric label="FROM" value="Public balance" detail="Your connected wallet" />
+                      <ArrowRight className="hidden h-5 w-5 text-[#ffb45c] sm:block" />
+                      <DeskMetric label="TO" value="Private note" detail="STRK20 privacy pool" accent />
                     </div>
-                    <div className="text-xs font-mono text-zinc-400">Zero-Knowledge Settlement // 0-Slippage</div>
+                    <div className="mt-7 rounded-2xl border border-[#ffb45c]/20 bg-[#f97316]/[0.07] p-4 font-mono text-xs text-[#c8b8ad]">
+                      <div className="flex items-center justify-between"><span className="text-[#75645a]">What happens</span><LockKeyhole className="h-4 w-4 text-[#ffb45c]" /></div>
+                      <p className="mt-3 max-w-xl leading-6">Your privacy wallet builds the note, generates the proof, and asks you to confirm. ORRANGE only requests the STRK20 action through the Wallet API.</p>
+                    </div>
+                    <Link href="/send?mode=deposit" className="landing-button mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#ffb45c] px-5 py-3.5 text-sm font-bold text-[#1b0e08] hover:bg-[#f8f1ea]">Make funds private <ArrowUpRight className="h-4 w-4" /></Link>
                   </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-lg font-bold text-[#FBF7F4]">$1.428 STRK</div>
-                  <div className="text-[10px] font-mono text-zinc-500">24H VOL $8.4M</div>
-                </div>
-              </div>
+                )}
 
-              {/* Leverage Slider */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs font-mono text-zinc-300">
-                  <span>CONFIDENTIAL LEVERAGE</span>
-                  <span className="font-bold text-[#F08A3C]">{leverage}x</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="100"
-                  value={leverage}
-                  onChange={(e) => setLeverage(Number(e.target.value))}
-                  className="w-full accent-[#F08A3C] cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] font-mono text-zinc-500">
-                  <span>1x Spot</span>
-                  <span>25x</span>
-                  <span>50x</span>
-                  <span>100x Degen</span>
-                </div>
-              </div>
+                {activeTab === 'STEALTH' && (
+                  <div className="animate-in fade-in duration-300">
+                    <DeskHeader icon={<EyeOff className="h-5 w-5" />} title="Private transfer" status="LIVE FLOW" tone="green" />
+                    <div className="mt-7 space-y-3">
+                      <DeskMetric label="RECIPIENT" value="Starknet address" detail="Registered for private receiving" />
+                      <DeskMetric label="PAYMENT" value="Shielded STRK20" detail="Amount and token stay inside the private pool" accent />
+                    </div>
+                    <div className="mt-7 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300"><ArrowUpRight className="h-4 w-4" /></span><div><div className="font-space text-sm font-semibold text-[#f8f1ea]">Your wallet handles the sensitive work</div><div className="mt-1 font-mono text-[10px] text-[#75645a]">NOTES / DISCOVERY / PROOFS</div></div></div>
+                    <Link href="/send" className="landing-button mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#f8f1ea] px-5 py-3.5 text-sm font-bold text-[#1b0e08] hover:bg-[#ffb45c]">Open private send <ArrowUpRight className="h-4 w-4" /></Link>
+                  </div>
+                )}
 
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-4">
-                <Link
-                  href="/wallet"
-                  className="py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-syne font-black text-sm text-center transition-all shadow-lg flex items-center justify-center gap-2"
-                >
-                  <span>Private Long STRK</span>
-                  <ArrowUpRight className="w-4 h-4" />
-                </Link>
-                <Link
-                  href="/wallet"
-                  className="py-3 rounded-2xl bg-rose-500 hover:bg-rose-400 text-white font-syne font-black text-sm text-center transition-all shadow-lg flex items-center justify-center gap-2"
-                >
-                  <span>Private Short STRK</span>
-                  <ArrowUpRight className="w-4 h-4" />
-                </Link>
+                {activeTab === 'TRADE' && (
+                  <div className="animate-in fade-in duration-300">
+                    <DeskHeader icon={<TrendingUp className="h-5 w-5" />} title="Private trading surface" status="COMING NEXT" tone="purple" />
+                    <div className="mt-7 rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+                      <div className="flex items-end justify-between"><div><div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#75645a]">Concept preview</div><div className="mt-2 font-space text-3xl font-semibold text-[#f8f1ea]">STRK / USD</div></div><div className="font-mono text-sm text-[#ffb45c]">{leverage}x</div></div>
+                      <div className="mt-6 h-28 rounded-xl bg-[linear-gradient(180deg,rgba(139,92,246,.13),transparent)] p-2"><svg viewBox="0 0 520 130" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true"><path d="M0 102 C42 96,48 76,80 84 S126 92,153 64 S194 76,222 48 S267 62,300 42 S340 49,370 23 S420 38,456 18 S490 26,520 9" fill="none" stroke="#c4b5fd" strokeWidth="3" /><path d="M0 102 C42 96,48 76,80 84 S126 92,153 64 S194 76,222 48 S267 62,300 42 S340 49,370 23 S420 38,456 18 S490 26,520 9 V130 H0Z" fill="#8b5cf6" opacity=".1" /></svg></div>
+                      <div className="mt-5"><div className="flex justify-between font-mono text-[10px] uppercase tracking-wider text-[#75645a]"><span>Experimental leverage</span><span className="text-[#c4b5fd]">{leverage}x</span></div><input aria-label="Experimental leverage preview" type="range" min="1" max="50" value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} className="mt-3 w-full accent-[#c4b5fd]" /></div>
+                    </div>
+                    <p className="mt-5 font-mono text-[10px] leading-5 text-[#75645a]">The trading surface is shown as an exploration of what comes next. The live product today is the STRK20 privacy wallet.</p>
+                  </div>
+                )}
+
+                {activeTab === 'COLLECT' && (
+                  <div className="animate-in fade-in duration-300">
+                    <DeskHeader icon={<KeyRound className="h-5 w-5" />} title="Selective access" status="MODEL" tone="amber" />
+                    <div className="mt-7 grid gap-3 sm:grid-cols-2">
+                      <DeskMetric label="VIEWING KEYS" value="Held by wallet" detail="The dapp never stores secrets" />
+                      <DeskMetric label="PROOFS" value="Generated on request" detail="Confirm in your privacy wallet" accent />
+                    </div>
+                    <div className="mt-7 border-l border-[#ffb45c]/50 pl-4 font-mono text-xs leading-6 text-[#b8a59a]">Privacy is not a promise to disappear. It is a boundary you can understand, operate, and selectively share when the product supports it.</div>
+                    <Link href="/settings" className="landing-button mt-7 inline-flex items-center gap-2 rounded-full border border-[#ffb45c]/40 px-5 py-3 text-xs font-bold uppercase tracking-[0.1em] text-[#ffb45c] hover:bg-[#f97316]/10">Inspect wallet controls <ArrowUpRight className="h-4 w-4" /></Link>
+                  </div>
+                )}
               </div>
             </div>
-          )}
-
-          {/* Active Tab 2: SHIELD & SWAP */}
-          {activeTab === 'SHIELD' && (
-            <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-500/40 flex items-center justify-center text-violet-300">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-base sm:text-lg font-syne font-bold text-white">Confidential Note Pool</div>
-                    <div className="text-xs font-mono text-zinc-400">Garaga Groth16 Snark Proof Verifier</div>
-                  </div>
-                </div>
-                <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/30">
-                  100% UNLINKABLE
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-black/40 border border-zinc-800 space-y-3 font-mono text-xs text-zinc-300">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Deposit Asset:</span>
-                  <span className="text-white font-bold">1,000 STRK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">UTXO Commitment:</span>
-                  <span className="text-violet-300">0x7f4a...92b1 (Shielded)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Anonymity Set:</span>
-                  <span className="text-emerald-400">4,812 Active Notes</span>
-                </div>
-              </div>
-
-              <Link
-                href="/wallet"
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#C45B2C] to-[#F08A3C] text-black font-syne font-black text-sm text-center block transition-all shadow-lg hover:brightness-110"
-              >
-                Shield STRK into Confidential Pool ⚡
-              </Link>
-            </div>
-          )}
-
-          {/* Active Tab 3: STEALTH CASH */}
-          {activeTab === 'STEALTH' && (
-            <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#F08A3C]/20 border border-[#F08A3C]/40 flex items-center justify-center text-[#F08A3C]">
-                    <QrCode className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-base sm:text-lg font-syne font-bold text-white">Stealth Cash Generator</div>
-                    <div className="text-xs font-mono text-zinc-400">One-time disposable burner pay links</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="text-xs font-mono text-zinc-400">Amount to send secretly:</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={stealthAmount}
-                    onChange={(e) => setStealthAmount(e.target.value)}
-                    className="flex-1 bg-black/60 border border-zinc-700 rounded-xl px-4 py-2.5 font-mono text-white text-sm focus:outline-none focus:border-[#F08A3C]"
-                  />
-                  <span className="font-syne font-bold text-white px-3 py-2 bg-zinc-800 rounded-xl">STRK</span>
-                </div>
-              </div>
-
-              {stealthCreated ? (
-                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-2 font-mono text-xs">
-                  <div className="text-emerald-300 font-bold flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Stealth Burner Link Created!</span>
-                  </div>
-                  <div className="text-zinc-300 break-all bg-black/50 p-2 rounded border border-zinc-800">
-                    https://orrange.cash/claim#key=0x8f2a...c914
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setStealthCreated(true)}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#D76A24] to-[#F08A3C] text-black font-syne font-black text-sm text-center block transition-all shadow-lg hover:brightness-110"
-                >
-                  Generate One-Time Stealth Link 🔗
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Active Tab 4: COLLECT & KEYS */}
-          {activeTab === 'COLLECT' && (
-            <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300">
-                    <Key className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-base sm:text-lg font-syne font-bold text-white">Selective Compliance Keys</div>
-                    <div className="text-xs font-mono text-zinc-400">Prove solvency to auditors without doxxing history</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
-                <div className="p-3 rounded-xl bg-black/40 border border-zinc-800 space-y-1">
-                  <div className="text-zinc-400 font-bold">VIEWING KEY</div>
-                  <div className="text-zinc-500 text-[10px] break-all">vk_sn_08a7f1...e901</div>
-                  <div className="text-[#F08A3C] text-[10px]">Read-only audit access</div>
-                </div>
-                <div className="p-3 rounded-xl bg-black/40 border border-zinc-800 space-y-1">
-                  <div className="text-zinc-400 font-bold">COMPLIANCE PASSPORT</div>
-                  <div className="text-emerald-400 text-[10px]">OFAC &amp; Clean Funds Verified</div>
-                  <div className="text-zinc-500 text-[10px]">Garaga Zero-Knowledge ZK-Pass</div>
-                </div>
-              </div>
-
-              <Link
-                href="/wallet"
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#8F3F1F] via-[#C45B2C] to-[#F08A3C] text-white font-syne font-black text-sm text-center block transition-all shadow-lg hover:brightness-110"
-              >
-                Launch Wallet &amp; Export Audit Keys
-              </Link>
-            </div>
-          )}
-
+            <div className="flex items-center justify-between px-2 pt-3 font-mono text-[9px] uppercase tracking-[0.13em] text-[#75645a]"><span>Product preview / no fabricated balances</span><Link href="/wallet" className="text-[#ffb45c] hover:text-[#f8f1ea]">Launch wallet →</Link></div>
+          </div>
         </div>
-
       </div>
     </section>
   );
 };
+
+const DeskHeader: React.FC<{ icon: React.ReactNode; title: string; status: string; tone: 'orange' | 'green' | 'purple' | 'amber' }> = ({ icon, title, status, tone }) => {
+  const toneClasses = {
+    orange: 'bg-[#f97316]/15 text-[#ffb45c] border-[#f97316]/30',
+    green: 'bg-emerald-400/10 text-emerald-300 border-emerald-400/25',
+    purple: 'bg-violet-400/10 text-violet-300 border-violet-400/25',
+    amber: 'bg-amber-300/10 text-amber-200 border-amber-300/25',
+  }[tone];
+
+  return <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl border ${toneClasses}`}>{icon}</span><div><h3 className="font-space text-lg font-semibold text-[#f8f1ea]">{title}</h3><div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#75645a]">STRK20 / wallet api</div></div></div><span className={`rounded-full border px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider ${toneClasses}`}>{status}</span></div>;
+};
+
+const DeskMetric: React.FC<{ label: string; value: string; detail: string; accent?: boolean }> = ({ label, value, detail, accent }) => (
+  <div className={`rounded-2xl border p-4 ${accent ? 'border-[#ffb45c]/25 bg-[#f97316]/[0.07]' : 'border-white/10 bg-white/[0.025]'}`}>
+    <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-[#75645a]">{label}</div>
+    <div className={`mt-3 font-space text-base font-semibold ${accent ? 'text-[#ffb45c]' : 'text-[#f8f1ea]'}`}>{value}</div>
+    <div className="mt-1 text-xs leading-5 text-[#8e7b70]">{detail}</div>
+  </div>
+);

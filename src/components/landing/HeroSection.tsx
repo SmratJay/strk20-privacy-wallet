@@ -1,14 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Sparkles, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { 
-  EyeballSticker, 
-  MintedCoinSticker, 
-  FlameHeartSticker, 
-  PixelShadesSticker,
-  NoCapSticker 
-} from './InteractiveStickers';
+import Link from 'next/link';
+import { ArrowRight, ArrowUpRight, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { EyeballSticker, MintedCoinSticker } from './InteractiveStickers';
 
 interface HeroSectionProps {
   onJoinWaitlist: (input: string) => void;
@@ -21,146 +16,143 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [inputMode, setInputMode] = useState<'phone' | 'wallet'>('phone');
-  const [isSubmitted, setIsSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!inputValue.trim()) return;
-    onJoinWaitlist(inputValue);
-    setIsSubmitted(true);
+    onJoinWaitlist(inputValue.trim());
   };
 
   return (
-    <section id="hero" className="relative min-h-[92vh] flex flex-col items-center justify-center px-4 py-12 sm:py-20 overflow-hidden">
-      
-      {/* Background Soft Mesh Glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[650px] rounded-full bg-gradient-to-tr from-[#8F3F1F]/30 via-[#C45B2C]/20 to-[#F08A3C]/10 blur-[130px] -z-10" />
+    <section id="hero" className="relative overflow-hidden px-5 pb-20 pt-16 sm:px-8 sm:pb-28 sm:pt-24 lg:px-10 lg:pb-32 lg:pt-28">
+      <div className="landing-grid pointer-events-none absolute inset-0 opacity-60" />
+      <div className="pointer-events-none absolute left-1/2 top-24 h-[28rem] w-[28rem] -translate-x-1/2 rounded-full bg-orange-500/10 blur-[120px]" />
+      <div className="pointer-events-none absolute -right-40 top-40 h-96 w-96 rounded-full bg-[#9a3e18]/20 blur-[120px]" />
+
+      <div className="pointer-events-none absolute left-[4%] top-20 z-10 hidden animate-float-slow sm:block lg:left-[8%]">
+        <MintedCoinSticker size={76} />
+      </div>
+      <div className="pointer-events-none absolute right-[5%] top-28 z-10 hidden animate-float-medium sm:block lg:right-[9%]">
+        <EyeballSticker size={70} />
       </div>
 
-      {/* Floating 3D & Culture Stickers matching Screenshot 1 */}
-      
-      {/* Top Left: Minted Metallic Coin */}
-      <div className="absolute top-12 sm:top-16 left-3 sm:left-12 lg:left-24 z-20 animate-float-slow hidden xs:block">
-        <MintedCoinSticker size={82} />
-      </div>
+      <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[minmax(0,0.92fr)_minmax(420px,0.78fr)] lg:gap-20">
+        <div className="max-w-2xl">
+          <div className="landing-kicker mb-6 flex items-center gap-3">
+            <span className="h-px w-8 bg-[#ffb45c]/70" />
+            <span>STRK20 / STARKNET SEPOLIA</span>
+          </div>
 
-      {/* Top Right: Mouse-tracking 3D Eyeball */}
-      <div className="absolute top-10 sm:top-14 right-4 sm:right-14 lg:right-28 z-20 animate-float-medium">
-        <EyeballSticker size={76} />
-      </div>
+          <h1 className="landing-display text-[clamp(7rem,22vw,15rem)] text-[#f8f1ea] drop-shadow-[0_24px_55px_rgba(0,0,0,0.52)]">
+            ORRANGE
+          </h1>
 
-      {/* Bottom Left: Hot Chrome Flame Heart */}
-      <div className="absolute bottom-24 sm:bottom-28 left-4 sm:left-14 lg:left-28 z-20 animate-float-medium hidden xs:block">
-        <FlameHeartSticker size={78} />
-      </div>
+          <div className="mt-8 max-w-xl border-l border-[#ffb45c]/40 pl-5 sm:pl-7">
+            <p className="font-space text-2xl font-semibold leading-[1.04] tracking-[-0.04em] text-[#f8f1ea] sm:text-4xl">
+              Move money without leaving the whole trail exposed.
+            </p>
+            <p className="mt-5 max-w-md text-sm leading-6 text-[#b8a59a] sm:text-base">
+              A consumer privacy wallet for shielded STRK20 payments. Your wallet keeps the keys, notes, and proofs in its own hands.
+            </p>
+          </div>
 
-      {/* Bottom Right: Pixel Meme Shades */}
-      <div className="absolute bottom-24 sm:bottom-28 right-4 sm:right-14 lg:right-28 z-20 animate-float-slow hidden sm:block">
-        <PixelShadesSticker size={105} />
-      </div>
-
-      {/* Main Content Container */}
-      <div className="relative z-10 max-w-4xl mx-auto flex flex-col items-center text-center space-y-6">
-        
-        {/* Massive Condensed Headline: ORRANGE */}
-        <h1 className="font-bebas text-7xl xs:text-8xl sm:text-9xl md:text-[11rem] lg:text-[13rem] leading-[0.88] tracking-tight text-[#FBF7F4] select-none drop-shadow-[0_20px_40px_rgba(0,0,0,0.8)]">
-          ORRANGE
-        </h1>
-
-        {/* Spaced Uppercase Subtitle */}
-        <div className="space-y-1 max-w-2xl">
-          <p className="font-syne font-extrabold text-xs xs:text-sm sm:text-base tracking-[0.25em] text-[#F08A3C] uppercase drop-shadow">
-            A PRIVACY PROTOCOL FOR A NEW GENERATION
-          </p>
-          <p className="font-sans text-xs sm:text-sm text-zinc-400 max-w-lg mx-auto font-normal">
-            Confidential STRK20 execution, zero-knowledge payments, and shielded trading on Starknet.
-          </p>
-        </div>
-
-        {/* Central Waitlist Pill Capsule Bar */}
-        <div className="w-full max-w-xl pt-4">
-          <form 
-            onSubmit={handleSubmit}
-            className="glass-pill rounded-full p-2 sm:p-2.5 flex items-center gap-2 shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-[#C45B2C]/40 bg-[#18100B]/85"
-          >
-            {/* Input switch toggle (Phone vs Wallet) */}
-            <div className="hidden xs:flex items-center pl-2 pr-1 text-[11px] font-syne font-bold text-zinc-400">
-              <button
-                type="button"
-                onClick={() => setInputMode(inputMode === 'phone' ? 'wallet' : 'phone')}
-                className="hover:text-white transition-colors flex items-center gap-1 uppercase tracking-wider"
-              >
-                {inputMode === 'phone' ? '📱' : '⚡'}
-              </button>
-            </div>
-
+          <form onSubmit={handleSubmit} className="landing-glass mt-9 flex max-w-xl flex-col gap-2 rounded-[1.4rem] p-2 sm:flex-row sm:items-center sm:rounded-full">
+            <label htmlFor="hero-waitlist-entry" className="sr-only">Phone number or Starknet wallet address</label>
+            <button
+              type="button"
+              onClick={() => setInputMode(inputMode === 'phone' ? 'wallet' : 'phone')}
+              aria-label={`Switch waitlist input to ${inputMode === 'phone' ? 'wallet address' : 'phone number'}`}
+              aria-pressed={inputMode === 'wallet'}
+              className="hidden h-10 shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-[#b8a59a] transition-colors hover:border-[#ffb45c]/40 hover:text-[#f8f1ea] sm:flex"
+            >
+              <span className="text-[#ffb45c]">{inputMode === 'phone' ? '01' : '0x'}</span>
+              {inputMode === 'phone' ? 'phone' : 'wallet'}
+            </button>
             <input
+              id="hero-waitlist-entry"
               type={inputMode === 'phone' ? 'tel' : 'text'}
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder={inputMode === 'phone' ? 'Enter phone number...' : 'Enter Starknet address (0x...)'}
-              className="flex-1 bg-transparent px-3 py-2 text-sm sm:text-base text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
+              onChange={(event) => setInputValue(event.target.value)}
+              placeholder={inputMode === 'phone' ? 'Your phone number' : 'Your Starknet address'}
+              className="min-w-0 flex-1 bg-transparent px-3 py-3 text-sm text-[#f8f1ea] placeholder:text-[#78685f] focus:outline-none sm:py-2"
             />
-
             <button
               type="submit"
-              className="px-5 sm:px-7 py-3 rounded-full text-xs sm:text-sm font-syne font-extrabold text-white bg-gradient-to-r from-[#8F3F1F] via-[#C45B2C] to-[#D76A24] hover:brightness-110 active:scale-95 transition-all shadow-lg border border-[#F08A3C]/40 cursor-pointer flex items-center gap-1.5 shrink-0"
+              className="landing-button inline-flex items-center justify-center gap-2 rounded-full bg-[#f8f1ea] px-5 py-3 text-xs font-bold uppercase tracking-[0.08em] text-[#1b0e08] shadow-[0_10px_28px_rgba(248,241,234,0.12)] hover:bg-[#ffb45c] sm:py-3.5"
             >
-              <span>Join waitlist</span>
-              <ArrowRight className="w-4 h-4" />
+              Join waitlist <ArrowRight className="h-4 w-4" />
             </button>
           </form>
-
-          {/* Subtext below input */}
-          <p className="font-syne font-bold text-[11px] tracking-wider text-zinc-500 uppercase mt-3.5">
-            DROP YOUR NUMBER OR WALLET TO JOIN THE <span className="text-[#F08A3C]">ORRANGE</span> WAITLIST FOR EARLY ACCESS.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10px] uppercase tracking-[0.13em] text-[#78685f]">
+            <span>Early access registry</span>
+            <span className="h-1 w-1 rounded-full bg-[#ffb45c]" />
+            <button type="button" onClick={onOpenWaitlistModal} className="text-[#ffb45c] transition-colors hover:text-[#f8f1ea]">Already joined? View pass →</button>
+          </div>
         </div>
 
-        {/* Dual Floating Status Pills (Matching bottom of Screenshot 1 & 2) */}
-        <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
-          
-          {/* Left Pill: 1,000 Founder Seats Claimed */}
-          <div 
-            onClick={onOpenWaitlistModal}
-            className="glass-pill rounded-2xl px-4 py-2 flex items-center gap-3 border border-[#C45B2C]/30 bg-gradient-to-r from-[#18100B] to-[#221610] cursor-pointer hover:border-[#F08A3C]/50 transition-all group"
-          >
-            <div className="w-6 h-8 rounded-md holographic-purple-foil flex items-center justify-center shadow-md p-0.5">
-              <span className="text-[8px] font-mono text-white font-black">✦</span>
+        <div className="relative mx-auto w-full max-w-[31rem] lg:mt-14">
+          <div className="pointer-events-none absolute -inset-10 rounded-[3rem] bg-[#b84c1b]/15 blur-3xl" />
+          <div className="landing-window relative rounded-[1.8rem] p-3 sm:p-4">
+            <div className="flex items-center justify-between px-2 pb-3 text-[10px] font-mono uppercase tracking-[0.14em] text-[#8e7b70]">
+              <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />ORRANGE / DESK</span>
+              <span>PREVIEW 01</span>
             </div>
-            <div className="text-left leading-tight">
-              <div className="text-xs sm:text-sm font-syne font-extrabold text-[#FBF7F4] group-hover:text-[#F08A3C] transition-colors">
-                1,000
+            <div className="rounded-[1.25rem] border border-white/10 bg-[#0c0806] p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 font-space text-lg font-semibold text-[#f8f1ea]">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#f97316]/15 text-[#ffb45c]"><ShieldCheck className="h-4 w-4" /></span>
+                    Private balance
+                  </div>
+                  <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[#75645a]">STRK20 / WALLET OWNED</div>
+                </div>
+                <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300">Connected</span>
               </div>
-              <div className="text-[9px] font-mono font-bold text-zinc-400 tracking-wider uppercase">
-                FOUNDER SEATS CLAIMED
+              <div className="mt-8 flex items-end justify-between">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#75645a]">Shielded STRK</div>
+                  <div className="mt-1 font-space text-4xl font-semibold tracking-[-0.06em] text-[#f8f1ea]">— <span className="text-base text-[#8e7b70]">STRK</span></div>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border border-[#ffb45c]/20 bg-[#f97316]/10 px-3 py-1.5 font-mono text-[10px] text-[#ffb45c]"><LockKeyhole className="h-3 w-3" /> PRIVATE</div>
               </div>
+
+              <div className="mt-7 h-28 overflow-hidden rounded-xl border border-white/[0.07] bg-[linear-gradient(180deg,rgba(249,115,22,0.12),transparent)]">
+                <svg viewBox="0 0 520 160" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">
+                  <defs><linearGradient id="heroChart" x1="0" x2="1"><stop offset="0" stopColor="#8d3c1b" /><stop offset="0.55" stopColor="#f97316" /><stop offset="1" stopColor="#ffb45c" /></linearGradient></defs>
+                  <path d="M0 132 C28 130, 35 112, 60 118 S92 98, 120 112 S152 82, 181 94 S220 108, 246 75 S282 82, 305 57 S345 72, 369 48 S408 61, 432 31 S468 51, 520 18" fill="none" stroke="url(#heroChart)" strokeWidth="3" />
+                  <path d="M0 132 C28 130, 35 112, 60 118 S92 98, 120 112 S152 82, 181 94 S220 108, 246 75 S282 82, 305 57 S345 72, 369 48 S408 61, 432 31 S468 51, 520 18 V160 H0 Z" fill="url(#heroChart)" opacity="0.12" />
+                  <line x1="0" y1="132" x2="520" y2="132" stroke="rgba(255,255,255,.09)" strokeDasharray="4 8" />
+                </svg>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                {[
+                  ['SENDER', 'HIDDEN'],
+                  ['AMOUNT', 'HIDDEN'],
+                  ['POOL', 'STRK20'],
+                ].map(([label, value]) => (
+                  <div key={label} className="border-t border-white/10 pt-2">
+                    <div className="font-mono text-[9px] uppercase tracking-wider text-[#75645a]">{label}</div>
+                    <div className="mt-1 font-mono text-[10px] font-bold text-[#d9c9bd]">{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between px-2 pt-3 font-mono text-[9px] uppercase tracking-[0.13em] text-[#75645a]">
+              <span>Read-only product preview</span>
+              <Link href="/wallet" className="inline-flex items-center gap-1 text-[#ffb45c] hover:text-[#f8f1ea]">Open wallet <ArrowUpRight className="h-3 w-3" /></Link>
             </div>
           </div>
-
-          {/* Right Pill: 50,000 Joined of 50,000 Seats */}
-          <div 
-            onClick={onOpenWaitlistModal}
-            className="glass-pill rounded-2xl px-4 py-2 flex items-center gap-3 border border-[#10b981]/30 bg-gradient-to-r from-[#18100B] to-[#0f1f18] cursor-pointer hover:border-[#10b981]/60 transition-all group"
-          >
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10b981] opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-[#10b981]" />
-            </span>
-            <div className="text-left leading-tight">
-              <div className="text-xs sm:text-sm font-syne font-extrabold text-[#FBF7F4] flex items-center gap-1.5">
-                <span>50,000</span>
-                <span className="text-[10px] font-normal text-emerald-400">joined</span>
-              </div>
-              <div className="text-[9px] font-mono font-bold text-zinc-400 tracking-wider uppercase">
-                OF 50,000 SEATS
-              </div>
-            </div>
+          <div className="landing-glass absolute -bottom-7 -left-5 hidden rounded-2xl px-4 py-3 sm:block">
+            <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-[#75645a]">Privacy by design</div>
+            <div className="mt-1 flex items-center gap-2 font-space text-sm font-semibold text-[#f8f1ea]"><span className="h-1.5 w-1.5 rounded-full bg-[#ffb45c]" /> Wallet holds the secrets</div>
           </div>
-
         </div>
+      </div>
 
+      <div className="relative z-10 mx-auto mt-20 flex max-w-6xl items-center justify-between border-y border-white/[0.08] py-4 font-mono text-[9px] uppercase tracking-[0.16em] text-[#75645a] sm:mt-28">
+        <span>01 / PRIVATE PAYMENTS</span>
+        <span className="hidden sm:inline">A quieter way to move onchain</span>
+        <span className="text-[#ffb45c]">Scroll to explore ↓</span>
       </div>
     </section>
   );

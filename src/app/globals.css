@@ -5,15 +5,16 @@
 @tailwind utilities;
 
 :root {
-  --background: #0F0A07;
-  --surface: #18100B;
-  --foreground: #FBF7F4;
-  --orrange-copper: #C45B2C;
-  --orrange-tangerine: #D76A24;
-  --orrange-apricot: #B85A24;
-  --orrange-amber: #A94A22;
-  --orrange-base: #8F3F1F;
-  --orrange-bright: #F08A3C;
+  --background: #0A0705;
+  --surface: #120C08;
+  --foreground: #F8F1EA;
+  --orrange-copper: #C85A25;
+  --orrange-tangerine: #F97316;
+  --orrange-apricot: #B84C1B;
+  --orrange-amber: #8D3C1B;
+  --orrange-base: #3D1B0E;
+  --orrange-bright: #FFB45C;
+  --orrange-line: rgba(255, 180, 92, 0.16);
 }
 
 body {
@@ -22,11 +23,24 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  background-image: 
-    radial-gradient(circle at 50% 0%, rgba(196, 91, 44, 0.15) 0%, transparent 60%),
-    radial-gradient(rgba(240, 138, 60, 0.03) 1px, transparent 0);
-  background-size: 100% 100%, 24px 24px;
-  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--orrange-bright);
+  outline-offset: 3px;
 }
 
 /* Custom Selection */
@@ -49,6 +63,80 @@ body {
   font-family: 'Space Grotesk', sans-serif;
 }
 
+/* Landing page material system */
+.landing-shell {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% -8%, rgba(249, 115, 22, 0.14), transparent 34rem),
+    linear-gradient(180deg, #0A0705 0%, #100906 47%, #0A0705 100%);
+}
+
+.landing-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.08;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, black, transparent 76%);
+}
+
+.landing-glass {
+  background: linear-gradient(135deg, rgba(35, 19, 11, 0.84), rgba(12, 8, 6, 0.72));
+  border: 1px solid rgba(255, 180, 92, 0.18);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.landing-window {
+  background: linear-gradient(145deg, rgba(33, 19, 12, 0.96), rgba(12, 8, 6, 0.95));
+  border: 1px solid rgba(255, 180, 92, 0.26);
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.58), 0 0 80px rgba(196, 91, 44, 0.12), inset 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.landing-kicker {
+  color: rgba(255, 180, 92, 0.78);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.landing-display {
+  font-family: 'Bebas Neue', 'Impact', sans-serif;
+  letter-spacing: -0.035em;
+  line-height: 0.86;
+}
+
+.landing-hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--orrange-line), transparent);
+}
+
+.landing-button {
+  transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.landing-button:hover {
+  transform: translateY(-2px);
+}
+
+.landing-button:active {
+  transform: translateY(0) scale(0.98);
+}
+
 /* Sticker Hover & 3D Lighting */
 .sticker-shadow {
   filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.45)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
@@ -62,11 +150,11 @@ body {
 
 /* Glassmorphic Cards & Pills */
 .glass-pill {
-  background: rgba(24, 16, 11, 0.75);
+  background: rgba(18, 12, 8, 0.78);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(196, 91, 44, 0.25);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 180, 92, 0.18);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .glass-pill-light {
@@ -78,11 +166,11 @@ body {
 }
 
 .glass-card-amber {
-  background: linear-gradient(135deg, rgba(34, 22, 16, 0.9) 0%, rgba(24, 16, 11, 0.85) 100%);
+  background: linear-gradient(135deg, rgba(31, 17, 10, 0.92) 0%, rgba(17, 11, 8, 0.88) 100%);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(196, 91, 44, 0.3);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(240, 138, 60, 0.2);
+  border: 1px solid rgba(255, 180, 92, 0.2);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 180, 92, 0.13);
 }
 
 /* Holographic Card Iridescence */
@@ -154,11 +242,22 @@ body {
 
 /* Orange Terminal & Brand Glow */
 .terminal-glow {
-  text-shadow: 0 0 16px rgba(196, 91, 44, 0.6), 0 0 32px rgba(240, 138, 60, 0.3);
+  text-shadow: 0 0 16px rgba(249, 115, 22, 0.48), 0 0 32px rgba(255, 180, 92, 0.2);
 }
 
 .glow-text-bright {
-  text-shadow: 0 0 20px rgba(240, 138, 60, 0.8);
+  text-shadow: 0 0 20px rgba(255, 180, 92, 0.62);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Custom Scrollbars */

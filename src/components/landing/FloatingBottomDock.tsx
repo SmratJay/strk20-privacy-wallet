@@ -1,90 +1,41 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, LockKeyhole } from 'lucide-react';
 
 interface FloatingBottomDockProps {
   onJoinWaitlist: (input: string) => void;
   onOpenWaitlistModal: () => void;
 }
 
-export const FloatingBottomDock: React.FC<FloatingBottomDockProps> = ({
-  onJoinWaitlist,
-  onOpenWaitlistModal,
-}) => {
+export const FloatingBottomDock: React.FC<FloatingBottomDockProps> = ({ onJoinWaitlist, onOpenWaitlistModal }) => {
   const [inputValue, setInputValue] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!inputValue.trim()) return;
-    onJoinWaitlist(inputValue);
+    onJoinWaitlist(inputValue.trim());
     setInputValue('');
   };
 
   return (
-    <div className="fixed bottom-3 inset-x-0 z-50 px-3 sm:px-6 pointer-events-none">
-      <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3 pointer-events-auto">
-        
-        {/* Left Pill: 1,000 Founder Seats Claimed */}
-        <div 
-          onClick={onOpenWaitlistModal}
-          className="hidden md:flex glass-pill rounded-2xl px-3.5 py-2 items-center gap-2.5 border border-[#C45B2C]/30 bg-[#18100B]/90 backdrop-blur-xl cursor-pointer hover:border-[#F08A3C]/60 hover:scale-102 transition-all shadow-2xl shrink-0 group"
-        >
-          <div className="w-5 h-7 rounded holographic-purple-foil flex items-center justify-center shadow p-0.5">
-            <span className="text-[7px] font-mono text-white font-black">✦</span>
-          </div>
-          <div className="text-left leading-none">
-            <div className="text-xs font-syne font-extrabold text-[#FBF7F4] group-hover:text-[#F08A3C] transition-colors">
-              1,000
-            </div>
-            <div className="text-[8px] font-mono font-bold text-zinc-400 tracking-wider uppercase mt-0.5">
-              FOUNDER SEATS CLAIMED
-            </div>
-          </div>
-        </div>
+    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-50 px-3 sm:bottom-5 sm:px-6">
+      <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-full border border-white/10 bg-[#100a07]/85 p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.55)] backdrop-blur-2xl pointer-events-auto sm:gap-3 sm:p-2">
+        <button type="button" onClick={onOpenWaitlistModal} className="hidden items-center gap-2 rounded-full px-3 py-2 text-left transition-colors hover:bg-white/[0.05] md:flex">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[#ffb45c]/30 bg-[#f97316]/10"><LockKeyhole className="h-3 w-3 text-[#ffb45c]" /></span>
+          <span><span className="block font-space text-xs font-semibold text-[#f8f1ea]">Early access</span><span className="block font-mono text-[8px] uppercase tracking-wider text-[#75645a]">View your pass</span></span>
+        </button>
 
-        {/* Center: Interactive Waitlist Capsule Bar */}
-        <form 
-          onSubmit={handleSubmit}
-          className="flex-1 glass-pill rounded-full p-1.5 sm:p-2 flex items-center gap-2 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-[#C45B2C]/40 bg-[#18100B]/95 backdrop-blur-xl max-w-lg mx-auto"
-        >
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Phone number or Starknet wallet..."
-            className="flex-1 bg-transparent px-3 py-1.5 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
-          />
-
-          <button
-            type="submit"
-            className="px-4 sm:px-5 py-2 rounded-full text-xs font-syne font-black text-white bg-gradient-to-r from-[#8F3F1F] via-[#C45B2C] to-[#D76A24] hover:brightness-110 active:scale-95 transition-all shadow-md border border-[#F08A3C]/40 cursor-pointer flex items-center gap-1 shrink-0"
-          >
-            <span>Join waitlist</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+        <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 items-center gap-1 rounded-full border border-white/10 bg-white/[0.035] p-1">
+          <label htmlFor="dock-waitlist-entry" className="sr-only">Phone number or Starknet wallet address</label>
+          <input id="dock-waitlist-entry" type="text" value={inputValue} onChange={(event) => setInputValue(event.target.value)} placeholder="Phone or Starknet wallet" className="min-w-0 flex-1 bg-transparent px-3 py-2 text-xs text-[#f8f1ea] placeholder:text-[#75645a] focus:outline-none sm:text-sm" />
+          <button type="submit" className="landing-button inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#f8f1ea] px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#1b0e08] hover:bg-[#ffb45c] sm:px-4"><span className="sm:hidden">→</span><span className="hidden sm:inline">Join waitlist</span><ArrowRight className="hidden h-3.5 w-3.5 sm:block" /></button>
         </form>
 
-        {/* Right Pill: 50,000 Joined of 50,000 Seats */}
-        <div 
-          onClick={onOpenWaitlistModal}
-          className="hidden md:flex glass-pill rounded-2xl px-3.5 py-2 items-center gap-2.5 border border-[#10b981]/30 bg-[#18100B]/90 backdrop-blur-xl cursor-pointer hover:border-[#10b981]/60 hover:scale-102 transition-all shadow-2xl shrink-0 group"
-        >
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10b981] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#10b981]" />
-          </span>
-          <div className="text-left leading-none">
-            <div className="text-xs font-syne font-extrabold text-[#FBF7F4] flex items-center gap-1">
-              <span>50,000</span>
-              <span className="text-[9px] font-normal text-emerald-400">joined</span>
-            </div>
-            <div className="text-[8px] font-mono font-bold text-zinc-400 tracking-wider uppercase mt-0.5">
-              OF 50,000 SEATS
-            </div>
-          </div>
-        </div>
-
+        <button type="button" onClick={onOpenWaitlistModal} className="hidden items-center gap-2 rounded-full px-3 py-2 text-left transition-colors hover:bg-white/[0.05] lg:flex">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
+          <span><span className="block font-space text-xs font-semibold text-[#f8f1ea]">Registry open</span><span className="block font-mono text-[8px] uppercase tracking-wider text-[#75645a]">Launch preview</span></span>
+        </button>
       </div>
     </div>
   );

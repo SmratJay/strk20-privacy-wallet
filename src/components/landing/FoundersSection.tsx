@@ -1,176 +1,78 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Lock, Sparkles, Trophy, Users, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import { ArrowUpRight, KeyRound, LockKeyhole, Sparkles } from 'lucide-react';
 
 interface FoundersSectionProps {
   onOpenWaitlistModal: () => void;
 }
 
-export const FoundersSection: React.FC<FoundersSectionProps> = ({
-  onOpenWaitlistModal,
-}) => {
+export const FoundersSection: React.FC<FoundersSectionProps> = ({ onOpenWaitlistModal }) => {
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width - 0.5;
-    const y = (e.clientY - rect.top) / rect.height - 0.5;
-    setTilt({ x: x * 15, y: -y * 15 });
-  };
-
-  const handleMouseLeave = () => {
-    setTilt({ x: 0, y: 0 });
+  const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setTilt({
+      x: ((event.clientX - rect.left) / rect.width - 0.5) * 8,
+      y: -((event.clientY - rect.top) / rect.height - 0.5) * 8,
+    });
   };
 
   return (
-    <section id="founders" className="relative min-h-[90vh] flex flex-col items-center justify-center px-4 py-16 sm:py-24 overflow-hidden border-t border-[#351F14]/40">
-      
-      {/* Ambient background glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] rounded-full bg-gradient-to-tr from-[#8F3F1F]/25 via-[#C45B2C]/15 to-transparent blur-[140px] -z-10" />
-      </div>
-
-      <div className="max-w-4xl mx-auto flex flex-col items-center text-center space-y-6">
-        
-        {/* Live Status Pill */}
-        <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full text-xs font-mono font-bold bg-[#18100B] border border-[#C45B2C]/40 text-[#F08A3C] shadow-sm">
-          <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
-          <span>ORRANGE WAITLIST · LIVE NOW</span>
-        </div>
-
-        {/* Headline: Just showing up? Missed the founders? Climb in. */}
-        <h2 className="font-syne font-extrabold text-3xl sm:text-5xl md:text-6xl text-[#FBF7F4] leading-[1.1] max-w-2xl tracking-tight">
-          Just showing up? Missed the founders?{' '}
-          <span className="bg-gradient-to-r from-[#F08A3C] via-[#D76A24] to-[#ec4899] bg-clip-text text-transparent">
-            Climb in.
-          </span>
-        </h2>
-
-        {/* Descriptive Copy */}
-        <p className="font-sans text-sm sm:text-base text-zinc-400 max-w-xl leading-relaxed">
-          Every founding seat&apos;s taken — but nothing&apos;s locked till we launch. Refer friends, climb the ladder, and the top climbers still slide into founder spots. Keep moving.
-        </p>
-
-        {/* Dual Showcase Cards (Screenshot 2) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl pt-6">
-          
-          {/* Card 1: 3D Holographic Founder Card */}
-          <div 
-            onMouseMove={handleMouseMove}
-            onMouseLeave={handleMouseLeave}
-            style={{
-              transform: `perspective(1000px) rotateX(${tilt.y}deg) rotateY(${tilt.x}deg)`,
-              transition: 'transform 0.15s ease-out'
-            }}
-            className="glass-card-amber rounded-3xl p-6 sm:p-8 flex flex-col items-center justify-between min-h-[320px] shadow-2xl border border-[#C45B2C]/30 relative overflow-hidden group"
-          >
-            {/* Holographic Founder Card Artwork */}
-            <div className="w-48 sm:w-52 h-44 rounded-2xl holographic-purple-foil p-4 flex flex-col justify-between shadow-2xl relative border border-white/20 transform group-hover:scale-105 transition-transform duration-300">
-              <div className="flex justify-between items-start">
-                <span className="font-bebas text-2xl tracking-wider text-white drop-shadow">
-                  FOUNDER
-                </span>
-                <span className="text-xs font-mono font-bold text-white/80 bg-black/40 px-2 py-0.5 rounded-full border border-white/20">
-                  #0420
-                </span>
-              </div>
-
-              {/* ZK Circuit Trace Overlay */}
-              <div className="text-left font-mono text-[9px] text-white/70 space-y-0.5">
-                <div>STARKNET // STRK20</div>
-                <div className="text-amber-200">CONFIDENTIAL PASS</div>
-              </div>
-            </div>
-
-            {/* Status Pill */}
-            <div className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/70 border border-zinc-700/60 text-xs font-syne font-bold text-zinc-300">
-              <Lock className="w-3 h-3 text-[#F08A3C]" />
-              <span>Founding round closed</span>
-            </div>
-          </div>
-
-          {/* Card 2: Live Circular Radial Counter Gauge */}
-          <div className="glass-card-amber rounded-3xl p-6 sm:p-8 flex flex-col items-center justify-between min-h-[320px] shadow-2xl border border-[#C45B2C]/30 relative">
-            
-            {/* Top Tag: LIVE */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/60 border border-emerald-500/40 text-[11px] font-mono font-bold text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>LIVE</span>
-            </div>
-
-            {/* Circular Gauge Ring */}
-            <div className="relative w-44 h-44 flex items-center justify-center">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
-                {/* Background Track */}
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="48"
-                  fill="transparent"
-                  stroke="#221610"
-                  strokeWidth="8"
-                />
-                {/* Active Progress Gradient Ring (100% full) */}
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="48"
-                  fill="transparent"
-                  stroke="url(#progressGradient)"
-                  strokeWidth="8"
-                  strokeDasharray="301.6"
-                  strokeDashoffset="0"
-                  strokeLinecap="round"
-                />
-                <defs>
-                  <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#ec4899" />
-                    <stop offset="50%" stopColor="#F08A3C" />
-                    <stop offset="100%" stopColor="#10b981" />
-                  </linearGradient>
-                </defs>
-              </svg>
-
-              {/* Inside Gauge Text */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="font-bebas text-4xl sm:text-5xl text-[#FBF7F4] leading-none">
-                  50,000
-                </span>
-                <span className="font-mono text-[9px] font-bold text-zinc-400 uppercase tracking-wider mt-0.5">
-                  OF 50,000 SEATS
-                </span>
-                <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest">
-                  CLAIMED
-                </span>
-              </div>
-            </div>
-
-            {/* Gauge Bottom Stats */}
-            <div className="text-xs font-mono font-bold text-zinc-400">
-              <span className="text-[#F08A3C]">0 left</span> · <span className="text-emerald-400">100%</span>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Action Button: Claim my seat */}
-        <div className="pt-4 flex flex-col items-center space-y-2">
-          <button
-            onClick={onOpenWaitlistModal}
-            className="px-8 py-3.5 rounded-full text-sm font-syne font-black text-white bg-gradient-to-r from-[#0F0A07] to-[#18100B] hover:to-[#221610] border-2 border-[#C45B2C] hover:border-[#F08A3C] shadow-2xl active:scale-95 transition-all flex items-center gap-2 cursor-pointer group"
-          >
-            <div className="w-5 h-5 rounded-full bg-[#C45B2C] text-white flex items-center justify-center text-[10px] font-mono font-bold">
-              ✦
-            </div>
-            <span>Claim my seat</span>
-          </button>
-
-          <p className="font-sans text-xs text-zinc-500">
-            First <strong className="text-zinc-300">1,000</strong> on the waitlist get app access at launch.
+    <section id="founders" className="relative overflow-hidden border-t border-white/[0.07] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
+      <div className="pointer-events-none absolute -left-32 top-1/3 h-96 w-96 rounded-full bg-[#8d3c1b]/20 blur-[120px]" />
+      <div className="mx-auto grid max-w-6xl gap-14 lg:grid-cols-[0.85fr_1.15fr] lg:items-center lg:gap-24">
+        <div>
+          <div className="landing-kicker mb-6 flex items-center gap-3"><span className="h-px w-8 bg-[#ffb45c]/70" />02 / THE PASS</div>
+          <h2 className="landing-display max-w-xl text-[clamp(4.8rem,11vw,9rem)] text-[#f8f1ea]">
+            PRIVATE<br /><span className="text-[#ffb45c]">IS A CULTURE.</span>
+          </h2>
+          <p className="mt-8 max-w-md text-base leading-7 text-[#b8a59a] sm:text-lg">
+            ORRANGE starts with a wallet that lets you choose what leaves the room. Early access is a pass into the build, not a promise of a finished protocol.
           </p>
+          <button type="button" onClick={onOpenWaitlistModal} className="landing-button mt-8 inline-flex items-center gap-2 border-b border-[#ffb45c]/60 pb-2 font-space text-sm font-semibold text-[#f8f1ea] hover:border-[#f8f1ea] hover:text-[#ffb45c]">
+            Join the early access registry <ArrowUpRight className="h-4 w-4" />
+          </button>
         </div>
 
+        <div className="relative mx-auto w-full max-w-xl">
+          <div className="pointer-events-none absolute -inset-8 rounded-[3rem] bg-[#f97316]/10 blur-3xl" />
+          <div
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => setTilt({ x: 0, y: 0 })}
+            style={{ transform: `perspective(1200px) rotateX(${tilt.y}deg) rotateY(${tilt.x}deg)` }}
+            className="landing-glass relative overflow-hidden rounded-[2rem] p-3 transition-transform duration-200 ease-out sm:p-4"
+          >
+            <div className="relative min-h-[23rem] overflow-hidden rounded-[1.4rem] border border-white/10 bg-[#d26a2d] p-6 text-[#160b06] shadow-2xl sm:min-h-[28rem] sm:p-8">
+              <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full border-[26px] border-[#ffb45c]/60 opacity-70" />
+              <div className="absolute -bottom-16 -left-16 h-56 w-56 rounded-full border-[18px] border-[#8d3c1b]/30" />
+              <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(135deg,transparent_0%,rgba(255,255,255,.65)_46%,transparent_51%)] [background-size:220%_220%] animate-shimmer" />
+              <div className="relative flex items-start justify-between font-mono text-[9px] font-bold uppercase tracking-[0.16em]">
+                <span>ORRANGE / PASS</span><span>EA-0001</span>
+              </div>
+              <div className="relative mt-24 sm:mt-36">
+                <div className="font-bebas text-[4.5rem] leading-[0.8] tracking-[0.02em] sm:text-[6rem]">EARLY<br />ACCESS</div>
+                <div className="mt-5 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.13em]"><Sparkles className="h-3.5 w-3.5" /> A work in progress, by design</div>
+              </div>
+              <div className="relative mt-8 flex items-end justify-between border-t border-black/20 pt-4 font-mono text-[9px] font-bold uppercase tracking-[0.12em]">
+                <span>STARKNET / STRK20</span><span>ORRANGE.LABS</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-4 sm:p-3">
+              {[
+                [LockKeyhole, 'Private notes'],
+                [KeyRound, 'Wallet-owned'],
+                [Sparkles, 'Early access'],
+                [ArrowUpRight, 'Keep climbing'],
+              ].map(([Icon, label]) => (
+                <div key={label as string} className="flex items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.03] px-2.5 py-2 font-mono text-[9px] uppercase tracking-wider text-[#8e7b70]">
+                  <Icon className="h-3 w-3 text-[#ffb45c]" /> <span>{label as string}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="landing-kicker mt-4 flex items-center justify-between px-2 text-[#75645a]"><span>Founder pass / visual prototype</span><span>Hover to inspect</span></div>
+        </div>
       </div>
     </section>
   );

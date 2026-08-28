@@ -10,7 +10,7 @@ import { PrivacyDeskSection } from './PrivacyDeskSection';
 import { ClubSection } from './ClubSection';
 import { FloatingBottomDock } from './FloatingBottomDock';
 import { WaitlistModal } from './WaitlistModal';
-import { Terminal, Shield, ArrowUpRight, ExternalLink } from 'lucide-react';
+import { ArrowUpRight, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
 
 /**
  * Web Audio API synthesizer for tactile micro-interactions (no external mp3 files needed)
@@ -51,7 +51,7 @@ export const OrrangeLandingPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0F0A07] text-[#FBF7F4] font-sans selection:bg-[#C45B2C] selection:text-white relative overflow-x-hidden pb-24">
+    <div className="landing-shell min-h-screen overflow-x-hidden pb-24 font-sans text-[#F8F1EA] selection:bg-[#C45B2C] selection:text-white">
       
       {/* Top Infinite Marquee Ticker */}
       <MarqueeTicker />
@@ -64,6 +64,34 @@ export const OrrangeLandingPage: React.FC = () => {
         onJoinWaitlist={handleJoinWaitlist} 
         onOpenWaitlistModal={handleOpenWaitlistModal} 
       />
+
+      {/* Editorial bridge: the reason for the product, without a generic feature grid. */}
+      <section className="relative overflow-hidden border-t border-white/[0.07] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#8d3c1b]/15 blur-[130px]" />
+        <div className="relative mx-auto grid max-w-6xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-end lg:gap-24">
+          <div>
+            <div className="landing-kicker mb-6 flex items-center gap-3"><span className="h-px w-8 bg-[#ffb45c]/70" />01 / THE REASON</div>
+            <h2 className="landing-display max-w-xl text-[clamp(4.8rem,10vw,8.6rem)] text-[#f8f1ea]">PUBLIC<br /><span className="text-[#ffb45c]">IS LOUD.</span></h2>
+          </div>
+          <div className="max-w-xl lg:pb-2">
+            <p className="font-space text-2xl font-semibold leading-[1.05] tracking-[-0.045em] text-[#f8f1ea] sm:text-4xl">Your balance should not be the first thing the internet learns about you.</p>
+            <p className="mt-7 text-base leading-7 text-[#b8a59a]">Onchain transparency is powerful. It is also a lot to give away. ORRANGE puts a clearer privacy boundary around STRK20 payments while the connected wallet keeps custody of the sensitive material.</p>
+          </div>
+        </div>
+        <div className="relative mx-auto mt-16 grid max-w-6xl gap-px overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.08] sm:grid-cols-3">
+          {[
+            { Icon: EyeOff, label: 'Less exposed', detail: 'Payment details stay inside the privacy pool.' },
+            { Icon: LockKeyhole, label: 'More control', detail: 'Keys, notes, and proofs belong to your wallet.' },
+            { Icon: ShieldCheck, label: 'Still verifiable', detail: 'Privacy does not mean abandoning clear boundaries.' },
+          ].map(({ Icon, label, detail }) => (
+            <div key={label} className="bg-[#120c08]/80 p-5 sm:p-6">
+              <Icon className="h-5 w-5 text-[#ffb45c]" />
+              <div className="mt-8 font-space text-base font-semibold text-[#f8f1ea]">{label}</div>
+              <p className="mt-2 text-sm leading-6 text-[#8e7b70]">{detail}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Section 2: Founders & Ladder ("Climb in.") */}
       <FoundersSection 
@@ -79,47 +107,26 @@ export const OrrangeLandingPage: React.FC = () => {
       />
 
       {/* Global Landing Footer */}
-      <footer className="border-t border-[#351F14]/50 py-12 px-4 max-w-5xl mx-auto text-center space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <footer className="mx-auto max-w-6xl space-y-8 border-t border-white/[0.08] px-5 py-14 text-center sm:px-8 lg:px-10">
+        <div className="flex flex-col items-start justify-between gap-8 text-left sm:flex-row sm:items-end">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-[#C45B2C] text-black font-syne font-black flex items-center justify-center text-xs">
-              ✦
-            </div>
-            <span className="font-bebas text-2xl tracking-wider text-white">ORRANGE</span>
-            <span className="text-[10px] font-mono text-zinc-500">// STARKNET PRIVACY</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[#ffb45c]/50 bg-[#f97316]/20"><span className="h-3 w-3 rotate-45 border border-[#ffb45c]" /></div>
+            <span className="font-bebas text-3xl tracking-[0.08em] text-[#f8f1ea]">ORRANGE</span>
+            <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#75645a]">// Starknet privacy</span>
           </div>
 
-          <div className="flex items-center gap-6 text-xs font-syne text-zinc-400">
-            <Link href="/wallet" className="hover:text-[#F08A3C] transition-colors flex items-center gap-1">
-              <span>Launch Wallet App</span>
-              <Shield className="w-3 h-3" />
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 font-mono text-[10px] uppercase tracking-[0.12em] text-[#8e7b70]">
+            <Link href="/wallet" className="inline-flex items-center gap-1.5 transition-colors hover:text-[#ffb45c]">
+              Launch wallet <ArrowUpRight className="h-3 w-3" />
             </Link>
-            <a 
-              href="https://github.com" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="hover:text-white transition-colors"
-            >
-              GitHub
-            </a>
-            <a 
-              href="https://x.com" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="hover:text-white transition-colors"
-            >
-              𝕏 / Twitter
-            </a>
+            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[#f8f1ea]">GitHub</a>
+            <a href="https://x.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[#f8f1ea]">X / Twitter</a>
           </div>
         </div>
 
-        <div className="pt-6 border-t border-zinc-900 flex flex-col sm:flex-row items-center justify-between text-[11px] font-mono text-zinc-600 gap-2">
-          <div>
-            &copy; {new Date().getFullYear()} ORRANGE Labs. Powered by Starknet &amp; Garaga ZK Verifiers.
-          </div>
-          <div>
-            Non-custodial. Zero-knowledge. Built for culture.
-          </div>
+        <div className="flex flex-col justify-between gap-3 border-t border-white/[0.07] pt-5 text-left font-mono text-[10px] uppercase tracking-[0.12em] text-[#5f5048] sm:flex-row">
+          <div>&copy; {new Date().getFullYear()} ORRANGE Labs</div>
+          <div>Non-custodial interface / Wallet-owned privacy</div>
         </div>
       </footer>
 
