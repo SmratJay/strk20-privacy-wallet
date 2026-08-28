@@ -22,6 +22,7 @@ import { buildWithdrawalRequest } from './withdrawal';
 import { getExtendedSession } from './session';
 import type { PlaceOrderParams } from './adapter';
 import type { ExtendedSession } from './session';
+import { getExtendedRpcUrl } from './walletStatus';
 import type {
   Balance,
   Deposit,
@@ -71,6 +72,11 @@ export function credentialsFromSession(session: ExtendedSession | null | undefin
 
 /** Session header name sent by the client adapter. */
 export const SESSION_HEADER = 'x-extended-session';
+
+/** True when the request carries a session token (even if it is stale/unknown). */
+export function hasSessionToken(req: NextRequest): boolean {
+  return Boolean(req.headers.get(SESSION_HEADER));
+}
 
 /** Resolve the active session for an incoming request (or null). */
 export function sessionFromRequest(req: NextRequest): ExtendedSession | null {

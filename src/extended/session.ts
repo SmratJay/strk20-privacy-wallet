@@ -7,6 +7,10 @@
  * never in the browser. The store also keeps the Extended auth cookies (and, once
  * queried, the account/vault ids) needed for authenticated trading.
  *
+ * Sessions have a TTL and are lazily purged on access, so a stale token (e.g. after a
+ * server restart or long inactivity) is detected and reported back to the client as
+ * `sessionExpired` instead of silently falling back to env credentials.
+ *
  * This is an in-memory store (single process). For multi-instance deploys it would move
  * to a database/Redis; the interface is intentionally tiny.
  */
@@ -25,7 +29,12 @@ export interface ExtendedSession {
   /** Registration status returned by Extended. */
   status?: string;
   createdAt: number;
+  /** Last access time (refreshed on each successful lookup). */
+  lastAccessedAt: number;
 }
+
+/** How long a server-side session is kept before it is considered expired. */
+export const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const sessions = new Map<string, ExtendedSession>();
 
@@ -36,16 +45,28 @@ function generateToken(): string {
   return 'sess_' + Buffer.from(bytes).toString('hex');
 }
 
-export function createExtendedSession(input: Omit<ExtendedSession, 'token' | 'createdAt'>): ExtendedSession {
+export function createExtendedSession(input: Omit<ExtendedSession, 'token' | 'createdAt' | 'lastAccessedAt'>): ExtendedSession {
   const token = generateToken();
-  const session: ExtendedSession = { ...input, token, createdAt: Date.now() };
+  const now = Date.now();
+  const session: ExtendedSession = { ...input, token, createdAt: now, lastAccessedAt: now };
   sessions.set(token, session);
   return session;
 }
 
+/**
+ * Resolve a session by token. Expired sessions are purged and returned as null so the
+ * caller can report `sessionExpired` to the client.
+ */
 export function getExtendedSession(token: string | undefined | null): ExtendedSession | null {
   if (!token) return null;
-  return sessions.get(token) ?? null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (Date.now() - session.lastAccessedAt > SESSION_MAX_AGE_MS) {
+    sessions.delete(token);
+    return null;
+  }
+  session.lastAccessedAt = Date.now();
+  return session;
 }
 
 export function deleteExtendedSession(token: string): void {
@@ -55,7 +76,7 @@ export function deleteExtendedSession(token: string): void {
 export function updateExtendedSession(token: string, patch: Partial<ExtendedSession>): ExtendedSession | null {
   const session = sessions.get(token);
   if (!session) return null;
-  const updated = { ...session, ...patch };
+  const updated = { ...session, ...patch, lastAccessedAt: Date.now() };
   sessions.set(token, updated);
   return updated;
 }

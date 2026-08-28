@@ -1,29 +1,29 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   Activity,
   ArrowLeftRight,
   CheckCircle2,
-  ChevronDown,
   ExternalLink,
   Flame,
   Layers,
   Loader2,
   Lock,
   Server,
+  ShieldCheck,
   TrendingDown,
   TrendingUp,
   Wallet,
   X,
   ArrowDownToLine,
   ArrowUpFromLine,
+  TriangleAlert,
+  Plug,
 } from 'lucide-react';
-import { useExtended, CANDLE_INTERVALS, type CandleInterval } from '@/hooks/useExtended';
+import { useExtended, CANDLE_INTERVALS, type CandleInterval, type OnboardingState } from '@/hooks/useExtended';
 import { useWallet } from '@/context/WalletContext';
-import { accountCreationTypedData, accountRegistrationTypedData } from '@/extended/typedData';
-import { getExtendedEnvironment } from '@/extended/config';
 import { CandleChart } from '@/components/extended/CandleChart';
 import type { Position } from '@/extended/types';
 
@@ -54,9 +54,27 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
+const ONBOARDING_COPY: Record<OnboardingState, { title: string; detail: string; tone: 'neutral' | 'warn' | 'ok' | 'err' }> = {
+  idle: { title: 'Connect to Extended', detail: 'Create your Extended perps account with the connected Starknet wallet.', tone: 'neutral' },
+  checking: { title: 'Verifying wallet', detail: 'Checking that your wallet is deployed on Starknet Mainnet…', tone: 'neutral' },
+  notDeployed: { title: 'Wallet not deployed on Mainnet', detail: 'Extended verifies your wallet on-chain, so it must be deployed before it can trade. Fund it once to deploy it, then come back.', tone: 'warn' },
+  checkFailed: { title: 'Could not verify wallet', detail: 'We could not confirm the wallet on Starknet Mainnet right now. Check your connection and try again.', tone: 'warn' },
+  signing: { title: 'Signing requests', detail: 'Approve the two signature requests in your wallet (Account Creation and Registration).', tone: 'neutral' },
+  submitting: { title: 'Creating account', detail: 'Registering your Extended account and setting up your vault…', tone: 'neutral' },
+  success: { title: 'Extended account ready', detail: 'Loading your account into the terminal…', tone: 'ok' },
+  unavailable: { title: 'Extended unavailable right now', detail: '', tone: 'err' },
+  error: { title: 'Onboarding error', detail: '', tone: 'err' },
+};
+
 export default function ExtendedPage() {
-  const ext = useExtended();
   const { wallet: connectedWallet } = useWallet();
+  const ext = useExtended({
+    address: connectedWallet?.address ?? null,
+    chainId: connectedWallet?.chainId ?? null,
+    isConnected: connectedWallet?.isConnected ?? false,
+    walletAccount: connectedWallet?.walletAccount ?? null,
+  });
+
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'LIMIT' | 'MARKET'>('LIMIT');
   const [qty, setQty] = useState('');
@@ -64,16 +82,12 @@ export default function ExtendedPage() {
   const [reduceOnly, setReduceOnly] = useState(false);
   const [leverageInput, setLeverageInput] = useState('');
   const [accountTab, setAccountTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY' | 'DEPOSITS'>('POSITIONS');
-  const [onboardState, setOnboardState] = useState<{ loading: boolean; status?: string; error?: string }>({ loading: false });
   const [depositAmount, setDepositAmount] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [marketOpen, setMarketOpen] = useState(false);
 
-  const starknetAccount = (connectedWallet?.walletAccount ?? null) as
-    | { signMessage(typedData: unknown): Promise<{ r: unknown; s: unknown }>; execute(calls: unknown[]): Promise<{ transaction_hash?: string; transactionHash?: string }> }
-    | null;
+  const starknetAccount = connectedWallet?.walletAccount ?? null;
   const starknetAddress = connectedWallet?.address ?? null;
-  const walletOnMainnet = (connectedWallet?.chainId ? String(connectedWallet.chainId).toLowerCase().includes('main') : null) ?? null;
+  const walletOnMainnet = connectedWallet?.chainId ? String(connectedWallet.chainId).toLowerCase().includes('main') : null;
 
   const mark = ext.market?.marketStats.markPrice ?? '0';
   const effectivePrice = orderType === 'MARKET' ? mark : price || mark;
@@ -87,37 +101,6 @@ export default function ExtendedPage() {
   useEffect(() => {
     if (ext.leverage && !leverageInput) setLeverageInput(ext.leverage);
   }, [ext.leverage, leverageInput]);
-
-  const handleNativeOnboard = async () => {
-    setOnboardState({ loading: true });
-    try {
-      const account = connectedWallet?.walletAccount;
-      const address = connectedWallet?.address;
-      if (!account || !address) throw new Error('No Starknet wallet connected.');
-      const env = getExtendedEnvironment();
-      const time = new Date().toISOString();
-      const creationSig = await account.signMessage(accountCreationTypedData(address, env.starknetDomain));
-      const registrationSig = await account.signMessage(
-        accountRegistrationTypedData(address, env.authHost, time, env.starknetDomain),
-      );
-      const result = await ext.adapter.onboardStarknet({
-        wallet: address,
-        accountCreationSig: { r: String(creationSig.r), s: String(creationSig.s) },
-        accountRegistrationSig: { r: String(registrationSig.r), s: String(registrationSig.s) },
-        time,
-      });
-      setOnboardState({ loading: false, status: result.status });
-      await ext.refreshStatus();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Onboarding failed.';
-      // Backend-blocked onboarding (mainnet /auth/register STARKNET → HTTP 500):
-      // surface a clean, non-technical message.
-      const clean = /HTTP 5\d\d|Failed to fetch|network/i.test(msg)
-        ? 'Extended account authorization is temporarily unavailable on mainnet. Try again later, or use provisioned server API credentials.'
-        : msg;
-      setOnboardState({ loading: false, error: clean });
-    }
-  };
 
   const handleDeposit = async () => {
     if (!starknetAccount) return;
@@ -144,6 +127,10 @@ export default function ExtendedPage() {
   const maxLeverage = useMemo(() => ext.market?.tradingConfig.maxLeverage ?? '1', [ext.market]);
   const chg = Number(ext.market?.marketStats.dailyPriceChangePercentage ?? 0);
   const depth = ext.orderbook;
+  const oc = ONBOARDING_COPY[ext.onboardingState];
+
+  const canTrade = ext.canTrade;
+  const terminalLocked = ext.sessionState !== 'active';
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans">
@@ -165,6 +152,12 @@ export default function ExtendedPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {ext.sessionState === 'active' && ext.status?.session && (
+              <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 border border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {shortAddress(ext.status.session.wallet)}
+              </span>
+            )}
             <a
               href="https://app.extended.exchange/"
               target="_blank"
@@ -257,14 +250,31 @@ export default function ExtendedPage() {
           </div>
         )}
 
-        {/* ── Account / auth banner ─────────────────────────────────────────── */}
-        <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4">
-          {ext.statusLoading ? (
+        {/* ── Connection / account panel (state machine) ───────────────────── */}
+        {ext.sessionState === 'bootstrapping' || (ext.statusLoading && !ext.status) ? (
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4 flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+            <span className="text-sm font-mono text-zinc-400">Checking Extended account…</span>
+          </div>
+        ) : ext.sessionState === 'error' ? (
+          <div className="border border-rose-500/40 bg-rose-500/10 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-              <span className="text-sm font-mono text-zinc-400">Checking Extended account…</span>
+              <TriangleAlert className="w-4 h-4 text-rose-400" />
+              <div>
+                <div className="text-sm font-bold font-mono text-rose-300">Could not check your Extended account</div>
+                <div className="text-[11px] text-zinc-500">{ext.statusError ?? 'Unexpected error.'}</div>
+              </div>
             </div>
-          ) : ext.isConnected ? (
+            <button
+              onClick={ext.refreshStatus}
+              className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        ) : ext.sessionState === 'active' ? (
+          /* CASE A — connected / onboarded */
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Server className="w-4 h-4 text-emerald-400" />
@@ -276,7 +286,7 @@ export default function ExtendedPage() {
                   </div>
                   <div className="text-[11px] text-zinc-500 font-mono">
                     {ext.canTrade
-                      ? 'Read + trade access — orders and withdrawals are signed server-side'
+                      ? `Read + trade access${ext.accountInfo ? ` · Account #${ext.accountInfo.accountId} · Vault #${ext.accountInfo.l2Vault}` : ''} · orders signed server-side`
                       : 'Read-only (server missing Stark keys for trading)'}
                   </div>
                 </div>
@@ -301,56 +311,110 @@ export default function ExtendedPage() {
                 Refresh
               </button>
             </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <Lock className="w-4 h-4 text-zinc-500" />
-                <div>
-                  <div className="text-sm font-bold font-mono">No Extended account connected</div>
-                  <div className="text-[11px] text-zinc-500">
-                    {starknetAccount
-                      ? `A Starknet wallet is connected (${shortAddress(starknetAddress)}). Markets and charts are live; onboard to trade.`
-                      : 'Connect a Starknet wallet to onboard, or set the server EXTENDED_* env. Markets, order books and charts are always live.'}
+            {ext.accountError && (
+              <div className="mt-3 text-[11px] text-rose-400 font-mono">Account error: {ext.accountError}</div>
+            )}
+          </div>
+        ) : (
+          /* CASE B / C — wallet connected but no Extended session */
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-6">
+            {!starknetAccount || !starknetAddress ? (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <Plug className="w-4 h-4 text-zinc-500" />
+                  <div>
+                    <div className="text-sm font-bold font-mono">Connect a Starknet wallet to trade perps</div>
+                    <div className="text-[11px] text-zinc-500">
+                      Connect your Privy or Ready Starknet wallet to open an Extended perps account. Markets and charts are live below.
+                    </div>
                   </div>
                 </div>
+                <Link
+                  href="/wallet"
+                  className="inline-flex items-center gap-2 text-[11px] font-mono font-bold px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white transition-colors"
+                >
+                  <Wallet className="w-3.5 h-3.5" /> Connect Wallet
+                </Link>
               </div>
-              <div className="flex items-center gap-2">
-                {starknetAccount && (
+            ) : (
+              <div className="flex flex-wrap items-start justify-between gap-6">
+                <div className="flex items-start gap-3 max-w-xl">
+                  <Lock className="w-4 h-4 text-orange-400 mt-0.5" />
+                  <div>
+                    <div className="text-sm font-bold font-mono text-white">Enable Extended Perps</div>
+                    <div className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                      Create your Extended perps account with the connected Starknet wallet
+                      {' '}<span className="text-zinc-300 font-mono">{shortAddress(starknetAddress)}</span>.
+                      No EVM wallet, no API keys — your wallet signs once, and orders are signed server-side.
+                    </div>
+                    {walletOnMainnet === false && (
+                      <div className="mt-2 text-[11px] text-amber-400 font-mono border border-amber-500/30 px-2 py-1 rounded inline-block">
+                        Switch your wallet to Starknet Mainnet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="min-w-[240px] space-y-3">
+                  {/* Onboarding status panel */}
+                  <div className={`border rounded-lg p-3 ${
+                    ext.onboardingState === 'success'
+                      ? 'border-emerald-500/30 bg-emerald-500/10'
+                      : ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' || ext.onboardingState === 'notDeployed'
+                        ? 'border-amber-500/30 bg-amber-500/10'
+                        : ext.onboardingState === 'checking' || ext.onboardingState === 'signing' || ext.onboardingState === 'submitting'
+                          ? 'border-orange-500/30 bg-orange-500/10'
+                          : 'border-zinc-800 bg-zinc-900/40'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {(['checking', 'signing', 'submitting'] as OnboardingState[]).includes(ext.onboardingState) ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
+                      ) : ext.onboardingState === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ) : ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' || ext.onboardingState === 'notDeployed' || ext.onboardingState === 'checkFailed' ? (
+                        <TriangleAlert className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <ShieldCheck className="w-4 h-4 text-orange-400" />
+                      )}
+                      <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-zinc-200">
+                        {oc.title}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-zinc-400 leading-relaxed">
+                      {oc.detail ||
+                        (ext.onboardingState === 'unavailable' || ext.onboardingState === 'error'
+                          ? ext.onboardingDetail
+                          : '')}
+                    </p>
+                    {ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' ? (
+                      <p className="mt-1.5 text-[11px] text-zinc-500 leading-relaxed">{ext.onboardingDetail}</p>
+                    ) : null}
+                  </div>
+
                   <button
-                    onClick={() => void handleNativeOnboard()}
-                    disabled={onboardState.loading}
-                    className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50"
+                    onClick={() => void ext.runOnboarding()}
+                    disabled={
+                      ['checking', 'signing', 'submitting', 'success'].includes(ext.onboardingState) ||
+                      Boolean(walletOnMainnet === false)
+                    }
+                    className="w-full inline-flex items-center justify-center gap-2 text-[11px] font-mono font-bold px-4 py-2.5 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {onboardState.loading ? (
-                      <span className="flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Signing…</span>
+                    {['checking', 'signing', 'submitting'].includes(ext.onboardingState) ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {oc.title}…</>
+                    ) : ext.onboardingState === 'notDeployed' || ext.onboardingState === 'checkFailed' ? (
+                      'Re-check wallet'
                     ) : (
-                      'Onboard with wallet'
+                      'Connect to Extended'
                     )}
                   </button>
-                )}
-                {walletOnMainnet === false && (
-                  <span className="text-[11px] text-amber-400 font-mono border border-amber-500/30 px-2 py-1 rounded">
-                    Switch wallet to Starknet Mainnet
-                  </span>
-                )}
+                  <p className="text-[10px] text-zinc-600 font-mono leading-relaxed">
+                    Two signature requests will appear in your wallet. Your L2 key is derived and stored server-side — it never leaves the server.
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
-          {ext.statusError && (
-            <div className="mt-3 text-[11px] text-rose-400 font-mono">Status error: {ext.statusError}</div>
-          )}
-          {onboardState.status && (
-            <div className="mt-3 flex items-center gap-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded p-2">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Onboarded: {onboardState.status} (wallet {shortAddress(starknetAddress)})
-            </div>
-          )}
-          {onboardState.error && (
-            <div className="mt-3 text-[11px] text-rose-400 font-mono border border-rose-500/30 bg-rose-500/10 rounded p-2 break-words">
-              {onboardState.error}
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* ── Main grid ─────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
@@ -442,13 +506,11 @@ export default function ExtendedPage() {
                   </div>
                   {depth.bid.slice(0, 10).map((l, i) => {
                     const bid = Number(l.price);
-                    const ask = Number(depth.ask[0]?.price ?? 0);
-                    const span = bid / (ask || 1);
                     return (
-                      <div key={`b${i}`} className="grid grid-cols-3 py-0.5 relative">
-                        <span className="relative z-10 text-emerald-400">{fmt(bid, 2)}</span>
-                        <span className="relative z-10 text-right text-zinc-300">{fmt(l.qty, 4)}</span>
-                        <span className="relative z-10 text-right text-emerald-400/80">{fmt(Number(l.qty) * bid, 2)}</span>
+                      <div key={`b${i}`} className="grid grid-cols-3 py-0.5">
+                        <span className="text-emerald-400">{fmt(bid, 2)}</span>
+                        <span className="text-right text-zinc-300">{fmt(l.qty, 4)}</span>
+                        <span className="text-right text-emerald-400/80">{fmt(Number(l.qty) * bid, 2)}</span>
                       </div>
                     );
                   })}
@@ -523,7 +585,7 @@ export default function ExtendedPage() {
                   <span className="text-xs font-mono text-zinc-500">x</span>
                   <button
                     onClick={() => { const v = maxLeverage; setLeverageInput(v); void ext.setLeverageForMarket(v); }}
-                    disabled={!ext.canTrade || ext.leverageLoading}
+                    disabled={!canTrade || ext.leverageLoading}
                     className="text-[10px] font-mono px-2 py-1.5 border border-zinc-700 text-zinc-400 hover:text-white disabled:opacity-40"
                   >
                     Max
@@ -588,7 +650,7 @@ export default function ExtendedPage() {
               )}
 
               <button
-                disabled={!ext.canTrade || ext.submitting || !ext.market}
+                disabled={!canTrade || ext.submitting || !ext.market}
                 onClick={() => {
                   void ext
                     .placeOrder({
@@ -615,9 +677,11 @@ export default function ExtendedPage() {
                 )}
               </button>
 
-              {!ext.canTrade && (
+              {terminalLocked && (
                 <p className="text-[10px] text-zinc-600 font-mono">
-                  Trading requires an onboarded wallet or server EXTENDED_* credentials. Orders are signed server-side.
+                  {starknetAccount
+                    ? 'Connect to Extended above to unlock trading.'
+                    : 'Connect a Starknet wallet and an Extended account to trade.'}
                 </p>
               )}
 
@@ -654,7 +718,9 @@ export default function ExtendedPage() {
 
           {!ext.isConnected ? (
             <div className="p-8 text-center text-zinc-600 font-mono text-sm">
-              Connect an Extended account (onboard a wallet or configure server credentials) to view account data.
+              {starknetAccount
+                ? 'Enable Extended Perps above to view positions, orders and deposits.'
+                : 'Connect a Starknet wallet and an Extended account to view account data.'}
             </div>
           ) : accountTab === 'POSITIONS' ? (
             positions.length === 0 ? (
@@ -695,7 +761,7 @@ export default function ExtendedPage() {
                           </td>
                           <td className="py-2 px-3 text-right">
                             <button
-                              disabled={!ext.canTrade || ext.submitting}
+                              disabled={!canTrade || ext.submitting}
                               onClick={() => { void ext.closePosition(p); }}
                               className="text-[10px] font-mono px-2 py-1 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                             >
@@ -737,7 +803,7 @@ export default function ExtendedPage() {
                         <td className="py-2 px-3 text-zinc-400">{o.status}</td>
                         <td className="py-2 px-3 text-right">
                           <button
-                            disabled={!ext.canTrade}
+                            disabled={!canTrade}
                             onClick={() => { void ext.cancelOrder(o.id); }}
                             className="text-[10px] font-mono px-2 py-1 border border-zinc-700 text-zinc-400 hover:text-white disabled:opacity-40 transition-colors"
                           >
@@ -826,7 +892,7 @@ export default function ExtendedPage() {
               />
               <button
                 onClick={() => void handleDeposit()}
-                disabled={!starknetAccount || !ext.accountInfo || ext.depositState.status === 'signing' || ext.depositState.status === 'submitted'}
+                disabled={!starknetAccount || !ext.accountInfo || !canTrade || ext.depositState.status === 'signing' || ext.depositState.status === 'submitted'}
                 className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-40"
               >
                 {ext.depositState.status === 'signing' || ext.depositState.status === 'submitted' ? (
@@ -849,7 +915,7 @@ export default function ExtendedPage() {
             )}
             {ext.depositState.status === 'confirmed' && (
               <div className="flex items-center gap-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded p-2">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Deposit confirmed. Balance refreshes on the next poll.
+                <CheckCircle2 className="w-3.5 h-3.5" /> Deposit confirmed. Balance reconciles automatically.
               </div>
             )}
             {ext.depositState.status === 'error' && (
@@ -876,7 +942,7 @@ export default function ExtendedPage() {
               />
               <button
                 onClick={() => void handleWithdraw()}
-                disabled={!ext.canTrade || ext.withdrawState.loading}
+                disabled={!canTrade || ext.withdrawState.loading}
                 className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-40"
               >
                 {ext.withdrawState.loading ? (
@@ -900,7 +966,7 @@ export default function ExtendedPage() {
         {/* Footer note */}
         <p className="text-[11px] text-zinc-600 font-mono text-center pb-8">
           Extended Exchange perps terminal on Starknet Mainnet. Public market data is live; private trading is signed
-          server-side. Native Starknet wallet onboarding depends on Extended's mainnet auth service.
+          server-side. No private keys or API credentials are ever exposed in the browser.
         </p>
       </main>
     </div>

@@ -136,6 +136,7 @@ describe('Extended order lifecycle + reconciliation', () => {
       accountId: 7,
       vaultId: 700,
       createdAt: 0,
+      lastAccessedAt: 0,
     });
     expect(creds?.starkPrivateKey).toBe('0xpriv');
     expect(creds?.cookies).toEqual(['x10_session=abc']);

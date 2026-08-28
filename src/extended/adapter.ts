@@ -41,6 +41,27 @@ export interface PlaceOrderParams {
   postOnly?: boolean;
 }
 
+export interface ExtendedStatusResult {
+  read: boolean;
+  trade: boolean;
+  /** True when a stale/expired session token was detected server-side. */
+  sessionExpired?: boolean;
+  session?: {
+    wallet: string;
+    read: boolean;
+    trade: boolean;
+    accountId?: number | null;
+    vaultId?: number | null;
+  } | null;
+}
+
+export interface WalletDeploymentResult {
+  deployed: boolean;
+  classHash?: string;
+  unknown?: boolean;
+  rpcError?: string;
+}
+
 const SESSION_STORAGE_KEY = 'extended_session_token';
 const SESSION_WALLET_KEY = 'extended_session_wallet';
 
@@ -81,6 +102,11 @@ export class ExtendedAdapter {
   get sessionWallet(): string | null {
     if (typeof localStorage === 'undefined') return null;
     return localStorage.getItem(SESSION_WALLET_KEY);
+  }
+
+  /** True when a server-side session token is stored locally. */
+  get hasStoredSession(): boolean {
+    return Boolean(this._sessionToken);
   }
 
   setSession(session: { token: string; wallet: string } | null): void {
@@ -142,13 +168,27 @@ export class ExtendedAdapter {
   // ─── Auth / private state (via server routes; no secrets client-side) ──────────
 
   /** Whether the server has Extended credentials configured (read / trade). */
-  async getStatus(): Promise<ExtendedStatus & { session?: { wallet: string; read: boolean; trade: boolean } | null }> {
+  async getStatus(): Promise<ExtendedStatusResult> {
     const res = await fetch('/api/extended/status', {
       cache: 'no-store',
       headers: this.sessionToken ? { 'X-Extended-Session': this.sessionToken } : undefined,
     });
     if (!res.ok) throw new Error(await readError(res));
-    return (await res.json()) as ExtendedStatus & { session?: { wallet: string; read: boolean; trade: boolean } | null };
+    const result = (await res.json()) as ExtendedStatusResult;
+    // A stale token server-side means the local session is no longer valid — clear it so
+    // the app re-enters the "Connect to Extended" flow instead of a broken silent state.
+    if (result.sessionExpired) this.clearSession();
+    return result;
+  }
+
+  /** Whether the connected Starknet wallet is deployed on Mainnet (server-side RPC). */
+  async checkWalletDeployment(address: string): Promise<WalletDeploymentResult> {
+    const res = await fetch(
+      `/api/extended/wallet/status?address=${encodeURIComponent(address)}`,
+      { cache: 'no-store' },
+    );
+    if (!res.ok) throw new Error(await readError(res));
+    return (await res.json()) as WalletDeploymentResult;
   }
 
   /** Balance / positions / open orders / history from the active account. */

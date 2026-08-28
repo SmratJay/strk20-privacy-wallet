@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExtendedAdapter, type PlaceOrderParams } from '@/extended/adapter';
 import { buildDepositCalldata } from '@/extended/deposit';
 import { getExtendedEnvironment } from '@/extended/config';
 import { ExtendedStream, marketStreamUrl } from '@/extended/stream';
+import { accountCreationTypedData, accountRegistrationTypedData } from '@/extended/typedData';
 import type {
   Balance,
   Candle,
@@ -27,10 +28,41 @@ export interface DepositExecution {
   amount?: string;
 }
 
+/** Session lifecycle for the terminal. */
+export type SessionState =
+  | 'bootstrapping' // initial status check in flight
+  | 'none' // no session, no env credentials, wallet connected or not
+  | 'needsOnboarding' // wallet connected but no valid Extended session
+  | 'active' // a valid session (or env credentials) is active
+  | 'error'; // status check failed
+
+/** Native Starknet onboarding lifecycle. */
+export type OnboardingState =
+  | 'idle'
+  | 'checking' // verifying the wallet is deployed on Mainnet
+  | 'notDeployed' // wallet is not deployed on Starknet Mainnet
+  | 'checkFailed' // could not confirm deployment (RPC issue)
+  | 'signing' // waiting for wallet signature requests
+  | 'submitting' // POST /auth/register
+  | 'success'
+  | 'unavailable' // backend could not complete onboarding
+  | 'error';
+
+export interface ExtendedWalletInfo {
+  address?: string | null;
+  chainId?: string | null;
+  isConnected?: boolean;
+  walletAccount?: {
+    signMessage?: (typedData: unknown) => Promise<{ r: unknown; s: unknown }>;
+    execute?: (calls: unknown[]) => Promise<{ transaction_hash?: string; transactionHash?: string }>;
+    provider?: { waitForTransaction?: (hash: string, opts?: unknown) => Promise<unknown> };
+  } | null;
+}
+
 const CANDLE_INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 export type CandleInterval = (typeof CANDLE_INTERVALS)[number];
 
-export function useExtended() {
+export function useExtended(wallet?: ExtendedWalletInfo) {
   const adapter = useMemo(() => new ExtendedAdapter(), []);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [selectedMarket, setSelectedMarket] = useState<string>('BTC-USD');
@@ -50,6 +82,7 @@ export function useExtended() {
     trade: boolean;
     session?: { wallet: string; read: boolean; trade: boolean; accountId?: number | null; vaultId?: number | null } | null;
   } | null>(null);
+  const [sessionState, setSessionState] = useState<SessionState>('bootstrapping');
   const [statusLoading, setStatusLoading] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -72,10 +105,19 @@ export function useExtended() {
   const [withdrawState, setWithdrawState] = useState<{ loading: boolean; id?: number; error?: string }>({ loading: false });
   const [depositState, setDepositState] = useState<DepositExecution>({ status: 'idle' });
 
+  // Onboarding state machine.
+  const [onboardingState, setOnboardingState] = useState<OnboardingState>('idle');
+  const [onboardingDetail, setOnboardingDetail] = useState<string | null>(null);
+
+  const connectedAddress = wallet?.address ?? null;
+  const connectedChain = wallet?.chainId ?? null;
+  const walletConnected = Boolean(wallet?.isConnected && wallet?.address);
+
   const isConnected = Boolean(status?.read);
   const canRead = Boolean(status?.read);
   const canTrade = Boolean(status?.trade);
   const sessionWallet = adapter.sessionWallet;
+  const hasStoredSession = adapter.hasStoredSession;
 
   const market = useMemo(
     () => markets.find((m) => m.name === selectedMarket) ?? markets[0] ?? null,
@@ -117,17 +159,16 @@ export function useExtended() {
     [adapter, selectedMarket, candleInterval],
   );
 
-  // ── REST orderbook fallback ────────────────────────────────────────────────────
+  // ── REST orderbook / trades fallback ───────────────────────────────────────────
   const refreshOrderbook = useCallback(async () => {
     if (!selectedMarket) return;
     try {
       setOrderbook(await adapter.getOrderbook(selectedMarket));
     } catch {
-      // Orderbook is best-effort.
+      // Best-effort.
     }
   }, [adapter, selectedMarket]);
 
-  // ── REST trades fallback ───────────────────────────────────────────────────────
   const refreshTrades = useCallback(async () => {
     if (!selectedMarket) return;
     try {
@@ -143,7 +184,6 @@ export function useExtended() {
     if (!selectedMarket) return;
     const env = getExtendedEnvironment();
 
-    // Maintain the orderbook locally from SNAPSHOT/DELTA messages.
     let localBook: Record<string, { bid: Map<string, string>; ask: Map<string, string> }> = {};
     const handleMessage = (raw: unknown) => {
       const msg = raw as OrderbookStreamMessage;
@@ -199,7 +239,6 @@ export function useExtended() {
       }
     }
 
-    // REST polling fallback (orderbook 2.5s, trades 3s) whenever WS is unavailable.
     if (!wsSupported || !orderbookStream) {
       void refreshOrderbook();
       obPoll = setInterval(refreshOrderbook, 2500);
@@ -218,12 +257,42 @@ export function useExtended() {
     };
   }, [adapter, selectedMarket, refreshOrderbook, refreshTrades]);
 
-  // ── Session / auth status ──────────────────────────────────────────────────────
+  // ── Session / auth status (state machine) ─────────────────────────────────────
   const refreshStatus = useCallback(async () => {
     setStatusLoading(true);
     setStatusError(null);
+    setSessionState((prev) => (prev === 'active' ? prev : 'bootstrapping'));
     try {
       const s = await adapter.getStatus();
+
+      // A stale/expired token was detected server-side (adapter already cleared it).
+      if (s.sessionExpired) {
+        setStatus({ read: s.read, trade: s.trade, session: null });
+        setBalance(null);
+        setPositions([]);
+        setOpenOrders([]);
+        setOrderHistory([]);
+        setDeposits([]);
+        setAccountInfo(null);
+        // Env credentials may still be configured — keep the terminal usable in that case.
+        setSessionState(s.read ? 'active' : walletConnected ? 'needsOnboarding' : 'none');
+        return;
+      }
+
+      // A session exists but belongs to a different wallet → clear and re-onboard.
+      if (s.session?.wallet && connectedAddress && s.session.wallet.toLowerCase() !== connectedAddress.toLowerCase()) {
+        adapter.clearSession();
+        setStatus({ read: s.read, trade: s.trade, session: null });
+        setBalance(null);
+        setPositions([]);
+        setOpenOrders([]);
+        setOrderHistory([]);
+        setDeposits([]);
+        setAccountInfo(null);
+        setSessionState(s.read ? 'active' : walletConnected ? 'needsOnboarding' : 'none');
+        return;
+      }
+
       setStatus(s);
       if (!s.read) {
         setBalance(null);
@@ -232,13 +301,22 @@ export function useExtended() {
         setOrderHistory([]);
         setDeposits([]);
         setAccountInfo(null);
+        setSessionState(walletConnected ? 'needsOnboarding' : 'none');
+      } else {
+        setSessionState('active');
       }
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : 'Failed to read auth status.');
+      setSessionState('error');
     } finally {
       setStatusLoading(false);
     }
-  }, [adapter]);
+  }, [adapter, walletConnected, connectedAddress]);
+
+  // On mount + whenever the connected wallet (address) changes → reconcile the session.
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus, connectedAddress]);
 
   // ── Account snapshot + info ────────────────────────────────────────────────────
   const refreshAccount = useCallback(async () => {
@@ -364,12 +442,87 @@ export function useExtended() {
     [adapter, refreshAccount],
   );
 
+  // ── Native Starknet onboarding (state machine) ────────────────────────────────
+  const runOnboarding = useCallback(async () => {
+    const account = wallet?.walletAccount;
+    const address = wallet?.address;
+    if (!account || !address) {
+      setOnboardingState('error');
+      setOnboardingDetail('No Starknet wallet connected. Connect your wallet first.');
+      return;
+    }
+
+    setOnboardingState('checking');
+    setOnboardingDetail(null);
+
+    // 1. Verify the wallet is deployed on Starknet Mainnet (Extended verifies on-chain).
+    try {
+      const deployment = await adapter.checkWalletDeployment(address);
+      if (deployment.deployed === false && !deployment.unknown) {
+        setOnboardingState('notDeployed');
+        setOnboardingDetail(
+          'This wallet is not deployed on Starknet Mainnet yet. Extended verifies the wallet on-chain, so it must be deployed (fund it or deploy it once) before it can trade.',
+        );
+        return;
+      }
+      // `unknown` (RPC node issue) is non-blocking: proceed and let the register result
+      // decide. A confirmed non-deployment is the only hard stop.
+    } catch {
+      // Deployment check failed at the HTTP layer — proceed best-effort.
+    }
+
+    // 2-4. Generate the exact AccountCreation + AccountRegistration signatures.
+    setOnboardingState('signing');
+    try {
+      if (typeof account.signMessage !== 'function') {
+        setOnboardingState('error');
+        setOnboardingDetail('The connected wallet does not support typed-data signing.');
+        return;
+      }
+      const env = getExtendedEnvironment();
+      const time = new Date().toISOString();
+      const creationSig = await account.signMessage(accountCreationTypedData(address, env.starknetDomain));
+      const registrationSig = await account.signMessage(
+        accountRegistrationTypedData(address, env.authHost, time, env.starknetDomain),
+      );
+
+      // 5. Submit the exact production request.
+      setOnboardingState('submitting');
+      const result = await adapter.onboardStarknet({
+        wallet: address,
+        accountCreationSig: { r: String(creationSig.r), s: String(creationSig.s) },
+        accountRegistrationSig: { r: String(registrationSig.r), s: String(registrationSig.s) },
+        time,
+      });
+
+      // 6-8. Verify response + account info, then enter the terminal.
+      setOnboardingState('success');
+      setOnboardingDetail(result.status);
+      await refreshStatus();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Onboarding failed.';
+      // The backend returns HTTP 500 for STARKNET requests it cannot verify. Surface a
+      // clean, non-technical message and preserve the credential-backed fallback.
+      const clean = /HTTP 5\d\d|Failed to fetch|network/i.test(msg)
+        ? 'Extended could not complete account creation for this wallet right now. Your wallet must be deployed on Starknet Mainnet. Try again, or use provisioned server API credentials.'
+        : msg;
+      setOnboardingState('unavailable');
+      setOnboardingDetail(clean);
+    }
+  }, [adapter, wallet, refreshStatus]);
+
+  // Clear the onboarding state when a session becomes active.
+  useEffect(() => {
+    if (sessionState === 'active') {
+      setOnboardingState((prev) => (prev === 'success' ? 'success' : 'idle'));
+    }
+  }, [sessionState]);
+
   // ── Deposit (on-chain, native Starknet USDC) ───────────────────────────────────
   const depositOnChain = useCallback(
-    async (amount: string, walletAccount: { execute: (calls: unknown[]) => Promise<{ transaction_hash?: string; transactionHash?: string }> } | null | undefined) => {
-      if (!walletAccount) throw new Error('No Starknet wallet connected.');
+    async (amount: string, walletAccount: ExtendedWalletInfo['walletAccount']) => {
+      if (!walletAccount?.execute) throw new Error('No Starknet wallet connected.');
       if (!accountInfo) throw new Error('Extended account info is not loaded yet.');
-      if (!market) throw new Error('No market selected.');
       const calldata = buildDepositCalldata(amount, accountInfo.l2Vault);
       setDepositState({ status: 'signing', amount });
       try {
@@ -387,6 +540,16 @@ export function useExtended() {
         ]);
         const txHash = res.transaction_hash ?? res.transactionHash ?? '';
         setDepositState({ status: 'submitted', transactionHash: txHash, amount });
+
+        // Wait for on-chain acceptance (best-effort, bounded) before reconciling.
+        if (txHash && walletAccount.provider?.waitForTransaction) {
+          try {
+            await walletAccount.provider.waitForTransaction(txHash, { retryInterval: 4000, timeout: 180000 });
+          } catch {
+            // The transaction is broadcast; reconciliation below is authoritative.
+          }
+        }
+
         await refreshAccount();
         setDepositState({ status: 'confirmed', transactionHash: txHash, amount });
         return txHash;
@@ -396,7 +559,7 @@ export function useExtended() {
         throw err;
       }
     },
-    [accountInfo, market, refreshAccount],
+    [accountInfo, refreshAccount],
   );
 
   // ── Withdraw ───────────────────────────────────────────────────────────────────
@@ -424,11 +587,6 @@ export function useExtended() {
   }, [refreshMarkets]);
 
   useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
-
-  // Candles: initial + interval-based refresh (respect the chart interval).
-  useEffect(() => {
     void refreshCandles(candleInterval);
     const t = setInterval(() => void refreshCandles(candleInterval), 30000);
     return () => clearInterval(t);
@@ -442,7 +600,6 @@ export function useExtended() {
     return () => clearInterval(t);
   }, [status?.read, refreshAccount]);
 
-  // Leverage refresh when the market or trade capability changes.
   useEffect(() => {
     if (selectedMarket) void refreshLeverage();
   }, [selectedMarket, refreshLeverage]);
@@ -465,12 +622,14 @@ export function useExtended() {
     status,
     statusLoading,
     statusError,
+    sessionState,
     refreshStatus,
     refreshMarkets,
     isConnected,
     canRead,
     canTrade,
     sessionWallet,
+    hasStoredSession,
     balance,
     positions,
     openOrders,
@@ -493,6 +652,10 @@ export function useExtended() {
     submitting,
     lastPlacedOrder,
     actionError,
+    onboardingState,
+    onboardingDetail,
+    runOnboarding,
+    resetOnboarding: () => setOnboardingState('idle'),
   };
 }
 
