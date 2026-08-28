@@ -1,11 +1,14 @@
 /**
  * @file scripts/extended_live_e2e.ts
- * @description Proves a real Extended Sepolia trading lifecycle end-to-end using the
- * SERVER credentials from the environment (EXTENDED_API_KEY / EXTENDED_STARK_PRIVATE_KEY /
+ * @description Proves a real Extended trading lifecycle end-to-end using the SERVER
+ * credentials from the environment (EXTENDED_API_KEY / EXTENDED_STARK_PRIVATE_KEY /
  * EXTENDED_STARK_PUBLIC_KEY / EXTENDED_VAULT_ID). No secrets are embedded here.
  *
  * Flow: find a liquid perpetual market → market BUY (IOC, real fill) → read position →
  * market SELL (IOC, close) → verify final position state is empty.
+ *
+ * The default network is MAINNET (see src/extended/config.ts). Override with
+ * NEXT_PUBLIC_EXTENDED_API_BASE_URL to target another network.
  *
  * Run:  npx tsx scripts/extended_live_e2e.ts
  */
@@ -36,7 +39,7 @@ async function findLiquidMarket(client: ExtendedClient): Promise<Market> {
       // Skip markets whose orderbook is unavailable.
     }
   }
-  throw new Error('No perpetual market with two-sided liquidity found on the testnet.');
+  throw new Error('No perpetual market with two-sided liquidity found.');
 }
 
 async function main() {

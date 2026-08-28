@@ -6,7 +6,8 @@ import {
   registerStarknetWallet,
 } from '@/extended/onboarding';
 import { getExtendedEnvironment } from '@/extended/config';
-import { createExtendedSession } from '@/extended/session';
+import { createExtendedSession, updateExtendedSession } from '@/extended/session';
+import { ExtendedClient } from '@/extended/client';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,8 @@ export const dynamic = 'force-dynamic';
  * The wallet signs SNIP-12 "AccountCreation" + "AccountRegistration" typed data in the
  * browser; the signatures are sent here. The L2 Stark key pair is derived server-side
  * (never in the client bundle) and `/auth/register` is called with `walletType:
- * "STARKNET"`. On success a server-side session is created and its token returned.
+ * "STARKNET"`. On success a server-side session is created, its token returned, and the
+ * account id / vault id are captured so the session can trade and receive deposits.
  *
  * Body: { wallet, accountCreationSig: {r,s}, accountRegistrationSig: {r,s}, time?, referralCode? }
  */
@@ -68,8 +70,28 @@ export async function POST(req: NextRequest) {
 
     const result = await registerStarknetWallet(payload, { rememberMe: true });
 
-    const session = createExtendedSession({ wallet, l2Key: keyPair, cookies: result.cookies });
-    return NextResponse.json({ token: session.token, status: result.status, wallet });
+    const session = createExtendedSession({ wallet, l2Key: keyPair, cookies: result.cookies, status: result.status });
+
+    // Capture account id / vault id so the session can trade and receive on-chain deposits.
+    let accountId: number | undefined;
+    let vaultId: number | undefined;
+    try {
+      const client = new ExtendedClient({ env, cookies: result.cookies });
+      const info = await client.getAccountInfo();
+      accountId = info.accountId;
+      vaultId = info.l2Vault;
+      updateExtendedSession(session.token, { accountId, vaultId });
+    } catch {
+      // Account info may not be immediately queryable; session still works once settled.
+    }
+
+    return NextResponse.json({
+      token: session.token,
+      status: result.status,
+      wallet,
+      accountId,
+      vaultId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onboarding failed.';
     return NextResponse.json({ error: message }, { status: 502 });

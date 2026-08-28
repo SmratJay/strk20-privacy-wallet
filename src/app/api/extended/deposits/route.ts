@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverClientForRequest } from '@/extended/server';
-import type { ExtendedAccountSnapshot } from '@/extended/types';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * GET /api/extended/account
- * Returns balance / positions / open orders / order history for the active account
- * (onboarded session, or the server-configured account). Never exposes credentials.
- */
+/** GET /api/extended/deposits — deposit history for the active account. */
 export async function GET(req: NextRequest) {
   const server = serverClientForRequest(req);
   if (!server.configured.read) {
@@ -17,12 +12,11 @@ export async function GET(req: NextRequest) {
       { status: 501 },
     );
   }
-
   try {
-    const snapshot: ExtendedAccountSnapshot = await server.getAccountSnapshot();
-    return NextResponse.json(snapshot);
+    const deposits = await server.getDeposits();
+    return NextResponse.json(deposits);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to read Extended account.';
+    const message = err instanceof Error ? err.message : 'Failed to read deposits.';
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

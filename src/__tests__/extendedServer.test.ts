@@ -85,10 +85,12 @@ describe('ExtendedServerClient', () => {
       starkPrivateKey: '0xpriv',
       starkPublicKey: '0xpub',
       vaultId: 123,
+      accountId: null,
+      cookies: [],
     });
     expect(server.configured).toEqual({ read: true, trade: true });
 
-    const server2 = new ExtendedServerClient({ apiKey: 'key-1', starkPrivateKey: null, starkPublicKey: null, vaultId: null });
+    const server2 = new ExtendedServerClient({ apiKey: 'key-1', starkPrivateKey: null, starkPublicKey: null, vaultId: null, accountId: null, cookies: [] });
     expect(server2.configured).toEqual({ read: true, trade: false });
   });
 
@@ -110,6 +112,8 @@ describe('ExtendedServerClient', () => {
       starkPrivateKey: '0x' + 123456789n.toString(16),
       starkPublicKey: '0x1',
       vaultId: 503769,
+      accountId: null,
+      cookies: [],
     });
 
     const placed = await server.placeOrder({
@@ -151,7 +155,7 @@ describe('ExtendedServerClient', () => {
   it('refuses to trade when credentials are missing', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const server = new ExtendedServerClient({ apiKey: 'key-1', starkPrivateKey: null, starkPublicKey: null, vaultId: null });
+    const server = new ExtendedServerClient({ apiKey: 'key-1', starkPrivateKey: null, starkPublicKey: null, vaultId: null, accountId: null, cookies: [] });
     await expect(
       server.placeOrder({ market: 'CRV-USD', side: 'BUY', qty: '10', price: '0.33' }),
     ).rejects.toThrow('not configured');

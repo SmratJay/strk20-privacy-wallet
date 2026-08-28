@@ -4,7 +4,7 @@
  *
  * When a Starknet wallet is onboarded through our Dapp, the L2 Stark private key is
  * derived server-side from the wallet's "AccountCreation" signature and stored here —
- * never in the browser. The store also keeps the Extended session cookies (and, once
+ * never in the browser. The store also keeps the Extended auth cookies (and, once
  * queried, the account/vault ids) needed for authenticated trading.
  *
  * This is an in-memory store (single process). For multi-instance deploys it would move
@@ -22,6 +22,8 @@ export interface ExtendedSession {
   /** Extended account ids (populated once queried). */
   accountId?: number;
   vaultId?: number;
+  /** Registration status returned by Extended. */
+  status?: string;
   createdAt: number;
 }
 

@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ExtendedServerClient } from '@/extended/server';
+import { serverClientForRequest } from '@/extended/server';
 import type { PlaceOrderParams } from '@/extended/adapter';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/extended/order
- * Places a real order on Extended, signed server-side with the Stark L2 key.
- * The Stark private key is never exposed to the client.
+ * Places a real order on Extended, signed server-side with the Stark L2 key
+ * (session or env credential). The Stark private key is never exposed to the client.
  */
 export async function POST(req: NextRequest) {
-  const server = new ExtendedServerClient();
+  const server = serverClientForRequest(req);
   if (!server.configured.trade) {
     return NextResponse.json(
-      { error: 'Extended trading credentials are not configured on the server (EXTENDED_* env).' },
+      { error: 'Extended trading credentials are not configured (EXTENDED_* env or an onboarded wallet session).' },
       { status: 501 },
     );
   }
@@ -46,10 +46,10 @@ export async function POST(req: NextRequest) {
  * Cancels an order by its Extended-assigned id.
  */
 export async function DELETE(req: NextRequest) {
-  const server = new ExtendedServerClient();
+  const server = serverClientForRequest(req);
   if (!server.configured.trade) {
     return NextResponse.json(
-      { error: 'Extended trading credentials are not configured on the server (EXTENDED_* env).' },
+      { error: 'Extended trading credentials are not configured (EXTENDED_* env or an onboarded wallet session).' },
       { status: 501 },
     );
   }

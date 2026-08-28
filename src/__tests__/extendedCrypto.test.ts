@@ -17,11 +17,15 @@ import {
   starkKeyOf,
   starkSign,
   toFelt,
+  withdrawalArgsHash,
+  withdrawalMessageHash,
 } from '../extended/crypto';
 import { ec } from 'starknet';
 
 const curve = ec.starkCurve;
 const FIELD = curve.Fp251.ORDER;
+
+const MESSAGE_FELT = encodeShortString('StarkNet Message');
 
 const DOMAIN = { name: 'Perpetuals', version: 'v0', chainId: 'SN_SEPOLIA', revision: 1 };
 
@@ -155,5 +159,60 @@ describe('extended crypto primitives', () => {
 
   it('poseidonHashMany matches hash.computePoseidonHashOnElements', () => {
     expect(poseidonHashMany([1n, 2n, 3n])).toBe(BigInt(curve.poseidonHashMany([1n, 2n, 3n])));
+  });
+
+  it('matches the WithdrawArgs selector', () => {
+    // Official Rust reference: x10xchange/rust-crypto-lib-base starknet_messages.rs
+    const selectorValue = selector(
+      '"WithdrawArgs"("recipient":"ContractAddress","position_id":"PositionId","collateral_id":"AssetId","amount":"u64","expiration":"Timestamp","salt":"felt")"PositionId"("value":"u32")"AssetId"("value":"felt")"Timestamp"("seconds":"u64")',
+    );
+    expect('0x' + selectorValue.toString(16)).toBe(
+      '0x250a5fa378e8b771654bd43dcb34844534f9d1e29e16b14760d7936ea7f4b1d',
+    );
+  });
+
+  it('matches the WithdrawArgs struct hash vector', () => {
+    const hashValue = withdrawalArgsHash({
+      recipient: '0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da',
+      positionId: 1,
+      collateralId: 4,
+      amount: 1000n,
+      expiration: 5n,
+      salt: 123n,
+    });
+    // Normalize both sides by the field prime to ignore leading-zero formatting.
+    const expected = BigInt('0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec');
+    expect(hashValue).toBe(expected);
+  });
+
+  it('matches the WithdrawArgs message hash (SNIP-12 domain)', () => {
+    // Recompute with the SN_SEPOLIA domain, mirroring the Rust OffChainMessage test.
+    const messageHash = withdrawalMessageHash(
+      {
+        recipient: '0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da',
+        positionId: 1,
+        collateralId: 4,
+        amount: 1000n,
+        expiration: 5n,
+        salt: 123n,
+      },
+      '0x01', // placeholder public key — verifies internal consistency only
+      { name: 'Perpetuals', version: 'v0', chainId: 'SN_SEPOLIA', revision: 1 },
+    );
+    expect(messageHash).toBe(
+      BigInt(curve.poseidonHashMany([
+        MESSAGE_FELT,
+        domainHash({ name: 'Perpetuals', version: 'v0', chainId: 'SN_SEPOLIA', revision: 1 }),
+        BigInt('0x01'),
+        withdrawalArgsHash({
+          recipient: '0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da',
+          positionId: 1,
+          collateralId: 4,
+          amount: 1000n,
+          expiration: 5n,
+          salt: 123n,
+        }),
+      ])),
+    );
   });
 });

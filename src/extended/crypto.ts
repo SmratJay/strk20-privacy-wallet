@@ -79,6 +79,10 @@ const ORDER_SELECTOR = selector(
   '"Order"("position_id":"felt","base_asset_id":"AssetId","base_amount":"i64","quote_asset_id":"AssetId","quote_amount":"i64","fee_asset_id":"AssetId","fee_amount":"u64","expiration":"Timestamp","salt":"felt")"PositionId"("value":"u32")"AssetId"("value":"felt")"Timestamp"("seconds":"u64")',
 );
 
+const WITHDRAWAL_SELECTOR = selector(
+  '"WithdrawArgs"("recipient":"ContractAddress","position_id":"PositionId","collateral_id":"AssetId","amount":"u64","expiration":"Timestamp","salt":"felt")"PositionId"("value":"u32")"AssetId"("value":"felt")"Timestamp"("seconds":"u64")',
+);
+
 export interface ExtendedStarknetDomain {
   name: string;
   version: string;
@@ -139,5 +143,44 @@ export function orderMessageHash(
     domainHash(domain),
     BigInt(userPublicKey),
     orderHash(params),
+  ]);
+}
+
+export interface WithdrawalMessageParams {
+  recipient: bigint | string; // Starknet recipient address (felt)
+  positionId: bigint | number;
+  collateralId: bigint | string | number;
+  amount: bigint; // u64, already in Stark units
+  expiration: bigint; // settlement expiration in epoch seconds
+  salt: bigint; // nonce
+}
+
+/** Hash the `WithdrawArgs` struct (SNIP-12 struct hash) — verified against the Rust reference. */
+export function withdrawalArgsHash(params: WithdrawalMessageParams): bigint {
+  return poseidonHashMany([
+    WITHDRAWAL_SELECTOR,
+    BigInt(params.recipient),
+    BigInt(params.positionId),
+    BigInt(params.collateralId),
+    BigInt(params.amount),
+    BigInt(params.expiration),
+    BigInt(params.salt),
+  ]);
+}
+
+/**
+ * Compute the full off-chain message hash for a withdrawal:
+ * poseidon("StarkNet Message", domainHash, publicKey, withdrawalHash).
+ */
+export function withdrawalMessageHash(
+  params: WithdrawalMessageParams,
+  userPublicKey: bigint | string,
+  domain: ExtendedStarknetDomain,
+): bigint {
+  return poseidonHashMany([
+    MESSAGE_FELT,
+    domainHash(domain),
+    BigInt(userPublicKey),
+    withdrawalArgsHash(params),
   ]);
 }

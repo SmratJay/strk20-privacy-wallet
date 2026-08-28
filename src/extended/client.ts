@@ -7,11 +7,15 @@
  * endpoints need no key; write endpoints require the API key and are signed separately.
  */
 
-import { getExtendedEnvironment, type ExtendedEnvironment } from './config';
+import { getExtendedEnvironment, streamUrl, type ExtendedEnvironment } from './config';
 import type {
   ApiResponse,
   AccountInfo,
+  AssetInfo,
   Balance,
+  Candle,
+  CandleType,
+  Deposit,
   ExtendedOrder,
   Fees,
   Leverage,
@@ -19,7 +23,9 @@ import type {
   Orderbook,
   PlacedOrder,
   Position,
+  PublicTrade,
   StarknetDomainInfo,
+  Withdrawal,
 } from './types';
 
 export class ExtendedApiError extends Error {
@@ -41,14 +47,20 @@ interface RequestOptions {
 export class ExtendedClient {
   private env: ExtendedEnvironment;
   private apiKey: string | null;
+  private cookies: string[];
 
-  constructor(opts?: { apiKey?: string; env?: ExtendedEnvironment }) {
+  constructor(opts?: { apiKey?: string; env?: ExtendedEnvironment; cookies?: string[] }) {
     this.env = opts?.env ?? getExtendedEnvironment();
     this.apiKey = opts?.apiKey ?? null;
+    this.cookies = opts?.cookies ?? [];
   }
 
   setApiKey(apiKey: string | null): void {
     this.apiKey = apiKey;
+  }
+
+  setCookies(cookies: string[]): void {
+    this.cookies = cookies;
   }
 
   private async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -57,6 +69,7 @@ export class ExtendedClient {
       'User-Agent': 'orrange/0.1',
     };
     if (this.apiKey) headers['X-Api-Key'] = this.apiKey;
+    if (this.cookies.length > 0) headers['Cookie'] = this.cookies.join('; ');
 
     const res = await fetch(`${this.env.apiBaseUrl}${path}`, {
       method: opts.method ?? 'GET',
@@ -111,6 +124,33 @@ export class ExtendedClient {
     return this.request<StarknetDomainInfo>('/info/starknet');
   }
 
+  /** All registered assets (collateral + spot/perpetual), including StarkEx ids. */
+  getAssets(): Promise<AssetInfo[]> {
+    return this.request<AssetInfo[]>('/info/assets');
+  }
+
+  /** Public settings — includes the on-chain deposit contract address. */
+  getSettings(): Promise<{ starknetContractAddress?: string }> {
+    return this.request<{ starknetContractAddress?: string }>('/info/settings');
+  }
+
+  /** OHLCV candle history for a market. interval: 1m/5m/15m/1h/4h/1d; limit ≤ 10_000. */
+  getCandles(market: string, candleType: CandleType = 'trades', interval = '1m', limit = 500): Promise<Candle[]> {
+    return this.request<Candle[]>(
+      `/info/candles/${encodeURIComponent(market)}/${candleType}?interval=${encodeURIComponent(interval)}&limit=${limit}`,
+    );
+  }
+
+  /** Latest public trades for a market. */
+  getTrades(market: string): Promise<PublicTrade[]> {
+    return this.request<PublicTrade[]>(`/info/markets/${encodeURIComponent(market)}/trades`);
+  }
+
+  /** Build a public WebSocket stream URL (orderbooks/{m}, publicTrades/{m}, …). */
+  streamUrl(path: string): string {
+    return streamUrl(path, this.env);
+  }
+
   // ─── Private read-only (API key) ───────────────────────────────────────────────
 
   getFees(market: string): Promise<Fees[]> {
@@ -139,6 +179,21 @@ export class ExtendedClient {
 
   getLeverage(market: string): Promise<Leverage> {
     return this.request<Leverage>(`/user/leverage?market=${encodeURIComponent(market)}`);
+  }
+
+  /** Deposit / withdrawal / transfer history for the account. */
+  getDeposits(): Promise<Deposit[]> {
+    return this.request<Deposit[]>('/user/deposits');
+  }
+
+  /** Withdraw (Starknet) — signed server-side; body includes the settlement signature. */
+  createWithdrawal(body: Record<string, unknown>): Promise<{ id: number }> {
+    return this.request<{ id: number }>('/user/withdrawal', { method: 'POST', body });
+  }
+
+  /** Transfer between sub-accounts — signed server-side. */
+  createTransfer(body: Record<string, unknown>): Promise<{ id: number }> {
+    return this.request<{ id: number }>('/user/transfer', { method: 'POST', body });
   }
 
   // ─── Private write (API key + Stark signature in body) ─────────────────────────

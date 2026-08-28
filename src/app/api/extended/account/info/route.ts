@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverClientForRequest } from '@/extended/server';
-import type { ExtendedAccountSnapshot } from '@/extended/types';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/extended/account
- * Returns balance / positions / open orders / order history for the active account
- * (onboarded session, or the server-configured account). Never exposes credentials.
+ * GET /api/extended/account/info
+ * Returns the account's id, L2 vault id and bridge address. The vault id is required
+ * to build the on-chain USDC deposit. Only account ids are returned — no secrets.
  */
 export async function GET(req: NextRequest) {
   const server = serverClientForRequest(req);
@@ -17,12 +16,15 @@ export async function GET(req: NextRequest) {
       { status: 501 },
     );
   }
-
   try {
-    const snapshot: ExtendedAccountSnapshot = await server.getAccountSnapshot();
-    return NextResponse.json(snapshot);
+    const info = await server.getAccountInfo();
+    return NextResponse.json({
+      accountId: info.accountId,
+      l2Vault: info.l2Vault,
+      bridgeStarknetAddress: info.bridgeStarknetAddress,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to read Extended account.';
+    const message = err instanceof Error ? err.message : 'Failed to read account info.';
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
