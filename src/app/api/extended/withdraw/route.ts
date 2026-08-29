@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { amount?: string; asset?: string };
+  let body: { amount?: string; asset?: string; recipient?: string };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await server.createWithdrawal({ amount, asset: body.asset });
+    const result = await server.createWithdrawal({ amount, asset: body.asset, recipient: body.recipient });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Withdrawal failed.';

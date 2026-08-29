@@ -208,6 +208,13 @@ export class ExtendedAdapter {
     return this.privateRequest<Deposit[]>('/api/extended/deposits');
   }
 
+  /** Maker/taker/builder fee schedule for a market (live from Extended). */
+  async getFees(market: string): Promise<{ market: string; makerFeeRate: string; takerFeeRate: string; builderFeeRate: string }[]> {
+    return this.privateRequest<{ market: string; makerFeeRate: string; takerFeeRate: string; builderFeeRate: string }[]>(
+      `/api/extended/fees?market=${encodeURIComponent(market)}`,
+    );
+  }
+
   /** Place a real signed order (signed server-side). */
   async placeOrder(params: PlaceOrderParams): Promise<PlacedOrder> {
     return this.privateRequest<PlacedOrder>('/api/extended/order', { method: 'POST', body: params });
@@ -242,7 +249,7 @@ export class ExtendedAdapter {
   }
 
   /** Create a Starknet withdrawal (signed server-side with the session L2 key). */
-  async withdraw(params: { amount: string; asset?: string }): Promise<{ id: number }> {
+  async withdraw(params: { amount: string; asset?: string; recipient?: string }): Promise<{ id: number }> {
     return this.privateRequest<{ id: number }>('/api/extended/withdraw', { method: 'POST', body: params });
   }
 

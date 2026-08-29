@@ -1,31 +1,39 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Activity,
+  ArrowDownToLine,
   ArrowLeftRight,
+  ArrowUpFromLine,
   CheckCircle2,
+  Clock,
   ExternalLink,
   Flame,
   Layers,
   Loader2,
   Lock,
+  Plug,
+  RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   TrendingDown,
   TrendingUp,
+  TriangleAlert,
   Wallet,
   X,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  TriangleAlert,
-  Plug,
 } from 'lucide-react';
-import { useExtended, CANDLE_INTERVALS, type CandleInterval, type OnboardingState } from '@/hooks/useExtended';
-import { useWallet } from '@/context/WalletContext';
+import { ExtendedWalletProvider, useExtendedWallet } from '@/context/ExtendedWalletContext';
+import { useExtended, CANDLE_INTERVALS, type CandleInterval } from '@/hooks/useExtended';
 import { CandleChart } from '@/components/extended/CandleChart';
+import { OrderBook } from '@/components/extended/OrderBook';
+import { OrderPanel, type OrderSide } from '@/components/extended/OrderPanel';
 import type { Position } from '@/extended/types';
+import { translateError } from '@/hooks/useExtended';
+
+const MARKET_PERSIST_KEY = 'orrange_extended_selected_market';
 
 const fmt = (v: string | number | undefined, dp = 2): string => {
   if (v === undefined || v === null || v === '') return '—';
@@ -54,53 +62,74 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-const ONBOARDING_COPY: Record<OnboardingState, { title: string; detail: string; tone: 'neutral' | 'warn' | 'ok' | 'err' }> = {
-  idle: { title: 'Connect to Extended', detail: 'Create your Extended perps account with the connected Starknet wallet.', tone: 'neutral' },
-  checking: { title: 'Verifying wallet', detail: 'Checking that your wallet is deployed on Starknet Mainnet…', tone: 'neutral' },
-  notDeployed: { title: 'Wallet not deployed on Mainnet', detail: 'Extended verifies your wallet on-chain, so it must be deployed before it can trade. Fund it once to deploy it, then come back.', tone: 'warn' },
-  checkFailed: { title: 'Could not verify wallet', detail: 'We could not confirm the wallet on Starknet Mainnet right now. Check your connection and try again.', tone: 'warn' },
-  signing: { title: 'Signing requests', detail: 'Approve the two signature requests in your wallet (Account Creation and Registration).', tone: 'neutral' },
-  submitting: { title: 'Creating account', detail: 'Registering your Extended account and setting up your vault…', tone: 'neutral' },
-  success: { title: 'Extended account ready', detail: 'Loading your account into the terminal…', tone: 'ok' },
-  unavailable: { title: 'Extended unavailable right now', detail: '', tone: 'err' },
-  error: { title: 'Onboarding error', detail: '', tone: 'err' },
-};
+function StatusPill({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 border ${ok ? 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/30 text-amber-300 bg-amber-500/10'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+      {label}
+    </span>
+  );
+}
 
-export default function ExtendedPage() {
-  const { wallet: connectedWallet } = useWallet();
+/** The Extended terminal content. Wrapped by ExtendedWalletProvider below. */
+function ExtendedTerminal() {
+  const { wallet, connect, disconnect, requestMainnetSwitch } = useExtendedWallet();
   const ext = useExtended({
-    address: connectedWallet?.address ?? null,
-    chainId: connectedWallet?.chainId ?? null,
-    isConnected: connectedWallet?.isConnected ?? false,
-    walletAccount: connectedWallet?.walletAccount ?? null,
+    address: wallet.address,
+    chainId: wallet.chainId,
+    isConnected: wallet.isConnected,
+    walletAccount: wallet.walletAccount,
   });
 
-  const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
-  const [orderType, setOrderType] = useState<'LIMIT' | 'MARKET'>('LIMIT');
-  const [qty, setQty] = useState('');
-  const [price, setPrice] = useState('');
-  const [reduceOnly, setReduceOnly] = useState(false);
-  const [leverageInput, setLeverageInput] = useState('');
+  // Market selection persisted locally (scoped to the Extended terminal).
+  const [marketSearch, setMarketSearch] = useState('');
+  const [showMarketList, setShowMarketList] = useState(false);
   const [accountTab, setAccountTab] = useState<'POSITIONS' | 'ORDERS' | 'HISTORY' | 'DEPOSITS'>('POSITIONS');
   const [depositAmount, setDepositAmount] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [orderBookPrice, setOrderBookPrice] = useState<{ price: string; side: OrderSide } | null>(null);
 
-  const starknetAccount = connectedWallet?.walletAccount ?? null;
-  const starknetAddress = connectedWallet?.address ?? null;
-  const walletOnMainnet = connectedWallet?.chainId ? String(connectedWallet.chainId).toLowerCase().includes('main') : null;
+  const persistSelectedMarket = useCallback((name: string) => {
+    try {
+      localStorage.setItem(MARKET_PERSIST_KEY, name);
+    } catch {
+      // Ignore storage errors.
+    }
+    ext.setSelectedMarket(name);
+  }, [ext]);
 
-  const mark = ext.market?.marketStats.markPrice ?? '0';
-  const effectivePrice = orderType === 'MARKET' ? mark : price || mark;
-
-  // Default qty to the market's minimum order size once markets load.
+  // Restore the persisted market once markets load.
   useEffect(() => {
-    if (!qty && ext.market?.tradingConfig.minOrderSize) setQty(ext.market.tradingConfig.minOrderSize);
-  }, [ext.market?.tradingConfig.minOrderSize, qty]);
+    if (ext.markets.length === 0) return;
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(MARKET_PERSIST_KEY) : null;
+    if (saved && ext.markets.some((m) => m.name === saved) && saved !== ext.selectedMarket) {
+      ext.setSelectedMarket(saved);
+    }
+  }, [ext.markets]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync leverage input from the live leverage value.
-  useEffect(() => {
-    if (ext.leverage && !leverageInput) setLeverageInput(ext.leverage);
-  }, [ext.leverage, leverageInput]);
+  const filteredMarkets = useMemo(() => {
+    const q = marketSearch.trim().toLowerCase();
+    if (!q) return ext.markets;
+    return ext.markets.filter((m) => m.name.toLowerCase().includes(q) || m.assetName.toLowerCase().includes(q));
+  }, [ext.markets, marketSearch]);
+
+  const market = ext.market;
+  const chg = Number(market?.marketStats.dailyPriceChangePercentage ?? 0);
+  const maxLeverage = market?.tradingConfig.maxLeverage ?? '1';
+  const fundingRate = Number(market?.marketStats.fundingRate ?? 0) * 100;
+
+  const starknetAccount = wallet.walletAccount;
+  const starknetAddress = wallet.address;
+  const walletConnected = wallet.isConnected && Boolean(starknetAddress);
+  const onMainnet = wallet.onMainnet;
+
+  const terminalActive = ext.sessionState === 'active';
+  const canTrade = ext.canTrade && onMainnet === true;
+
+  // Order book price selection → order panel.
+  const handleOrderBookPrice = useCallback((price: string, side: OrderSide) => {
+    setOrderBookPrice({ price, side });
+  }, []);
 
   const handleDeposit = async () => {
     if (!starknetAccount) return;
@@ -108,7 +137,7 @@ export default function ExtendedPage() {
       await ext.depositOnChain(depositAmount, starknetAccount);
       setDepositAmount('');
     } catch {
-      // Error is surfaced via depositState.
+      // Error surfaced via depositState.
     }
   };
 
@@ -123,18 +152,10 @@ export default function ExtendedPage() {
 
   const positions = ext.positions;
   const openOrders = ext.openOrders;
-  const orderHistory = ext.orderHistory;
-  const maxLeverage = useMemo(() => ext.market?.tradingConfig.maxLeverage ?? '1', [ext.market]);
-  const chg = Number(ext.market?.marketStats.dailyPriceChangePercentage ?? 0);
-  const depth = ext.orderbook;
-  const oc = ONBOARDING_COPY[ext.onboardingState];
-
-  const canTrade = ext.canTrade;
-  const terminalLocked = ext.sessionState !== 'active';
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans">
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      {/* ── Top bar ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 border-b border-zinc-800/80 bg-black/90 backdrop-blur-md">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -143,19 +164,20 @@ export default function ExtendedPage() {
               <span className="font-mono font-black text-sm tracking-widest text-white uppercase">ORRANGE</span>
             </Link>
             <span className="text-[10px] px-2 py-0.5 bg-orange-500/15 text-orange-400 border border-orange-500/30 font-mono font-bold">
-              PERPS
+              EXTENDED
             </span>
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 border border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              STARKNET MAINNET
-            </span>
+            <StatusPill ok={onMainnet !== false} label={onMainnet === false ? 'SWITCH TO MAINNET' : 'STARKNET MAINNET'} />
           </div>
 
           <div className="flex items-center gap-2">
-            {ext.sessionState === 'active' && ext.status?.session && (
+            {walletConnected ? (
               <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 border border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {shortAddress(ext.status.session.wallet)}
+                Ready · {shortAddress(starknetAddress)}
+              </span>
+            ) : (
+              <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 border border-zinc-800 text-zinc-500">
+                Ready not connected
               </span>
             )}
             <a
@@ -172,254 +194,247 @@ export default function ExtendedPage() {
               className="inline-flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors"
             >
               <Wallet className="w-3 h-3" />
-              Wallet
+              Privacy Wallet
             </Link>
           </div>
         </div>
       </header>
 
       <main className="max-w-[1600px] mx-auto px-4 py-4 space-y-4">
-        {/* ── Market selector bar ───────────────────────────────────────────── */}
-        <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2 relative">
-          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-            {ext.markets.map((m) => {
-              const active = m.name === ext.selectedMarket;
-              const c = Number(m.marketStats.dailyPriceChangePercentage);
-              return (
-                <button
-                  key={m.name}
-                  onClick={() => ext.setSelectedMarket(m.name)}
-                  className={`px-3 py-1.5 rounded border text-[11px] font-mono font-bold whitespace-nowrap transition-colors ${
-                    active
-                      ? 'bg-orange-500 border-orange-500 text-black'
-                      : 'border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
-                  }`}
-                >
-                  {m.name}
-                  <span className={`ml-1.5 ${c >= 0 ? 'text-emerald-400' : 'text-rose-400'} ${active ? 'text-black/70' : ''}`}>
-                    {c >= 0 ? '+' : ''}{c.toFixed(2)}%
-                  </span>
-                </button>
-              );
-            })}
-            {ext.marketsLoading && <Loader2 className="w-4 h-4 animate-spin text-zinc-500 shrink-0" />}
+        {/* ── Connection gate ───────────────────────────────────────────── */}
+        {!wallet.isDetected ? (
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-8 flex flex-col items-center text-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-orange-500/10 border border-orange-500/30 flex items-center justify-center">
+              <Plug className="w-5 h-5 text-orange-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold font-mono text-white">Install Ready Wallet</h2>
+              <p className="text-sm text-zinc-400 font-mono mt-1 max-w-md">
+                Extended requires a Starknet wallet in your browser. Ready (formerly Argent X)
+                is the recommended wallet for Starknet Mainnet.
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              <a
+                href="https://chromewebstore.google.com/detail/ready-wallet-formerly-arg/dlcobpjiigpikoobohmabehhmhfoodbb"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
+              >
+                Install Ready Wallet
+              </a>
+              <a
+                href="https://ready.co/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-mono px-4 py-2 border border-zinc-700 text-zinc-300 hover:text-white transition-colors"
+              >
+                ready.co
+              </a>
+            </div>
+            <p className="text-[11px] text-zinc-600 font-mono">
+              Other Starknet wallets (Argent X, Braavos) may work once connected — markets load below regardless.
+            </p>
           </div>
+        ) : !walletConnected ? (
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-8 flex flex-col items-center text-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-orange-500/10 border border-orange-500/30 flex items-center justify-center">
+              <Wallet className="w-5 h-5 text-orange-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold font-mono text-white">Connect Ready Wallet</h2>
+              <p className="text-sm text-zinc-400 font-mono mt-1 max-w-md">
+                This connects your Ready Starknet wallet to the Extended perps terminal on
+                Starknet Mainnet. It is completely separate from your Orrange privacy wallet.
+              </p>
+            </div>
+            {wallet.error && (
+              <div className="flex items-center gap-2 text-[12px] text-amber-300 font-mono border border-amber-500/30 bg-amber-500/10 rounded px-3 py-2">
+                <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
+                {wallet.error}
+              </div>
+            )}
+            <button
+              onClick={() => void connect()}
+              disabled={wallet.isConnecting}
+              className="inline-flex items-center gap-2 text-[12px] font-mono font-bold px-5 py-2.5 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50"
+            >
+              {wallet.isConnecting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Connecting…</>
+              ) : (
+                <><Wallet className="w-4 h-4" /> Connect Ready Wallet</>
+              )}
+            </button>
+            <p className="text-[10px] text-zinc-600 font-mono">
+              Markets, charts and the order book are live and visible below even before you connect.
+            </p>
+          </div>
+        ) : onMainnet === false ? (
+          <div className="border border-rose-500/40 bg-rose-500/10 rounded-lg p-8 flex flex-col items-center text-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center">
+              <TriangleAlert className="w-5 h-5 text-rose-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold font-mono text-white">Wrong Network</h2>
+              <p className="text-sm text-zinc-400 font-mono mt-1 max-w-md">
+                Your Ready wallet is currently on a network other than Starknet Mainnet.
+                Extended only runs on <span className="text-white">Starknet Mainnet</span>.
+                Orrange never signs or transacts on the wrong network.
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                onClick={() => void requestMainnetSwitch()}
+                className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
+              >
+                Switch to Starknet Mainnet
+              </button>
+              <button
+                onClick={disconnect}
+                className="text-[11px] font-mono px-4 py-2 border border-zinc-700 text-zinc-300 hover:text-white transition-colors"
+              >
+                Disconnect wallet
+              </button>
+            </div>
+            <p className="text-[11px] text-zinc-500 font-mono">
+              Current chain: {wallet.chainId ?? 'unknown'}. Switch inside your wallet if the button doesn't work.
+            </p>
+          </div>
+        ) : (
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-6">
+            {terminalActive ? (
+              <AccountConnectedBar
+                ext={ext}
+                walletAddress={starknetAddress}
+                onDisconnect={disconnect}
+              />
+            ) : (
+              <OnboardingFlow ext={ext} walletAddress={starknetAddress} />
+            )}
+          </div>
+        )}
+
+        {/* ── Market selector bar ───────────────────────────────────────── */}
+        <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2 relative">
+          <div className="flex items-center gap-2">
+            <div className="relative shrink-0">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" />
+              <input
+                value={marketSearch}
+                onChange={(e) => { setMarketSearch(e.target.value); setShowMarketList(true); }}
+                onFocus={() => setShowMarketList(true)}
+                onBlur={() => setTimeout(() => setShowMarketList(false), 150)}
+                placeholder="Search markets…"
+                className="w-40 px-7 py-1.5 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-[11px] font-mono outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              {ext.markets.map((m) => {
+                const active = m.name === ext.selectedMarket;
+                const c = Number(m.marketStats.dailyPriceChangePercentage);
+                return (
+                  <button
+                    key={m.name}
+                    onClick={() => persistSelectedMarket(m.name)}
+                    className={`px-3 py-1.5 rounded border text-[11px] font-mono font-bold whitespace-nowrap transition-colors ${
+                      active
+                        ? 'bg-orange-500 border-orange-500 text-black'
+                        : 'border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
+                    }`}
+                  >
+                    {m.name}
+                    <span className={`ml-1.5 ${c >= 0 ? 'text-emerald-400' : 'text-rose-400'} ${active ? 'text-black/70' : ''}`}>
+                      {c >= 0 ? '+' : ''}{c.toFixed(2)}%
+                    </span>
+                  </button>
+                );
+              })}
+              {ext.marketsLoading && <Loader2 className="w-4 h-4 animate-spin text-zinc-500 shrink-0" />}
+            </div>
+          </div>
+
+          {showMarketList && filteredMarkets.length > 0 && (
+            <div className="absolute left-2 right-2 top-full mt-1 z-30 border border-zinc-800 bg-zinc-950 rounded-lg shadow-2xl max-h-72 overflow-y-auto">
+              {filteredMarkets.map((m) => {
+                const active = m.name === ext.selectedMarket;
+                const c = Number(m.marketStats.dailyPriceChangePercentage);
+                return (
+                  <button
+                    key={m.name}
+                    onClick={() => { persistSelectedMarket(m.name); setShowMarketList(false); }}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-left text-[11px] font-mono hover:bg-zinc-900 transition-colors ${active ? 'bg-zinc-900' : ''}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="font-bold text-white">{m.name}</span>
+                      <span className={`text-[9px] px-1 py-0.5 rounded ${m.status === 'ACTIVE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                        {m.status}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className={`font-bold ${c >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        ${fmt(m.marketStats.lastPrice, m.assetPrecision > 2 ? 4 : 2)}
+                      </span>
+                      <span className="text-zinc-500 w-20 text-right">{c >= 0 ? '+' : ''}{c.toFixed(2)}%</span>
+                      <span className="text-zinc-600 w-24 text-right">${fmt(Number(m.marketStats.dailyVolume) / 1e6, 1)}M</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {ext.marketsError && (
             <div className="mt-1 flex items-center gap-2 text-[11px] text-rose-400 font-mono">
-              <X className="w-3 h-3" /> {ext.marketsError}
+              <X className="w-3 h-3" /> {translateError(ext.marketsError)}
               <button onClick={ext.refreshMarkets} className="underline">Retry</button>
             </div>
           )}
         </div>
 
-        {/* ── Market stats strip ────────────────────────────────────────────── */}
-        {ext.market && (
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-8 gap-2">
+        {/* ── Market stats strip ────────────────────────────────────────── */}
+        {market && (
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
               <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Mark Price</div>
               <div className={`text-lg font-black font-mono ${chg >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                ${fmt(mark, 2)}
+                ${fmt(market.marketStats.markPrice, market.assetPrecision > 2 ? 4 : 2)}
               </div>
               <div className={`text-[11px] font-mono ${chg >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                 {chg >= 0 ? '+' : ''}{chg.toFixed(2)}% 24h
               </div>
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
-              <Stat label="Index" value={`$${fmt(ext.market.marketStats.indexPrice, 2)}`} />
+              <Stat label="Last" value={`$${fmt(market.marketStats.lastPrice, market.assetPrecision > 2 ? 4 : 2)}`} />
+              <div className="text-[10px] font-mono text-zinc-600 mt-1">Index ${fmt(market.marketStats.indexPrice, 2)}</div>
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
-              <Stat label="24h Volume" value={`$${fmt(Number(ext.market.marketStats.dailyVolume) / 1e6, 2)}M`} />
-            </div>
-            <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
-              <Stat label="Open Interest" value={`$${fmt(Number(ext.market.marketStats.openInterest) / 1e6, 2)}M`} />
+              <Stat label="24h Volume" value={`$${fmt(Number(market.marketStats.dailyVolume) / 1e6, 2)}M`} />
+              <div className="text-[10px] font-mono text-zinc-600 mt-1">OI ${fmt(Number(market.marketStats.openInterest) / 1e6, 2)}M</div>
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5 flex items-center gap-2">
               <Flame className="w-4 h-4 text-orange-400" />
-              <Stat label="Funding (1h)" value={`${(Number(ext.market.marketStats.fundingRate) * 100).toFixed(4)}%`} accent="text-amber-400" />
+              <Stat label="Funding (1h)" value={`${fundingRate.toFixed(4)}%`} accent="text-amber-400" />
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5 flex items-center gap-2">
               <Layers className="w-4 h-4 text-purple-400" />
               <Stat label="Max Lev" value={`${maxLeverage}x`} accent="text-purple-300" />
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
-              <Stat label="24h Low" value={`$${fmt(ext.market.marketStats.dailyLow, 2)}`} />
+              <Stat label="24h Low" value={`$${fmt(market.marketStats.dailyLow, 2)}`} />
             </div>
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
-              <Stat label="24h High" value={`$${fmt(ext.market.marketStats.dailyHigh, 2)}`} />
+              <Stat label="24h High" value={`$${fmt(market.marketStats.dailyHigh, 2)}`} />
+            </div>
+            <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-2.5">
+              <Stat label="Status" value={market.status} accent={market.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'} />
             </div>
           </div>
         )}
 
-        {/* ── Connection / account panel (state machine) ───────────────────── */}
-        {ext.sessionState === 'bootstrapping' || (ext.statusLoading && !ext.status) ? (
-          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4 flex items-center gap-3">
-            <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-            <span className="text-sm font-mono text-zinc-400">Checking Extended account…</span>
-          </div>
-        ) : ext.sessionState === 'error' ? (
-          <div className="border border-rose-500/40 bg-rose-500/10 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <TriangleAlert className="w-4 h-4 text-rose-400" />
-              <div>
-                <div className="text-sm font-bold font-mono text-rose-300">Could not check your Extended account</div>
-                <div className="text-[11px] text-zinc-500">{ext.statusError ?? 'Unexpected error.'}</div>
-              </div>
-            </div>
-            <button
-              onClick={ext.refreshStatus}
-              className="text-[11px] font-mono font-bold px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        ) : ext.sessionState === 'active' ? (
-          /* CASE A — connected / onboarded */
-          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <Server className="w-4 h-4 text-emerald-400" />
-                <div>
-                  <div className="text-sm font-bold font-mono">
-                    {ext.status?.session
-                      ? `Extended account connected — ${shortAddress(ext.status.session.wallet)}`
-                      : 'Extended account connected (server credentials)'}
-                  </div>
-                  <div className="text-[11px] text-zinc-500 font-mono">
-                    {ext.canTrade
-                      ? `Read + trade access${ext.accountInfo ? ` · Account #${ext.accountInfo.accountId} · Vault #${ext.accountInfo.l2Vault}` : ''} · orders signed server-side`
-                      : 'Read-only (server missing Stark keys for trading)'}
-                  </div>
-                </div>
-              </div>
-              {ext.balance && (
-                <div className="flex items-center gap-6 text-right">
-                  <Stat label="Equity" value={`$${fmt(ext.balance.equity)}`} accent="text-emerald-400" />
-                  <Stat label="Balance" value={`$${fmt(ext.balance.balance)}`} />
-                  <Stat label="Available" value={`$${fmt(ext.balance.availableForTrade)}`} />
-                  <Stat label="Margin Ratio" value={`${(Number(ext.balance.marginRatio) * 100).toFixed(2)}%`} />
-                  <Stat
-                    label="uPnL"
-                    value={`$${signed(ext.balance.unrealisedPnl)}`}
-                    accent={Number(ext.balance.unrealisedPnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'}
-                  />
-                </div>
-              )}
-              <button
-                onClick={ext.refreshStatus}
-                className="text-[11px] font-mono px-3 py-1.5 border border-zinc-700 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors"
-              >
-                Refresh
-              </button>
-            </div>
-            {ext.accountError && (
-              <div className="mt-3 text-[11px] text-rose-400 font-mono">Account error: {ext.accountError}</div>
-            )}
-          </div>
-        ) : (
-          /* CASE B / C — wallet connected but no Extended session */
-          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-6">
-            {!starknetAccount || !starknetAddress ? (
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <Plug className="w-4 h-4 text-zinc-500" />
-                  <div>
-                    <div className="text-sm font-bold font-mono">Connect a Starknet wallet to trade perps</div>
-                    <div className="text-[11px] text-zinc-500">
-                      Connect your Privy or Ready Starknet wallet to open an Extended perps account. Markets and charts are live below.
-                    </div>
-                  </div>
-                </div>
-                <Link
-                  href="/wallet"
-                  className="inline-flex items-center gap-2 text-[11px] font-mono font-bold px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white transition-colors"
-                >
-                  <Wallet className="w-3.5 h-3.5" /> Connect Wallet
-                </Link>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-start justify-between gap-6">
-                <div className="flex items-start gap-3 max-w-xl">
-                  <Lock className="w-4 h-4 text-orange-400 mt-0.5" />
-                  <div>
-                    <div className="text-sm font-bold font-mono text-white">Enable Extended Perps</div>
-                    <div className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
-                      Create your Extended perps account with the connected Starknet wallet
-                      {' '}<span className="text-zinc-300 font-mono">{shortAddress(starknetAddress)}</span>.
-                      No EVM wallet, no API keys — your wallet signs once, and orders are signed server-side.
-                    </div>
-                    {walletOnMainnet === false && (
-                      <div className="mt-2 text-[11px] text-amber-400 font-mono border border-amber-500/30 px-2 py-1 rounded inline-block">
-                        Switch your wallet to Starknet Mainnet.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="min-w-[240px] space-y-3">
-                  {/* Onboarding status panel */}
-                  <div className={`border rounded-lg p-3 ${
-                    ext.onboardingState === 'success'
-                      ? 'border-emerald-500/30 bg-emerald-500/10'
-                      : ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' || ext.onboardingState === 'notDeployed'
-                        ? 'border-amber-500/30 bg-amber-500/10'
-                        : ext.onboardingState === 'checking' || ext.onboardingState === 'signing' || ext.onboardingState === 'submitting'
-                          ? 'border-orange-500/30 bg-orange-500/10'
-                          : 'border-zinc-800 bg-zinc-900/40'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      {(['checking', 'signing', 'submitting'] as OnboardingState[]).includes(ext.onboardingState) ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
-                      ) : ext.onboardingState === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      ) : ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' || ext.onboardingState === 'notDeployed' || ext.onboardingState === 'checkFailed' ? (
-                        <TriangleAlert className="w-4 h-4 text-amber-400" />
-                      ) : (
-                        <ShieldCheck className="w-4 h-4 text-orange-400" />
-                      )}
-                      <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-zinc-200">
-                        {oc.title}
-                      </span>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-zinc-400 leading-relaxed">
-                      {oc.detail ||
-                        (ext.onboardingState === 'unavailable' || ext.onboardingState === 'error'
-                          ? ext.onboardingDetail
-                          : '')}
-                    </p>
-                    {ext.onboardingState === 'unavailable' || ext.onboardingState === 'error' ? (
-                      <p className="mt-1.5 text-[11px] text-zinc-500 leading-relaxed">{ext.onboardingDetail}</p>
-                    ) : null}
-                  </div>
-
-                  <button
-                    onClick={() => void ext.runOnboarding()}
-                    disabled={
-                      ['checking', 'signing', 'submitting', 'success'].includes(ext.onboardingState) ||
-                      Boolean(walletOnMainnet === false)
-                    }
-                    className="w-full inline-flex items-center justify-center gap-2 text-[11px] font-mono font-bold px-4 py-2.5 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {['checking', 'signing', 'submitting'].includes(ext.onboardingState) ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {oc.title}…</>
-                    ) : ext.onboardingState === 'notDeployed' || ext.onboardingState === 'checkFailed' ? (
-                      'Re-check wallet'
-                    ) : (
-                      'Connect to Extended'
-                    )}
-                  </button>
-                  <p className="text-[10px] text-zinc-600 font-mono leading-relaxed">
-                    Two signature requests will appear in your wallet. Your L2 key is derived and stored server-side — it never leaves the server.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Main grid ─────────────────────────────────────────────────────── */}
+        {/* ── Main grid ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-          {/* Chart (8 cols) */}
           <div className="xl:col-span-8 space-y-4">
+            {/* Chart */}
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2">
@@ -447,6 +462,11 @@ export default function ExtendedPage() {
                   <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading candles…
                 </div>
               )}
+              {!ext.candlesLoading && ext.candles.length === 0 && !ext.marketsLoading && (
+                <div className="py-10 text-center text-zinc-600 font-mono text-sm">
+                  No candle data for {ext.selectedMarket}.
+                </div>
+              )}
             </div>
 
             {/* Trades feed */}
@@ -455,11 +475,6 @@ export default function ExtendedPage() {
                 <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2">
                   <ArrowLeftRight className="w-3.5 h-3.5" /> Market Trades — {ext.selectedMarket}
                 </h2>
-                {ext.orderbook && (
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    Spread: {fmt(Math.abs(Number(ext.orderbook.ask[0]?.price ?? 0) - Number(ext.orderbook.bid[0]?.price ?? 0)), 2)}
-                  </span>
-                )}
               </div>
               <div className="overflow-y-auto max-h-56">
                 <table className="w-full text-[11px] font-mono">
@@ -490,212 +505,45 @@ export default function ExtendedPage() {
             </div>
           </div>
 
-          {/* Orderbook + order entry (4 cols) */}
           <div className="xl:col-span-4 space-y-4">
-            {/* Orderbook */}
+            {/* Order book */}
             <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
-              <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-2">
-                <Activity className="w-3.5 h-3.5" /> Order Book — {ext.selectedMarket}
-              </h2>
-              {!depth ? (
-                <div className="text-sm text-zinc-600 py-8 text-center font-mono">Loading order book…</div>
-              ) : (
-                <div className="text-[11px] font-mono">
-                  <div className="grid grid-cols-3 text-zinc-500 pb-1 border-b border-zinc-800/60">
-                    <span>Bid</span><span className="text-right">Size</span><span className="text-right">Price</span>
-                  </div>
-                  {depth.bid.slice(0, 10).map((l, i) => {
-                    const bid = Number(l.price);
-                    return (
-                      <div key={`b${i}`} className="grid grid-cols-3 py-0.5">
-                        <span className="text-emerald-400">{fmt(bid, 2)}</span>
-                        <span className="text-right text-zinc-300">{fmt(l.qty, 4)}</span>
-                        <span className="text-right text-emerald-400/80">{fmt(Number(l.qty) * bid, 2)}</span>
-                      </div>
-                    );
-                  })}
-                  <div className="my-1 py-1 border-y border-zinc-800/80 text-center font-black text-sm">
-                    <span className="text-emerald-400">{fmt(depth.bid[0]?.price, 2)}</span>
-                    <span className="text-zinc-600 mx-2">/</span>
-                    <span className="text-rose-400">{fmt(depth.ask[0]?.price, 2)}</span>
-                  </div>
-                  {depth.ask.slice(0, 10).map((l, i) => (
-                    <div key={`a${i}`} className="grid grid-cols-3 py-0.5">
-                      <span className="text-rose-400">{fmt(l.price, 2)}</span>
-                      <span className="text-right text-zinc-300">{fmt(l.qty, 4)}</span>
-                      <span className="text-right text-rose-400/80">{fmt(Number(l.qty) * Number(l.price), 2)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5" /> Order Book — {ext.selectedMarket}
+                </h2>
+                <button onClick={() => void ext.refreshOrderbook?.()} title="Refresh order book" className="text-zinc-600 hover:text-zinc-300">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <OrderBook
+                book={ext.orderbook}
+                onSelectPrice={handleOrderBookPrice}
+              />
             </div>
 
             {/* Order entry */}
-            <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4 space-y-3 sticky top-16">
-              <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2">
-                <ArrowLeftRight className="w-3.5 h-3.5" /> Place Order — {ext.selectedMarket}
-              </h2>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setSide('BUY')}
-                  className={`py-2 rounded text-xs font-bold transition-colors ${side === 'BUY' ? 'bg-emerald-500 text-black' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
-                >
-                  <TrendingUp className="w-4 h-4 inline mr-1" /> Long
-                </button>
-                <button
-                  onClick={() => setSide('SELL')}
-                  className={`py-2 rounded text-xs font-bold transition-colors ${side === 'SELL' ? 'bg-rose-500 text-black' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
-                >
-                  <TrendingDown className="w-4 h-4 inline mr-1" /> Short
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setOrderType('LIMIT')}
-                  className={`py-1.5 rounded text-[11px] font-mono font-bold border transition-colors ${orderType === 'LIMIT' ? 'border-orange-500 text-orange-400 bg-orange-500/10' : 'border-zinc-800 text-zinc-400'}`}
-                >
-                  Limit
-                </button>
-                <button
-                  onClick={() => setOrderType('MARKET')}
-                  className={`py-1.5 rounded text-[11px] font-mono font-bold border transition-colors ${orderType === 'MARKET' ? 'border-orange-500 text-orange-400 bg-orange-500/10' : 'border-zinc-800 text-zinc-400'}`}
-                >
-                  Market
-                </button>
-              </div>
-
-              {/* Leverage */}
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Leverage (max {maxLeverage}x)</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="number"
-                    min={1}
-                    max={Number(maxLeverage)}
-                    step={1}
-                    value={leverageInput}
-                    onChange={(e) => setLeverageInput(e.target.value)}
-                    onBlur={() => {
-                      if (leverageInput && leverageInput !== ext.leverage) void ext.setLeverageForMarket(leverageInput);
-                    }}
-                    className="w-24 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  />
-                  <span className="text-xs font-mono text-zinc-500">x</span>
-                  <button
-                    onClick={() => { const v = maxLeverage; setLeverageInput(v); void ext.setLeverageForMarket(v); }}
-                    disabled={!canTrade || ext.leverageLoading}
-                    className="text-[10px] font-mono px-2 py-1.5 border border-zinc-700 text-zinc-400 hover:text-white disabled:opacity-40"
-                  >
-                    Max
-                  </button>
-                  {ext.leverageLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Quantity ({ext.market?.assetName ?? 'asset'})</label>
-                  <input
-                    type="text"
-                    value={qty}
-                    onChange={(e) => setQty(e.target.value)}
-                    placeholder={ext.market?.tradingConfig.minOrderSize ? `min ${ext.market.tradingConfig.minOrderSize}` : ''}
-                    className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">
-                    {orderType === 'MARKET' ? 'Price (worst accepted)' : 'Limit Price (USDC)'}
-                  </label>
-                  <input
-                    type="text"
-                    value={orderType === 'MARKET' ? mark : price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    disabled={orderType === 'MARKET'}
-                    placeholder={orderType === 'MARKET' ? 'Mark price' : '0.00'}
-                    className="w-full mt-1 px-3 py-2 bg-zinc-900 border border-zinc-800 focus:border-orange-500 rounded text-sm font-mono outline-none disabled:opacity-60"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-zinc-400">
-                <div className="border border-zinc-800 rounded p-2">
-                  <div className="text-[9px] uppercase text-zinc-500">Est. Notional</div>
-                  <div className="font-bold text-white">${fmt(Number(effectivePrice || '0') * Number(qty || '0'))}</div>
-                </div>
-                <div className="border border-zinc-800 rounded p-2">
-                  <div className="text-[9px] uppercase text-zinc-500">Est. Margin</div>
-                  <div className="font-bold text-purple-300">
-                    ${fmt(Number(effectivePrice || '0') * Number(qty || '0') / Math.max(1, Number(leverageInput || 1)))}
-                  </div>
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
-                <input
-                  type="checkbox"
-                  checked={reduceOnly}
-                  onChange={(e) => setReduceOnly(e.target.checked)}
-                  className="accent-orange-500"
-                />
-                Reduce-only
-              </label>
-
-              {ext.actionError && (
-                <div className="text-[11px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded p-2 font-mono break-words">
-                  {ext.actionError}
-                </div>
-              )}
-
-              <button
-                disabled={!canTrade || ext.submitting || !ext.market}
-                onClick={() => {
-                  void ext
-                    .placeOrder({
-                      market: ext.selectedMarket,
-                      side,
-                      qty,
-                      price: effectivePrice,
-                      type: orderType,
-                      timeInForce: orderType === 'MARKET' ? 'IOC' : 'GTT',
-                      reduceOnly: reduceOnly || undefined,
-                    })
-                    .catch(() => undefined);
-                }}
-                className={`w-full py-3 rounded text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                  side === 'BUY' ? 'bg-emerald-500 hover:bg-emerald-400 text-black' : 'bg-rose-500 hover:bg-rose-400 text-black'
-                }`}
-              >
-                {ext.submitting ? (
-                  <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Placing…</span>
-                ) : side === 'BUY' ? (
-                  reduceOnly ? 'Close Short (Reduce)' : 'Buy / Long'
-                ) : (
-                  reduceOnly ? 'Close Long (Reduce)' : 'Sell / Short'
-                )}
-              </button>
-
-              {terminalLocked && (
-                <p className="text-[10px] text-zinc-600 font-mono">
-                  {starknetAccount
-                    ? 'Connect to Extended above to unlock trading.'
-                    : 'Connect a Starknet wallet and an Extended account to trade.'}
-                </p>
-              )}
-
-              {ext.lastPlacedOrder && (
-                <div className="flex items-center gap-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded p-2">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Order placed — id {ext.lastPlacedOrder.id}
-                </div>
-              )}
-            </div>
+            <OrderPanel
+              market={market}
+              balance={ext.balance}
+              canTrade={canTrade}
+              leverage={ext.leverage}
+              leverageLoading={ext.leverageLoading}
+              setLeverageForMarket={ext.setLeverageForMarket}
+              submitting={ext.submitting}
+              lastOrder={ext.lastOrder}
+              lastOrderStatus={ext.lastOrderStatus}
+              trackingOrder={ext.trackingOrder}
+              actionError={ext.actionError}
+              clearActionError={ext.clearActionError}
+              placeOrder={ext.placeOrder}
+              orderBookPrice={orderBookPrice}
+              setOrderBookPrice={setOrderBookPrice}
+            />
           </div>
         </div>
 
-        {/* ── Account tabs: positions / orders / history / deposits ─────────── */}
+        {/* ── Account tabs ──────────────────────────────────────────────── */}
         <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg">
           <div className="flex items-center gap-1 border-b border-zinc-800/60 px-3 pt-2 overflow-x-auto">
             {([
@@ -718,9 +566,9 @@ export default function ExtendedPage() {
 
           {!ext.isConnected ? (
             <div className="p-8 text-center text-zinc-600 font-mono text-sm">
-              {starknetAccount
-                ? 'Enable Extended Perps above to view positions, orders and deposits.'
-                : 'Connect a Starknet wallet and an Extended account to view account data.'}
+              {walletConnected
+                ? 'Complete Extended onboarding above to view your account.'
+                : 'Connect your Ready wallet and onboard to view your account.'}
             </div>
           ) : accountTab === 'POSITIONS' ? (
             positions.length === 0 ? (
@@ -737,12 +585,15 @@ export default function ExtendedPage() {
                       <th className="py-2 px-3">Liq. Price</th>
                       <th className="py-2 px-3">Margin</th>
                       <th className="py-2 px-3">uPnL</th>
+                      <th className="py-2 px-3">ROE</th>
                       <th className="py-2 px-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/50">
                     {positions.map((p: Position) => {
                       const pnl = Number(p.unrealisedPnl);
+                      const margin = Number(p.margin) || 1;
+                      const roe = (pnl / margin) * 100;
                       return (
                         <tr key={p.id} className="hover:bg-zinc-900/40">
                           <td className="py-2 px-3">
@@ -758,6 +609,9 @@ export default function ExtendedPage() {
                           <td className="py-2 px-3 text-zinc-400">${fmt(p.margin)}</td>
                           <td className={`py-2 px-3 font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             ${signed(p.unrealisedPnl)}
+                          </td>
+                          <td className={`py-2 px-3 font-bold ${roe >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {roe >= 0 ? '+' : ''}{fmt(roe.toFixed(2), 2)}%
                           </td>
                           <td className="py-2 px-3 text-right">
                             <button
@@ -783,6 +637,7 @@ export default function ExtendedPage() {
                 <table className="w-full text-left text-[11px] font-mono">
                   <thead className="text-zinc-500 uppercase text-[10px]">
                     <tr>
+                      <th className="py-2 px-3">Order ID</th>
                       <th className="py-2 px-3">Market</th>
                       <th className="py-2 px-3">Side</th>
                       <th className="py-2 px-3">Type</th>
@@ -795,12 +650,13 @@ export default function ExtendedPage() {
                   <tbody className="divide-y divide-zinc-800/50">
                     {openOrders.map((o) => (
                       <tr key={o.id} className="hover:bg-zinc-900/40">
+                        <td className="py-2 px-3 text-zinc-500">#{o.id}</td>
                         <td className="py-2 px-3 text-white">{o.market}</td>
                         <td className={`py-2 px-3 font-bold ${o.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>{o.side}</td>
                         <td className="py-2 px-3 text-zinc-400">{o.type}</td>
                         <td className="py-2 px-3 text-zinc-300">{fmt(o.qty, 4)}</td>
                         <td className="py-2 px-3 text-zinc-300">{o.price ? `$${fmt(o.price)}` : '—'}</td>
-                        <td className="py-2 px-3 text-zinc-400">{o.status}</td>
+                        <td className="py-2 px-3 text-amber-300">{o.status}</td>
                         <td className="py-2 px-3 text-right">
                           <button
                             disabled={!canTrade}
@@ -817,7 +673,7 @@ export default function ExtendedPage() {
               </div>
             )
           ) : accountTab === 'DEPOSITS' ? (
-            <div className="p-4 space-y-3">
+            <div className="p-4">
               {ext.deposits.length === 0 ? (
                 <div className="p-4 text-center text-zinc-600 font-mono text-sm">No deposits yet.</div>
               ) : (
@@ -827,6 +683,7 @@ export default function ExtendedPage() {
                       <th className="py-2 px-3">Amount</th>
                       <th className="py-2 px-3">Status</th>
                       <th className="py-2 px-3">Time</th>
+                      <th className="py-2 px-3">Tx</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/50">
@@ -835,19 +692,32 @@ export default function ExtendedPage() {
                         <td className="py-2 px-3 text-zinc-200">${fmt(d.amount)}</td>
                         <td className="py-2 px-3 text-zinc-400">{d.status}</td>
                         <td className="py-2 px-3 text-zinc-500">{d.timestamp ? new Date(d.timestamp).toLocaleString() : '—'}</td>
+                        <td className="py-2 px-3 text-zinc-500">
+                          {d.transactionHash ? (
+                            <a
+                              href={`${ext.env.explorerUrl}/tx/${d.transactionHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-zinc-400 hover:text-white"
+                            >
+                              {shortAddress(d.transactionHash)}
+                            </a>
+                          ) : '—'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
             </div>
-          ) : orderHistory.length === 0 ? (
+          ) : ext.orderHistory.length === 0 ? (
             <div className="p-8 text-center text-zinc-600 font-mono text-sm">No order history.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-[11px] font-mono">
                 <thead className="text-zinc-500 uppercase text-[10px]">
                   <tr>
+                    <th className="py-2 px-3">Order ID</th>
                     <th className="py-2 px-3">Market</th>
                     <th className="py-2 px-3">Side</th>
                     <th className="py-2 px-3">Type</th>
@@ -857,8 +727,9 @@ export default function ExtendedPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/50">
-                  {orderHistory.map((o) => (
+                  {ext.orderHistory.map((o) => (
                     <tr key={o.id} className="hover:bg-zinc-900/40">
+                      <td className="py-2 px-3 text-zinc-500">#{o.id}</td>
                       <td className="py-2 px-3 text-white">{o.market}</td>
                       <td className={`py-2 px-3 font-bold ${o.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>{o.side}</td>
                       <td className="py-2 px-3 text-zinc-400">{o.type}</td>
@@ -873,18 +744,19 @@ export default function ExtendedPage() {
           )}
         </div>
 
-        {/* ── Deposit / Withdraw panel ──────────────────────────────────────── */}
+        {/* ── Deposit / Withdraw panel ──────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-4 space-y-3">
             <h2 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-2">
               <ArrowDownToLine className="w-3.5 h-3.5" /> Deposit USDC (native Starknet)
             </h2>
             <p className="text-[11px] text-zinc-500 font-mono">
-              Approve + deposit to the Extended core contract (vault {ext.accountInfo?.l2Vault ?? '—'}). Requires a mainnet Starknet wallet.
+              Approve + deposit to the Extended core contract (vault {ext.accountInfo?.l2Vault ?? '—'}). Requires your Ready wallet on Starknet Mainnet.
             </p>
             <div className="flex gap-2">
               <input
                 type="text"
+                inputMode="decimal"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(e.target.value)}
                 placeholder="0.00 USDC"
@@ -901,7 +773,7 @@ export default function ExtendedPage() {
               </button>
             </div>
             {!starknetAccount && (
-              <p className="text-[10px] text-zinc-600 font-mono">Connect a Starknet wallet to deposit. The wallet must be on Starknet Mainnet.</p>
+              <p className="text-[10px] text-zinc-600 font-mono">Connect your Ready wallet on Starknet Mainnet to deposit.</p>
             )}
             {ext.depositState.status === 'submitted' && ext.depositState.transactionHash && (
               <a
@@ -920,7 +792,7 @@ export default function ExtendedPage() {
             )}
             {ext.depositState.status === 'error' && (
               <div className="text-[11px] text-rose-400 font-mono border border-rose-500/30 bg-rose-500/10 rounded p-2 break-words">
-                {ext.depositState.error}
+                {translateError(ext.depositState.error)}
               </div>
             )}
           </div>
@@ -930,11 +802,13 @@ export default function ExtendedPage() {
               <ArrowUpFromLine className="w-3.5 h-3.5" /> Withdraw USDC
             </h2>
             <p className="text-[11px] text-zinc-500 font-mono">
-              Starknet withdrawal, signed server-side. Max: ${fmt(ext.balance?.availableForWithdrawal ?? '0')} available.
+              Starknet withdrawal, signed server-side, returned to <span className="text-zinc-300">{shortAddress(starknetAddress)}</span>.
+              Max: ${fmt(ext.balance?.availableForWithdrawal ?? '0')} available.
             </p>
             <div className="flex gap-2">
               <input
                 type="text"
+                inputMode="decimal"
                 value={withdrawAmount}
                 onChange={(e) => setWithdrawAmount(e.target.value)}
                 placeholder="0.00 USDC"
@@ -957,18 +831,231 @@ export default function ExtendedPage() {
             )}
             {ext.withdrawState.error && (
               <div className="text-[11px] text-rose-400 font-mono border border-rose-500/30 bg-rose-500/10 rounded p-2 break-words">
-                {ext.withdrawState.error}
+                {translateError(ext.withdrawState.error)}
               </div>
             )}
           </div>
         </div>
 
-        {/* Footer note */}
+        {/* Footer */}
         <p className="text-[11px] text-zinc-600 font-mono text-center pb-8">
-          Extended Exchange perps terminal on Starknet Mainnet. Public market data is live; private trading is signed
-          server-side. No private keys or API credentials are ever exposed in the browser.
+          Extended Exchange perps terminal on Starknet Mainnet. Your Extended trading balance is held by Extended
+          Exchange and is separate from your Orrange STRK20 private balance. Orders and withdrawals are signed
+          server-side; no private keys or API credentials are exposed in the browser.
         </p>
       </main>
     </div>
+  );
+}
+
+/** Active-account connection bar with clear Orrange-vs-Extended balance split. */
+function AccountConnectedBar({
+  ext,
+  walletAddress,
+  onDisconnect,
+}: {
+  ext: ReturnType<typeof useExtended>;
+  walletAddress: string | null;
+  onDisconnect: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Server className="w-4 h-4 text-emerald-400" />
+          <div>
+            <div className="text-sm font-bold font-mono">
+              Extended account connected — {shortAddress(ext.status?.session?.wallet ?? walletAddress)}
+            </div>
+            <div className="text-[11px] text-zinc-500 font-mono">
+              {ext.canTrade
+                ? `Read + trade · Account #${ext.accountInfo?.accountId ?? '—'} · Vault #${ext.accountInfo?.l2Vault ?? '—'} · orders signed server-side`
+                : 'Read-only access'}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={ext.refreshStatus}
+            className="text-[11px] font-mono px-3 py-1.5 border border-zinc-700 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={onDisconnect}
+            className="text-[11px] font-mono px-3 py-1.5 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors"
+          >
+            Disconnect
+          </button>
+        </div>
+      </div>
+
+      {ext.accountError && (
+        <div className="text-[11px] text-rose-400 font-mono">{translateError(ext.accountError)}</div>
+      )}
+
+      {/* Clear split between the two wallet domains. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="border border-orange-500/20 bg-orange-500/5 rounded-lg p-3">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-orange-400 font-mono font-bold">
+            <Wallet className="w-3.5 h-3.5" /> Orrange Privacy Wallet
+          </div>
+          <div className="text-[11px] text-zinc-500 font-mono mt-1 leading-relaxed">
+            STRK20 private balances, shielding and unshielding — managed in the Privacy Wallet, untouched here.
+          </div>
+        </div>
+        <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-3">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-emerald-400 font-mono font-bold">
+            <Activity className="w-3.5 h-3.5" /> Extended Trading Balance
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-right">
+            <Stat label="Equity" value={`$${fmt(ext.balance?.equity)}`} accent="text-emerald-400" />
+            <Stat label="Balance" value={`$${fmt(ext.balance?.balance)}`} />
+            <Stat label="Available" value={`$${fmt(ext.balance?.availableForTrade)}`} />
+            <Stat label="uPnL" value={`$${signed(ext.balance?.unrealisedPnl)}`} accent={Number(ext.balance?.unrealisedPnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
+          </div>
+          <div className="text-[10px] text-zinc-600 font-mono mt-1 leading-relaxed">
+            Collateral held by Extended Exchange for trading only — it is not private and is separate from your Orrange STRK20 balance.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ONBOARDING_STEPS: { key: string; label: string }[] = [
+  { key: 'checking', label: 'CONNECTING' },
+  { key: 'signing', label: 'SIGN ACCOUNT CREATION' },
+  { key: 'signing', label: 'SIGN ACCOUNT REGISTRATION' },
+  { key: 'submitting', label: 'CREATING EXTENDED ACCOUNT' },
+];
+
+/** Native Starknet Extended onboarding state machine (no EVM fallback). */
+function OnboardingFlow({
+  ext,
+  walletAddress,
+}: {
+  ext: ReturnType<typeof useExtended>;
+  walletAddress: string | null;
+}) {
+  const state = ext.onboardingState;
+  const activeStep =
+    state === 'checking' ? 0
+    : state === 'signing' ? 1
+    : state === 'submitting' ? 3
+    : null;
+
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-6">
+      <div className="flex items-start gap-3 max-w-xl">
+        <Lock className="w-4 h-4 text-orange-400 mt-0.5 shrink-0" />
+        <div>
+          <div className="text-sm font-bold font-mono text-white">Enable Extended Perps</div>
+          <div className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+            Create your Extended perps account natively with your Ready Starknet wallet{' '}
+            <span className="text-zinc-300 font-mono">{shortAddress(walletAddress)}</span>.
+            Two SNIP-12 signature requests will appear in your wallet. Your L2 key is derived and stored server-side.
+          </div>
+        </div>
+      </div>
+
+      <div className="min-w-[260px] space-y-3">
+        {/* Onboarding status panel */}
+        <div className={`border rounded-lg p-3 ${
+          state === 'success'
+            ? 'border-emerald-500/30 bg-emerald-500/10'
+            : state === 'unavailable' || state === 'error' || state === 'notDeployed' || state === 'checkFailed'
+              ? 'border-amber-500/30 bg-amber-500/10'
+              : state === 'checking' || state === 'signing' || state === 'submitting'
+                ? 'border-orange-500/30 bg-orange-500/10'
+                : 'border-zinc-800 bg-zinc-900/40'
+        }`}>
+          <div className="flex items-center gap-2">
+            {state === 'checking' || state === 'signing' || state === 'submitting' ? (
+              <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
+            ) : state === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            ) : state === 'unavailable' || state === 'error' || state === 'notDeployed' || state === 'checkFailed' ? (
+              <TriangleAlert className="w-4 h-4 text-amber-400" />
+            ) : (
+              <ShieldCheck className="w-4 h-4 text-orange-400" />
+            )}
+            <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-zinc-200">
+              {state === 'checking' && 'Connecting'}
+              {state === 'signing' && 'Signing requests'}
+              {state === 'submitting' && 'Creating account'}
+              {state === 'success' && 'Extended account ready'}
+              {state === 'notDeployed' && 'Wallet not deployed on Mainnet'}
+              {state === 'checkFailed' && 'Could not verify wallet'}
+              {(state === 'unavailable' || state === 'error') && 'Extended unavailable right now'}
+              {state === 'idle' && 'Connect to Extended'}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[11px] text-zinc-400 leading-relaxed">
+            {state === 'checking' && 'Checking that your wallet is deployed on Starknet Mainnet…'}
+            {state === 'signing' && 'Approve the Account Creation and Account Registration signatures in your wallet.'}
+            {state === 'submitting' && 'Registering your Extended account and setting up your vault…'}
+            {state === 'success' && 'Loading your account into the terminal…'}
+            {state === 'notDeployed' && 'Your wallet must be deployed on Starknet Mainnet before it can trade. Fund it once to deploy it, then come back.'}
+            {state === 'checkFailed' && 'We could not confirm the wallet on Starknet Mainnet right now. Check your connection and try again.'}
+            {state === 'idle' && 'Create your Extended perps account with the connected Starknet wallet.'}
+            {state === 'unavailable' && ext.onboardingDetail}
+            {state === 'error' && ext.onboardingDetail}
+          </p>
+
+          {/* Step indicator */}
+          {activeStep !== null && (
+            <div className="mt-2 space-y-1">
+              {ONBOARDING_STEPS.map((s, i) => {
+                const done = i < activeStep;
+                const current = i === activeStep && s.key === 'signing';
+                return (
+                  <div key={`${s.label}-${i}`} className="flex items-center gap-2 text-[10px] font-mono">
+                    {done ? (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    ) : current ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-orange-400" />
+                    ) : i <= activeStep ? (
+                      <Clock className="w-3 h-3 text-orange-400" />
+                    ) : (
+                      <span className="w-3 h-3 inline-block border border-zinc-700 rounded-full" />
+                    )}
+                    <span className={done || i <= activeStep ? 'text-zinc-300' : 'text-zinc-600'}>{s.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => void ext.runOnboarding()}
+          disabled={state === 'checking' || state === 'signing' || state === 'submitting' || state === 'success'}
+          className="w-full inline-flex items-center justify-center gap-2 text-[11px] font-mono font-bold px-4 py-2.5 bg-orange-500 hover:bg-orange-400 text-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {state === 'checking' || state === 'signing' || state === 'submitting' ? (
+            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Working…</>
+          ) : state === 'notDeployed' || state === 'checkFailed' ? (
+            'Re-check wallet'
+          ) : state === 'success' ? (
+            'Account ready'
+          ) : (
+            'Connect to Extended'
+          )}
+        </button>
+
+        <p className="text-[10px] text-zinc-600 font-mono leading-relaxed">
+          The whole flow runs natively on Starknet Mainnet with your Ready wallet. No EVM account is created.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default function ExtendedPage() {
+  return (
+    <ExtendedWalletProvider>
+      <ExtendedTerminal />
+    </ExtendedWalletProvider>
   );
 }

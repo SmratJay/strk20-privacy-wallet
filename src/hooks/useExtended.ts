@@ -62,6 +62,54 @@ export interface ExtendedWalletInfo {
 const CANDLE_INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 export type CandleInterval = (typeof CANDLE_INTERVALS)[number];
 
+const TERMINAL_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED']);
+
+/**
+ * Map raw Extended/network error text into a concise, user-actionable message.
+ * Falls back to the raw message when the cause is not recognized.
+ */
+export function translateError(raw: string | unknown): string {
+  const msg = raw instanceof Error ? raw.message : String(raw ?? '');
+  if (/wallet not installed|not detected|install the ready/i.test(msg)) {
+    return 'Ready Wallet is not installed. Install the Ready extension, then connect.';
+  }
+  if (/wrong network|mainnet|SN_MAIN|switch your wallet/i.test(msg)) {
+    return 'Your wallet must be on Starknet Mainnet to use Extended. Switch networks in your wallet.';
+  }
+  if (/user rejected|user abort|user refused|rejected in your wallet|denied by user/i.test(msg)) {
+    return 'The signature was rejected in your wallet.';
+  }
+  if (/insufficient (usdc|balance|funds)/i.test(msg)) {
+    return 'Insufficient USDC balance to place this order.';
+  }
+  if (/margin|maintenance margin/i.test(msg)) {
+    return 'Insufficient margin for this order. Reduce size or increase collateral.';
+  }
+  if (/min order|minimum order|minPositionSize|minOrderSize/i.test(msg)) {
+    return 'Order size is below the market minimum.';
+  }
+  if (/not (configured|onboarded)/i.test(msg)) {
+    return 'Your Extended account is not ready yet. Complete onboarding first.';
+  }
+  if (/stale|expired session|session.*invalid|sessionExpired/i.test(msg)) {
+    return 'Your Extended session expired. Reconnect your wallet to continue.';
+  }
+  if (/market.*not (found|available)|MarketNotFound/i.test(msg)) {
+    return 'This market is not available. Select another market.';
+  }
+  if (/websocket|stream|disconnect/i.test(msg)) {
+    return 'Live market feed disconnected. Reconnecting…';
+  }
+  if (/deposit.*pending|pending.*deposit/i.test(msg)) {
+    return 'Your deposit is still pending. It will appear in your balance once confirmed on-chain.';
+  }
+  if (/withdraw.*pending|pending.*withdraw/i.test(msg)) {
+    return 'Your withdrawal is pending. It will be processed by Extended.';
+  }
+  if (msg && msg !== 'Something went wrong.') return msg;
+  return 'Something went wrong. Please try again.';
+}
+
 export function useExtended(wallet?: ExtendedWalletInfo) {
   const adapter = useMemo(() => new ExtendedAdapter(), []);
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -99,6 +147,9 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
   // Actions.
   const [submitting, setSubmitting] = useState(false);
   const [lastPlacedOrder, setLastPlacedOrder] = useState<PlacedOrder | null>(null);
+  const [lastOrder, setLastOrder] = useState<{ id: number; externalId: string } | null>(null);
+  const [lastOrderStatus, setLastOrderStatus] = useState<string | null>(null);
+  const [trackingOrder, setTrackingOrder] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [leverage, setLeverage] = useState<string>('');
   const [leverageLoading, setLeverageLoading] = useState(false);
@@ -149,7 +200,8 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
       setCandlesLoading(true);
       try {
         const data = await adapter.getCandles(selectedMarket, 'trades', interval, 400);
-        setCandles(data);
+        // The API returns candles newest-first; render oldest→newest left→right.
+        setCandles(data.slice().reverse());
       } catch {
         // Best-effort.
       } finally {
@@ -256,6 +308,42 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
       localBook = {};
     };
   }, [adapter, selectedMarket, refreshOrderbook, refreshTrades]);
+
+  // ── Live candle stream (updates the most recent candle in place) ─────────────
+  useEffect(() => {
+    if (!selectedMarket) return;
+    const env = getExtendedEnvironment();
+    if (typeof WebSocket === 'undefined') return;
+    let stream: ExtendedStream | null = null;
+    try {
+      stream = new ExtendedStream(
+        marketStreamUrl(env.streamUrl, `candles/${selectedMarket}/trades?interval=${candleInterval}`),
+        {
+          onMessage: (raw) => {
+            const msg = raw as { data?: Candle[] };
+            const incoming = Array.isArray(msg?.data) ? msg.data[msg.data.length - 1] : null;
+            if (!incoming || !incoming.T) return;
+            setCandles((prev) => {
+              if (!prev.length) return prev;
+              const last = prev[prev.length - 1];
+              if (incoming.T === last.T) {
+                return [...prev.slice(0, -1), incoming];
+              }
+              if (incoming.T > last.T) {
+                return [...prev, incoming].slice(-400);
+              }
+              return prev;
+            });
+          },
+        },
+      );
+    } catch {
+      stream = null;
+    }
+    return () => {
+      stream?.dispose();
+    };
+  }, [selectedMarket, candleInterval]);
 
   // ── Session / auth status (state machine) ─────────────────────────────────────
   const refreshStatus = useCallback(async () => {
@@ -386,6 +474,40 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
   );
 
   // ── Orders ─────────────────────────────────────────────────────────────────────
+  const trackOrder = useCallback(
+    (id: number, externalId: string) => {
+      setLastOrder({ id, externalId });
+      setLastOrderStatus('SUBMITTED');
+      setTrackingOrder(true);
+      let attempts = 0;
+      const maxAttempts = 12;
+      const stop = (interval: ReturnType<typeof setInterval>) => {
+        setTrackingOrder(false);
+        clearInterval(interval);
+      };
+      const tick = async (interval: ReturnType<typeof setInterval>) => {
+        attempts += 1;
+        try {
+          const snap = await adapter.getAccountSnapshot();
+          const found =
+            snap.openOrders.find((o) => o.id === id) ??
+            snap.history.find((o) => o.id === id) ??
+            snap.history.find((o) => o.externalId === externalId);
+          if (found) {
+            setLastOrderStatus(found.status);
+            if (TERMINAL_ORDER_STATUSES.has(found.status)) stop(interval);
+          }
+        } catch {
+          // Best-effort — the regular account poll reconciles state too.
+        }
+        if (attempts >= maxAttempts) stop(interval);
+      };
+      const interval = setInterval(() => void tick(interval), 3000);
+      void tick(interval);
+    },
+    [adapter],
+  );
+
   const placeOrder = useCallback(
     async (params: Omit<PlaceOrderParams, 'market'> & { market?: string }) => {
       setSubmitting(true);
@@ -397,17 +519,17 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
           market: params.market ?? selectedMarket,
         });
         setLastPlacedOrder(placed);
+        trackOrder(placed.id, placed.externalId);
         await refreshAccount();
         return placed;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Order failed.';
-        setActionError(msg);
+        setActionError(translateError(err));
         throw err;
       } finally {
         setSubmitting(false);
       }
     },
-    [adapter, selectedMarket, refreshAccount],
+    [adapter, selectedMarket, refreshAccount, trackOrder],
   );
 
   const closePosition = useCallback(
@@ -416,17 +538,17 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
       setActionError(null);
       try {
         const placed = await adapter.closePosition(position, size);
+        trackOrder(placed.id, placed.externalId);
         await refreshAccount();
         return placed;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Close failed.';
-        setActionError(msg);
+        setActionError(translateError(err));
         throw err;
       } finally {
         setSubmitting(false);
       }
     },
-    [adapter, refreshAccount],
+    [adapter, refreshAccount, trackOrder],
   );
 
   const cancelOrder = useCallback(
@@ -434,12 +556,16 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
       setActionError(null);
       try {
         await adapter.cancelOrder(id);
+        if (lastOrder?.id === id) {
+          setLastOrderStatus('CANCELLED');
+          setTrackingOrder(false);
+        }
         await refreshAccount();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Cancel failed.');
+        setActionError(translateError(err));
       }
     },
-    [adapter, refreshAccount],
+    [adapter, refreshAccount, lastOrder],
   );
 
   // ── Native Starknet onboarding (state machine) ────────────────────────────────
@@ -505,7 +631,7 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
       // clean, non-technical message and preserve the credential-backed fallback.
       const clean = /HTTP 5\d\d|Failed to fetch|network/i.test(msg)
         ? 'Extended could not complete account creation for this wallet right now. Your wallet must be deployed on Starknet Mainnet. Try again, or use provisioned server API credentials.'
-        : msg;
+        : translateError(msg);
       setOnboardingState('unavailable');
       setOnboardingDetail(clean);
     }
@@ -625,6 +751,7 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
     sessionState,
     refreshStatus,
     refreshMarkets,
+    refreshOrderbook,
     isConnected,
     canRead,
     canTrade,
@@ -651,7 +778,11 @@ export function useExtended(wallet?: ExtendedWalletInfo) {
     depositState,
     submitting,
     lastPlacedOrder,
+    lastOrder,
+    lastOrderStatus,
+    trackingOrder,
     actionError,
+    clearActionError: () => setActionError(null),
     onboardingState,
     onboardingDetail,
     runOnboarding,

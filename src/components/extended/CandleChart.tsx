@@ -8,13 +8,18 @@ interface CandleChartProps {
   height?: number;
 }
 
-/** Lightweight SVG candlestick + volume chart (no external dependencies). */
-export function CandleChart({ candles, height = 360 }: CandleChartProps) {
+/**
+ * Lightweight SVG candlestick + volume chart (no external dependencies).
+ * Renders oldest→newest left→right and includes a time axis and a live
+ * last-price line. Candles must already be in ascending time order.
+ */
+export function CandleChart({ candles, height = 380 }: CandleChartProps) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const width = 840;
+  const width = 880;
   const volumeHeight = 56;
-  const priceArea = height - volumeHeight - 36;
+  const axisHeight = 22;
+  const priceArea = height - volumeHeight - axisHeight - 12;
 
   const bounds = useMemo(() => {
     if (!candles.length) return null;
@@ -47,7 +52,16 @@ export function CandleChart({ candles, height = 360 }: CandleChartProps) {
   const priceToY = (v: number) => priceArea - ((v - bounds.min) / (bounds.max - bounds.min)) * priceArea + 4;
   const volToH = (v: number) => (v / bounds.maxVol) * volumeHeight;
 
+  const last = candles[candles.length - 1];
+  const lastPrice = Number(last.c);
+  const lastY = priceToY(lastPrice);
   const hovered = hoverIdx !== null ? candles[hoverIdx] : null;
+
+  // Time-axis labels (5 evenly spaced).
+  const axisLabels = Array.from({ length: 5 }, (_, i) => {
+    const idx = Math.round((i / 4) * (n - 1));
+    return { x: (idx / n) * width + step / 2, label: new Date(candles[idx].T).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) };
+  });
 
   return (
     <div className="w-full">
@@ -84,7 +98,7 @@ export function CandleChart({ candles, height = 360 }: CandleChartProps) {
               {/* Volume */}
               <rect
                 x={x - bodyW / 2}
-                y={priceArea + 16 + (volumeHeight - volToH(Number(c.v)))}
+                y={priceArea + 10 + (volumeHeight - volToH(Number(c.v)))}
                 width={bodyW}
                 height={volToH(Number(c.v))}
                 fill={color}
@@ -101,6 +115,20 @@ export function CandleChart({ candles, height = 360 }: CandleChartProps) {
             </g>
           );
         })}
+
+        {/* Last price line */}
+        <line x1={0} x2={width} y1={lastY} y2={lastY} stroke="#f59e0b" strokeWidth={0.8} strokeDasharray="3 3" opacity={0.7} />
+        <rect x={width - 74} y={lastY - 9} width={74} height={15} fill="#b45309" />
+        <text x={width - 6} y={lastY + 2} textAnchor="end" fill="#fff" fontSize={9} fontFamily="monospace">
+          {lastPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        </text>
+
+        {/* Time axis */}
+        {axisLabels.map((a, i) => (
+          <text key={i} x={Math.min(Math.max(a.x, 30), width - 30)} y={height - 8} textAnchor="middle" fill="#52525b" fontSize={8.5} fontFamily="monospace">
+            {a.label}
+          </text>
+        ))}
       </svg>
 
       {hovered && (

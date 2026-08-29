@@ -29,6 +29,7 @@ import type {
   ExtendedAccountSnapshot,
   ExtendedOrder,
   ExtendedStatus,
+  Fees,
   PlacedOrder,
   Position,
   Leverage,
@@ -41,6 +42,8 @@ export interface ServerCredentials {
   vaultId: number | null;
   accountId: number | null;
   cookies: string[];
+  /** Starknet address that owns the session; used as the withdrawal recipient. */
+  recipient?: string | null;
 }
 
 /** Read Extended trading credentials from the server environment. */
@@ -52,7 +55,16 @@ export function getServerCredentials(): ServerCredentials {
   const vaultId = vaultRaw && /^\d+$/.test(vaultRaw) ? Number(vaultRaw) : null;
   const accountRaw = process.env.EXTENDED_ACCOUNT_ID?.trim();
   const accountId = accountRaw && /^\d+$/.test(accountRaw) ? Number(accountRaw) : null;
-  return { apiKey, starkPrivateKey, starkPublicKey, vaultId, accountId, cookies: [] };
+  const recipientRaw = process.env.EXTENDED_WITHDRAWAL_RECIPIENT?.trim();
+  return {
+    apiKey,
+    starkPrivateKey,
+    starkPublicKey,
+    vaultId,
+    accountId,
+    cookies: [],
+    recipient: recipientRaw || null,
+  };
 }
 
 /** Resolve server credentials from a natively onboarded session. */
@@ -67,6 +79,7 @@ export function credentialsFromSession(session: ExtendedSession | null | undefin
     vaultId: session.vaultId ?? null,
     accountId: session.accountId ?? null,
     cookies: session.cookies ?? [],
+    recipient: session.wallet || null,
   };
 }
 
@@ -156,6 +169,11 @@ export class ExtendedServerClient {
     return this.client.getDeposits();
   }
 
+  /** Maker/taker/builder fee schedule for a market (live from Extended). */
+  getFees(market: string): Promise<Fees[]> {
+    return this.client.getFees(market);
+  }
+
   getAccountInfo(): Promise<{ accountId: number; l2Vault: number; bridgeStarknetAddress: string; l2Key: string }> {
     return this.client.getAccountInfo();
   }
@@ -235,10 +253,16 @@ export class ExtendedServerClient {
   }
 
   /** Create a Starknet withdrawal, signed with the L2 key server-side. */
-  async createWithdrawal(params: { amount: string; asset?: string }): Promise<{ id: number }> {
-    const { starkPrivateKey, starkPublicKey, vaultId, accountId } = this.creds;
+  async createWithdrawal(params: { amount: string; asset?: string; recipient?: string }): Promise<{ id: number }> {
+    const { starkPrivateKey, starkPublicKey, vaultId, accountId, recipient } = this.creds;
     if (!starkPrivateKey || !starkPublicKey || vaultId === null) {
       throw new Error('Extended trading credentials are not configured on the server.');
+    }
+    const destination = params.recipient ?? recipient;
+    if (!destination) {
+      throw new Error(
+        'A Starknet recipient is required to withdraw. Connect your Ready wallet (which registers a withdrawal destination) or set EXTENDED_WITHDRAWAL_RECIPIENT on the server.',
+      );
     }
     const domain = await this.client.getStarknetDomain();
     const body = buildWithdrawalRequest({
@@ -251,7 +275,7 @@ export class ExtendedServerClient {
       domain: { ...this.env.starknetDomain, ...domain },
       expirationSeconds: undefined,
       salt: undefined,
-      recipient: undefined,
+      recipient: destination,
     });
     return this.client.createWithdrawal(body);
   }
