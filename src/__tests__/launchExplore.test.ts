@@ -11,6 +11,7 @@ import {
   launchMetadataRef,
   decodeMetadataRef,
   normalizeAddress,
+  splitU256,
 } from '@/services/launchService';
 
 const PARAMS: LaunchCurveParams = {
@@ -154,5 +155,23 @@ describe('normalizeAddress', () => {
     expect(normalizeAddress('0xABC123')).toBe('0xabc123');
     expect(normalizeAddress('0x0')).toBe('0x0');
     expect(normalizeAddress('')).toBe('');
+  });
+});
+
+describe('splitU256 (create calldata u256 serialization)', () => {
+  it('splits a u256 into low/high felt strings that reconstruct the value', () => {
+    const supply = 1073000000000000000000000000n;
+    const [low, high] = splitU256(supply);
+    const LOW_MASK = (1n << 128n) - 1n;
+    expect(BigInt(low)).toBe(supply & LOW_MASK);
+    expect(BigInt(high)).toBe(supply >> 128n);
+    expect((BigInt(high) << 128n) + BigInt(low)).toBe(supply);
+  });
+
+  it('produces exactly two felts (never collapses a u256 into one felt)', () => {
+    expect(splitU256(0n)).toEqual(['0', '0']);
+    expect(splitU256(1n)).toEqual(['1', '0']);
+    expect(splitU256(1n << 128n)).toEqual(['0', '1']);
+    expect(splitU256(1073000000000000000000000000n)).toHaveLength(2);
   });
 });

@@ -17,7 +17,11 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const DEV_DIR = path.join(ROOT, 'umbra-launch-contracts/target/dev');
+// Deploy with the RELEASE profile: the dev profile enables `panic-backtrace`, which
+// injects the `trace` libfunc that the on-chain Sierra compiler rejects (not in the
+// 'audited' libfuncs list). Override with UMBRA_BUILD_PROFILE=dev if ever needed.
+const PROFILE = process.env.UMBRA_BUILD_PROFILE || 'release';
+const DEV_DIR = path.join(ROOT, `umbra-launch-contracts/target/${PROFILE}`);
 const DEPLOYMENTS_DIR = path.join(ROOT, 'deployments');
 
 const isSepolia = process.argv.includes('--sepolia');
@@ -58,9 +62,11 @@ async function main() {
   console.log(`pool=${POOL}`);
 
   const bounds = {
-    l2_gas: { max_amount: 300000000n, max_price_per_unit: 200000000000n },
-    l1_gas: { max_amount: 10000n, max_price_per_unit: 400000000000000n },
-    l1_data_gas: { max_amount: 10000n, max_price_per_unit: 20000000000000n },
+    // Keep l2_gas under the node's per-tx cap (~1.21B) while far above the ~300-500M a
+    // declare/create actually uses.
+    l2_gas: { max_amount: 1000000000n, max_price_per_unit: 200000000000n },
+    l1_gas: { max_amount: 100000n, max_price_per_unit: 400000000000000n },
+    l1_data_gas: { max_amount: 10000000n, max_price_per_unit: 20000000000000n },
   };
 
   const artifacts = {};
@@ -83,76 +89,169 @@ async function main() {
   const declared = {};
   for (const name of contracts) {
     const art = artifacts[name];
+    const ch = art.classHash;
+    // Explicit on-chain check first: declareIfNot's internal check can race a just-declared
+    // class (fresh class hash not yet propagated to the node's lookup), which then fails the
+    // account validation with "already declared".
+    let already = false;
+    try {
+      await provider.getClassByHash(ch);
+      already = true;
+    } catch {
+      already = false;
+    }
+    if (already) {
+      console.log(`${name}: already declared (${ch})`);
+      declared[name] = ch;
+      continue;
+    }
     console.log(`Declaring ${name}...`);
-    const tx = await account.declareIfNot({ contract: art.sierra, casm: art.casm, classHash: art.classHash }, { resourceBounds: bounds });
-    console.log(`  ${tx.class_hash} (${tx.transaction_hash ? 'tx ' + tx.transaction_hash : 'already declared'})`);
-    declared[name] = tx.class_hash;
+    try {
+      const tx = await account.declareIfNot({ contract: art.sierra, casm: art.casm, classHash: ch }, { resourceBounds: bounds });
+      console.log(`  ${tx.class_hash} (${tx.transaction_hash ? 'tx ' + tx.transaction_hash : 'already declared'})`);
+      // Wait for confirmation so the account nonce advances before the next tx (the node
+      // still returns the old nonce while the previous declare is unconfirmed).
+      if (tx.transaction_hash) await provider.waitForTransaction(tx.transaction_hash);
+      declared[name] = tx.class_hash;
+    } catch (e) {
+      if (String(e?.message ?? '').includes('already declared')) {
+        console.log(`${name}: already declared (race handled, ${ch})`);
+        declared[name] = ch;
+        continue;
+      }
+      throw e;
+    }
   }
 
-  // GraduationRouter(governance)
-  const routerClass = declared['GraduationRouter'];
-  const routerDeploy = await account.deployContract({
-    classHash: routerClass,
-    constructorCalldata: CallData.compile({ governance: account.address }),
-    unique: true,
-    resourceBounds: bounds,
-  });
-  await provider.waitForTransaction(routerDeploy.transaction_hash);
-  console.log(`GraduationRouter: ${routerDeploy.contract_address} (${routerDeploy.transaction_hash})`);
+  // Reuse previously deployed router/factory from the manifest when present (idempotent
+  // reruns — never deploy duplicate instances).
+  let existing = {};
+  try {
+    const prior = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
+    if (prior.network === NETWORK) existing = prior;
+  } catch {
+    existing = {};
+  }
 
-  // TokenFactory(governance, base, pool, router, mc, bc, exe)
-  const factoryDeploy = await account.deployContract({
-    classHash: declared['TokenFactory'],
-    constructorCalldata: CallData.compile({
-      governance: account.address,
-      base_asset: BASE_ASSET,
-      privacy_pool: POOL,
-      router: routerDeploy.contract_address,
-      memecoin_class_hash: declared['Memecoin'],
-      curve_class_hash: declared['BondingCurve'],
-      executor_class_hash: declared['PrivateCurveExecutor'],
-    }),
-    unique: true,
-    resourceBounds: bounds,
-  });
-  await provider.waitForTransaction(factoryDeploy.transaction_hash);
-  console.log(`TokenFactory: ${factoryDeploy.contract_address} (${factoryDeploy.transaction_hash})`);
+  const routerAddress = existing.contracts?.GraduationRouter?.address || '';
+  const factoryAddress = existing.contracts?.TokenFactory?.address || '';
 
-  // Launch HAMSTR via the factory
-  const createCalldata = CallData.compile({
-    name: shortString.encodeShortString('HAMSTR'),
-    symbol: shortString.encodeShortString('HAMSTR'),
-    decimals: 18,
-    metadata_uri: shortString.encodeShortString('ipfs://umbra-hamstr'),
-    total_supply: SUPPLY,
-    virtual_base_reserve: VIRTUAL_BASE,
-    virtual_token_reserve: VIRTUAL_TOKEN,
-    graduation_target: GRAD_TARGET,
-    fee_bps: FEE_BPS,
-  });
-  const createRes = await account.execute(
-    {
-      contractAddress: factoryDeploy.contract_address,
-      entrypoint: 'create_memecoin',
-      calldata: createCalldata,
-    },
-    { resourceBounds: bounds },
-  );
-  await provider.waitForTransaction(createRes.transaction_hash);
-  console.log(`create_memecoin(HAMSTR): ${createRes.transaction_hash}`);
+  let router = routerAddress;
+  if (router) {
+    try {
+      await provider.getClassHashAt(router); // verify it still exists on-chain
+      console.log(`GraduationRouter: reusing ${router}`);
+    } catch {
+      router = '';
+    }
+  }
+
+  let factory = factoryAddress;
+  if (factory) {
+    try {
+      await provider.getClassHashAt(factory);
+      console.log(`TokenFactory: reusing ${factory}`);
+    } catch {
+      factory = '';
+    }
+  }
+
+  if (!router) {
+    // GraduationRouter(governance)
+    const routerDeploy = await account.deployContract({
+      classHash: declared['GraduationRouter'],
+      constructorCalldata: CallData.compile({ governance: account.address }),
+      unique: true,
+      resourceBounds: bounds,
+    });
+    await provider.waitForTransaction(routerDeploy.transaction_hash);
+    router = routerDeploy.contract_address;
+    console.log(`GraduationRouter: ${router} (${routerDeploy.transaction_hash})`);
+  }
+
+  if (!factory) {
+    // TokenFactory(governance, base, pool, router, mc, bc, exe)
+    const factoryDeploy = await account.deployContract({
+      classHash: declared['TokenFactory'],
+      constructorCalldata: CallData.compile({
+        governance: account.address,
+        base_asset: BASE_ASSET,
+        privacy_pool: POOL,
+        router,
+        memecoin_class_hash: declared['Memecoin'],
+        curve_class_hash: declared['BondingCurve'],
+        executor_class_hash: declared['PrivateCurveExecutor'],
+      }),
+      unique: true,
+      resourceBounds: bounds,
+    });
+    await provider.waitForTransaction(factoryDeploy.transaction_hash);
+    factory = factoryDeploy.contract_address;
+    console.log(`TokenFactory: ${factory} (${factoryDeploy.transaction_hash})`);
+  }
 
   // Read back the created addresses (real on-chain reads)
   const read = async (entrypoint, arg) => {
     const r = await provider.callContract({
-      contractAddress: factoryDeploy.contract_address,
+      contractAddress: factory,
       entrypoint,
       calldata: arg ? [arg] : [],
     });
     return '0x' + BigInt(r[0]).toString(16);
   };
-  const token = await read('get_token', '0');
-  const curve = await read('get_curve', '0');
-  const executor = await read('get_executor', '0');
+
+  // Launch HAMSTR via the factory (skipped when already created — manifest carries the
+  // addresses so reruns are no-ops).
+  let token = '';
+  let curve = '';
+  let executor = '';
+  let createTx = '';
+  const priorToken = existing.tokens?.HAMSTR;
+  if (priorToken && priorToken.token && priorToken.token !== '0x0') {
+    token = priorToken.token;
+    curve = priorToken.curve;
+    executor = priorToken.executor;
+    createTx = priorToken.createTx || '';
+    console.log(`HAMSTR: reusing token ${token} curve ${curve}`);
+  } else {
+    // Build flat calldata: total_supply is a u256 and MUST be split low/high manually —
+    // CallData.compile without an ABI treats a bigint/string as a single felt252, which
+    // misaligns every following parameter.
+    const supply = BigInt(SUPPLY);
+    const LOW_MASK = (1n << 128n) - 1n;
+    const createCalldata = CallData.compile([
+      shortString.encodeShortString('HAMSTR'),
+      shortString.encodeShortString('HAMSTR'),
+      18,
+      shortString.encodeShortString('orrange://meta'),
+      (supply & LOW_MASK).toString(),
+      (supply >> 128n).toString(),
+      BigInt(VIRTUAL_BASE).toString(),
+      BigInt(VIRTUAL_TOKEN).toString(),
+      BigInt(GRAD_TARGET).toString(),
+      FEE_BPS,
+    ]);
+    const createRes = await account.execute(
+      {
+        contractAddress: factory,
+        entrypoint: 'create_memecoin',
+        calldata: createCalldata,
+      },
+      { resourceBounds: bounds },
+    );
+    await provider.waitForTransaction(createRes.transaction_hash);
+    createTx = createRes.transaction_hash;
+    console.log(`create_memecoin(HAMSTR): ${createTx}`);
+
+    // Read back the created addresses (real on-chain reads) — the new token is the last one.
+    const lastId = BigInt(
+      (await provider.callContract({ contractAddress: factory, entrypoint: 'get_token_count', calldata: [] }))[0],
+    ) - 1n;
+    const lastIdStr = lastId.toString();
+    token = await read('get_token', lastIdStr);
+    curve = await read('get_curve', lastIdStr);
+    executor = await read('get_executor', lastIdStr);
+  }
 
   const manifest = {
     network: NETWORK,
@@ -161,11 +260,11 @@ async function main() {
       Memecoin: { classHash: declared['Memecoin'], status: 'DECLARED' },
       BondingCurve: { classHash: declared['BondingCurve'], status: 'DECLARED' },
       PrivateCurveExecutor: { classHash: declared['PrivateCurveExecutor'], status: 'DECLARED' },
-      GraduationRouter: { address: routerDeploy.contract_address, txHash: routerDeploy.transaction_hash, status: 'DEPLOYED' },
-      TokenFactory: { address: factoryDeploy.contract_address, txHash: factoryDeploy.transaction_hash, status: 'DEPLOYED' },
+      GraduationRouter: { address: router, txHash: existing.contracts?.GraduationRouter?.txHash || '', status: 'DEPLOYED' },
+      TokenFactory: { address: factory, txHash: existing.contracts?.TokenFactory?.txHash || '', status: 'DEPLOYED' },
     },
     tokens: {
-      HAMSTR: { token, curve, executor, createTx: createRes.transaction_hash, supply: SUPPLY },
+      HAMSTR: { token, curve, executor, createTx, supply: SUPPLY },
     },
     baseAsset: BASE_ASSET,
     poolAddress: POOL,
@@ -175,10 +274,10 @@ async function main() {
   console.log('\n.env.local additions:');
   console.log(
     isSepolia
-      ? `NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY=${factoryDeploy.contract_address}`
-      : `NEXT_PUBLIC_UMBRA_FACTORY=${factoryDeploy.contract_address}`,
+      ? `NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY=${factory}`
+      : `NEXT_PUBLIC_UMBRA_FACTORY=${factory}`,
   );
-  console.log(`NEXT_PUBLIC_UMBRA_ROUTER=${routerDeploy.contract_address}`);
+  console.log(`NEXT_PUBLIC_UMBRA_ROUTER=${router}`);
   console.log(`NEXT_PUBLIC_UMBRA_HAMSTR_TOKEN=${token}`);
   console.log(`NEXT_PUBLIC_UMBRA_HAMSTR_CURVE=${curve}`);
   console.log(`NEXT_PUBLIC_UMBRA_HAMSTR_EXECUTOR=${executor}`);

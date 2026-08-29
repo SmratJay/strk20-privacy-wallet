@@ -9,7 +9,12 @@ import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { useWallet } from '@/context/WalletContext';
 import { getLaunchNetwork, CREATE_DEFAULTS } from '@/config/launch';
-import { providerFor, launchMetadataRef, normalizeAddress } from '@/services/launchService';
+import {
+  providerFor,
+  launchMetadataRef,
+  normalizeAddress,
+  splitU256,
+} from '@/services/launchService';
 
 const MAX_SHORT_STRING = 31; // felt short-string limit
 
@@ -80,17 +85,19 @@ export default function LaunchCreatePage() {
 
     try {
       setStep('SIGNING');
-      const calldata = CallData.compile({
-        name: shortString.encodeShortString(name.trim()),
-        symbol: shortString.encodeShortString(symbol.trim()),
-        decimals: CREATE_DEFAULTS.decimals,
-        metadata_uri: shortString.encodeShortString(launchMetadataRef()),
-        total_supply: BigInt(CREATE_DEFAULTS.totalSupply),
-        virtual_base_reserve: BigInt(CREATE_DEFAULTS.virtualBase),
-        virtual_token_reserve: BigInt(CREATE_DEFAULTS.virtualToken),
-        graduation_target: BigInt(CREATE_DEFAULTS.graduationTarget),
-        fee_bps: Number(CREATE_DEFAULTS.feeBps),
-      });
+      // Flat calldata with the u256 total_supply split into [low, high] — CallData.compile
+      // without an ABI serializes a bigint as one felt252, which would misalign the params.
+      const calldata = CallData.compile([
+        shortString.encodeShortString(name.trim()),
+        shortString.encodeShortString(symbol.trim()),
+        CREATE_DEFAULTS.decimals,
+        shortString.encodeShortString(launchMetadataRef()),
+        ...splitU256(BigInt(CREATE_DEFAULTS.totalSupply)),
+        BigInt(CREATE_DEFAULTS.virtualBase).toString(),
+        BigInt(CREATE_DEFAULTS.virtualToken).toString(),
+        BigInt(CREATE_DEFAULTS.graduationTarget).toString(),
+        Number(CREATE_DEFAULTS.feeBps),
+      ]);
       const res = await account.execute([
         { contractAddress: net.factory, entrypoint: 'create_memecoin', calldata },
       ]);

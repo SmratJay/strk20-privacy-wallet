@@ -53,7 +53,10 @@ async function main() {
   console.log(`real reserves         base=${br} token=${tr}`);
   console.log(`graduation target     ${gt} (graduated=${BigInt(graduated)})`);
   console.log(`price (base/token)    ${pb}/${pt}`);
-  console.log(`total supply          ${BigInt(supply.low) + (BigInt(supply.high) << 128n)}`);
+  // total_supply is a u256 — the RPC returns it either as an array or a {low,high} object.
+  const supplyArr = Array.isArray(supply) ? supply : [supply.low, supply.high ?? 0n];
+  const totalSupply = BigInt(supplyArr[0]) + (BigInt(supplyArr[1] ?? 0n) << 128n);
+  console.log(`total supply          ${totalSupply}`);
 
   const ONE = 10n ** 18n;
   const amount = ONE; // 1 STRK
@@ -65,13 +68,15 @@ async function main() {
     const deployer = JSON.parse(fs.readFileSync(path.join(ROOT, 'deployments/deployer_account.json'), 'utf8'));
     const account = new Account({ provider, address: deployer.accountAddress, signer: deployer.privateKey });
     const bounds = {
-      l2_gas: { max_amount: 200000000n, max_price_per_unit: 200000000000n },
-      l1_gas: { max_amount: 10000n, max_price_per_unit: 400000000000000n },
-      l1_data_gas: { max_amount: 10000n, max_price_per_unit: 20000000000000n },
+      l2_gas: { max_amount: 1000000000n, max_price_per_unit: 200000000000n },
+      l1_gas: { max_amount: 100000n, max_price_per_unit: 400000000000000n },
+      l1_data_gas: { max_amount: 10000000n, max_price_per_unit: 20000000000000n },
     };
+    // approve amount is a u256 → split [low, high] in calldata.
+    const LOW_MASK = (1n << 128n) - 1n;
     const res = await account.execute(
       [
-        { contractAddress: manifest.baseAsset, entrypoint: 'approve', calldata: [curve, amount.toString()] },
+        { contractAddress: manifest.baseAsset, entrypoint: 'approve', calldata: [curve, (amount & LOW_MASK).toString(), (amount >> 128n).toString()] },
         { contractAddress: curve, entrypoint: 'buy', calldata: [amount.toString(), account.address] },
       ],
       { resourceBounds: bounds },

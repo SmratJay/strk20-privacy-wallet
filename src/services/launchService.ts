@@ -333,6 +333,14 @@ export function normalizeAddress(addr: string): string {
   }
 }
 
+/** Split a u256 into its [low, high] felt strings for flat calldata. CallData.compile
+ * without an ABI treats a bigint as a single felt252, so u256 values MUST be split
+ * manually or every following parameter misaligns on-chain. */
+export function splitU256(value: bigint): [string, string] {
+  const LOW_MASK = (1n << 128n) - 1n;
+  return [(value & LOW_MASK).toString(), (value >> 128n).toString()];
+}
+
 /**
  * Pure resolver: match a token entry by factory id, symbol (case-insensitive), or the real
  * token contract address. Used by the Explore → token page navigation so every card links
@@ -410,7 +418,8 @@ export function decodeMetadataRef(feltOrString: any): boolean {
   return asStr === LAUNCH_METADATA_REF;
 }
 
-/** Public buy: approve the BASE asset for the curve, then call buy(). */
+/** Public buy: approve the BASE asset for the curve, then call buy(). The ERC20 approve
+ * amount is a u256, so it must be split [low, high] in calldata. */
 export async function executePublicBuy(
   walletAccount: any,
   baseAsset: string,
@@ -421,14 +430,15 @@ export async function executePublicBuy(
 ): Promise<{ transactionHash: string }> {
   const amount = parseTokenAmount(amountStr, decimals);
   const calls = [
-    { contractAddress: baseAsset, entrypoint: 'approve', calldata: [curve, amount.toString()] },
+    { contractAddress: baseAsset, entrypoint: 'approve', calldata: [curve, ...splitU256(amount)] },
     { contractAddress: curve, entrypoint: 'buy', calldata: [amount.toString(), recipient] },
   ];
   const res = await walletAccount.execute(calls);
   return { transactionHash: res.transaction_hash ?? res.transactionHash ?? res.hash };
 }
 
-/** Public sell: approve the MEMECOIN for the curve, then call sell(). */
+/** Public sell: approve the MEMECOIN for the curve, then call sell(). The ERC20 approve
+ * amount is a u256, so it must be split [low, high] in calldata. */
 export async function executePublicSell(
   walletAccount: any,
   token: string,
@@ -439,7 +449,7 @@ export async function executePublicSell(
 ): Promise<{ transactionHash: string }> {
   const amount = parseTokenAmount(amountStr, decimals);
   const calls = [
-    { contractAddress: token, entrypoint: 'approve', calldata: [curve, amount.toString()] },
+    { contractAddress: token, entrypoint: 'approve', calldata: [curve, ...splitU256(amount)] },
     { contractAddress: curve, entrypoint: 'sell', calldata: [amount.toString(), recipient] },
   ];
   const res = await walletAccount.execute(calls);
@@ -448,7 +458,8 @@ export async function executePublicSell(
 
 export { parseTokenAmount, providerFor, hash, num }; // re-exported for tests
 
-/** Public ERC20 balance of `address` for `token` on the active network. */
+/** Public ERC20 balance of `address` for `token` on the active network. The UMBRA
+ * memecoin exposes its entrypoint as `balance_of` (snake_case, per its Cairo interface). */
 export async function getTokenBalance(
   networkId: NetworkId,
   token: string,
@@ -457,7 +468,7 @@ export async function getTokenBalance(
   if (!token || !address) return null;
   try {
     const provider = providerFor(networkId);
-    const res = await callView(provider, token, 'balanceOf', [address]);
+    const res = await callView(provider, token, 'balance_of', [address]);
     return toBig(res);
   } catch {
     return null;
