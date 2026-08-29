@@ -54,10 +54,18 @@ interface TokenOpsLike {
   surplusTo(recipient: string, withdraw?: boolean): unknown;
 }
 
+interface InvokeCalldataArgsLike {
+  openNotes: { noteId: bigint }[];
+  withdrawals: unknown[];
+  poolAddress: bigint;
+}
+
 interface BuilderLike {
   with(token: string, ops: (t: TokenOpsLike) => void): BuilderLike;
   register(): BuilderLike;
   surplusTo(recipient: string, withdraw?: boolean): BuilderLike;
+  /** Add a `privacy_invoke` call on an executor (anonymizer) that runs after the private ops. */
+  invoke(callBuilder: (args: InvokeCalldataArgsLike) => unknown): BuilderLike;
   execute(options?: Record<string, unknown>): Promise<ExecuteResultLike>;
   /** SDK fee-simulation: mock proof via CallMockProofProvider, no real proof generation. */
   simulate(options: { node: ProviderInterface; validateSignature?: boolean }): Promise<ExecuteResultLike>;
@@ -84,6 +92,7 @@ type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTran
 const PROVING_SAFETY_MARGIN = 10;
 
 let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
+let openNoteSymbol: unknown = null;
 
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
   if (createPrivateTransfersFn) return createPrivateTransfersFn;
@@ -92,6 +101,31 @@ async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
   };
   createPrivateTransfersFn = mod.createPrivateTransfers;
   return createPrivateTransfersFn;
+}
+
+/** The SDK's `Open` unique symbol — used as `amount` to create an open note that a
+ * `privacy_invoke` executor deposit will fill. Cached after first load. */
+async function loadOpenNoteSymbol(): Promise<unknown> {
+  if (openNoteSymbol) return openNoteSymbol;
+  const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as {
+    Open?: unknown;
+  };
+  openNoteSymbol = mod.Open;
+  return openNoteSymbol;
+}
+
+/** A private trade through the launchpad's canonical PrivateCurveExecutor. `operation` is the
+ * curve op (0 = BUY, 1 = SELL) matching `curve_operation` in the contracts. */
+export interface PrivateCurveTradeParams {
+  operation: number;
+  /** PrivateCurveExecutor bound to this curve. */
+  curveExecutor: string;
+  /** Input token the pool withdraws to the executor (base for BUY, memecoin for SELL). */
+  inputToken: string;
+  /** Output token deposited to the user's open note (memecoin for BUY, base for SELL). */
+  outputToken: string;
+  /** Input amount in smallest units. */
+  amount: bigint;
 }
 
 export class PrivyStrk20Adapter {
@@ -192,6 +226,53 @@ export class PrivyStrk20Adapter {
       (t) =>
         t.build(opts).with(token, (x) => x.withdraw({ amount: amountBase })).surplusTo(user.address).execute({ provingBlockId }),
     );
+  }
+
+  /**
+   * Private trade on a launchpad BondingCurve through its canonical PrivateCurveExecutor —
+   * the Privy-lane equivalent of the Ready wallet's STRK20 invoke actions:
+   *   1. withdraw input token → executor          (pool pays the executor)
+   *   2. transfer output token → OPEN note        (open-note deposit for the user)
+   *   3. invoke(executor, privacy_invoke)         (executor trades on the public curve)
+   * The pool fills the open note from the executor's returned `OpenNoteDeposit`.
+   */
+  async privateTrade(
+    user: PrivyStrk20User,
+    params: PrivateCurveTradeParams,
+  ): Promise<Strk20ExecuteReceipt> {
+    const open = await loadOpenNoteSymbol();
+    if (open == null) throw new Error("STRK20 SDK did not expose the Open-note symbol.");
+    const provingBlockId = await this.getSafeProvingBlock(user);
+    return this.runWithBounds(
+      user,
+      (t, node) => this.buildCurveTrade(t, params, user.address, open).simulate({ node }),
+      (t) => this.buildCurveTrade(t, params, user.address, open).execute({ provingBlockId }),
+    );
+  }
+
+  private buildCurveTrade(
+    t: PrivateTransfersLike,
+    params: PrivateCurveTradeParams,
+    recipient: string,
+    open: unknown,
+  ): BuilderLike {
+    const opts = {
+      autoSetup: true,
+      autoDiscover: { notes: "refresh", channels: "refresh" },
+      autoSelectNotes: "naive",
+    };
+    return t
+      .build(opts)
+      .with(params.inputToken, (x) =>
+        x.withdraw({ recipient: params.curveExecutor, amount: params.amount }),
+      )
+      .with(params.outputToken, (x) => x.transfer({ recipient, amount: open }))
+      .invoke(({ openNotes }) => ({
+        contractAddress: params.curveExecutor,
+        entrypoint: "privacy_invoke",
+        calldata: [params.operation, params.inputToken, params.amount, openNotes[0]?.noteId ?? 0n],
+      }))
+      .surplusTo(recipient);
   }
 
   async transfer(

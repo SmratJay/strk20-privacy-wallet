@@ -306,18 +306,32 @@ const insufficient =
         hash = res.transactionHash;
       } else {
         setStep('PROVING');
-        const plan = {
-          operation: side === 'BUY' ? CURVE_OP.BUY : CURVE_OP.SELL,
-          inputToken: side === 'BUY' ? base : entry.token,
-          outputToken: side === 'BUY' ? entry.token : base,
-          amount: parsed.toString(),
-          executor: entry.executor,
-          userAddress: wallet.address,
-        };
-        const actions =
-          side === 'BUY' ? buildPrivateBuyActions(plan) : buildPrivateSellActions(plan);
-        const res = await executePrivateTrade(wallet, actions);
-        hash = res.transactionHash;
+        if (privyConnected) {
+          // Privy lane: STRK20 adapter builds withdraw → OPEN note → privacy_invoke and
+          // submits through the Privy signer + Stwo prover + discovery.
+          const res = await privy.privateTrade({
+            operation: side === 'BUY' ? CURVE_OP.BUY : CURVE_OP.SELL,
+            curveExecutor: entry.executor,
+            inputToken: side === 'BUY' ? base : entry.token,
+            outputToken: side === 'BUY' ? entry.token : base,
+            amount: parsed,
+          });
+          hash = res.transactionHash;
+        } else {
+          // Ready lane: Wallet API prepare+submit of the 3 ordered STRK20 invoke actions.
+          const plan = {
+            operation: side === 'BUY' ? CURVE_OP.BUY : CURVE_OP.SELL,
+            inputToken: side === 'BUY' ? base : entry.token,
+            outputToken: side === 'BUY' ? entry.token : base,
+            amount: parsed.toString(),
+            executor: entry.executor,
+            userAddress: wallet.address,
+          };
+          const actions =
+            side === 'BUY' ? buildPrivateBuyActions(plan) : buildPrivateSellActions(plan);
+          const res = await executePrivateTrade(wallet, actions);
+          hash = res.transactionHash;
+        }
       }
       setStep('SUBMITTING');
       setTxHash(hash);

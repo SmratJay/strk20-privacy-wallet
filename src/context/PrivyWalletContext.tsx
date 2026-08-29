@@ -23,6 +23,7 @@ import {
   STRK_TOKEN_ADDRESS,
   type ApprovalStatus,
 } from "@/privacy/privy/allowance";
+import type { PrivateCurveTradeParams } from "@/privacy/adapter";
 import { loadOrCreateViewingKey } from "@/privacy/privy/viewingKeyStore";
 import { withRetry } from "@/privacy/privy/statusProbe";
 import { getNetworkConfig, normalizeEndpointUrl } from "@/config/networks";
@@ -100,6 +101,8 @@ export interface PrivyWalletContextValue {
   shield: (token: string, amountBase: bigint) => Promise<Strk20ExecuteReceipt>;
   unshield: (token: string, amountBase: bigint, recipient: string) => Promise<Strk20ExecuteReceipt>;
   transfer: (token: string, amountBase: bigint, recipient: string) => Promise<Strk20ExecuteReceipt>;
+  /** Private trade through a launchpad PrivateCurveExecutor (curve BUY/SELL via STRK20). */
+  privateTrade: (params: PrivateCurveTradeParams) => Promise<Strk20ExecuteReceipt>;
   register: () => Promise<Strk20ExecuteReceipt>;
   getPrivateBalance: (token: string) => Promise<bigint>;
 }
@@ -131,6 +134,7 @@ const UNAVAILABLE: PrivyWalletContextValue = {
   shield: async () => { throw new Error("Privy is not configured."); },
   unshield: async () => { throw new Error("Privy is not configured."); },
   transfer: async () => { throw new Error("Privy is not configured."); },
+  privateTrade: async () => { throw new Error("Privy is not configured."); },
   register: async () => { throw new Error("Privy is not configured."); },
   getPrivateBalance: async () => { throw new Error("Privy is not configured."); },
 };
@@ -504,6 +508,17 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
     return receipt;
   }, [requireReady, ensureReady, updatePrivacy]);
 
+  /** Private curve trade through a launchpad PrivateCurveExecutor (Privy STRK20 lane). */
+  const privateTrade = useCallback(
+    async (params: PrivateCurveTradeParams) => {
+      await ensureReady();
+      const user = requireReady();
+      setApprovalStatus("idle");
+      return buildAdapter((s) => setApprovalStatus(s)).privateTrade(user, params);
+    },
+    [requireReady, ensureReady],
+  );
+
   /**
    * Register the STRK20 viewing key in the privacy pool and reconcile against on-chain state.
    * Ensures the account is deployed first, submits the registration, waits for on-chain
@@ -592,10 +607,11 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       shield,
       unshield,
       transfer,
+      privateTrade,
       register,
       getPrivateBalance,
     }),
-    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, approvalStatus, accountStatus, privacyStatus, refreshAccountDeploymentStatus, refreshPrivacyRegistrationStatus, enableAccount, enablePrivacy, login, logout, deploy, shield, unshield, transfer, register, getPrivateBalance],
+    [ready, authenticated, isConnecting, error, resolved, privateReceivingEnabled, deployStatus, deployError, approvalStatus, accountStatus, privacyStatus, refreshAccountDeploymentStatus, refreshPrivacyRegistrationStatus, enableAccount, enablePrivacy, login, logout, deploy, shield, unshield, transfer, privateTrade, register, getPrivateBalance],
   );
 
   return <PrivyWalletContext.Provider value={value}>{children}</PrivyWalletContext.Provider>;
