@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=Syne:wght@700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Syne:wght@700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -448,6 +448,13 @@ select:focus-visible {
   position: relative;
   isolation: isolate;
   background: #050405;
+  font-family: 'Manrope', sans-serif;
+}
+
+.landing-shell .font-bebas,
+.landing-shell .font-space,
+.landing-shell .font-syne {
+  font-family: 'Manrope', sans-serif;
 }
 
 .landing-shell::before {
@@ -565,10 +572,11 @@ select:focus-visible {
 }
 
 .landing-scene-heading {
-  font-family: 'Bebas Neue', 'Impact', sans-serif;
+  font-family: 'Manrope', sans-serif;
   font-size: clamp(5rem, 13vw, 12rem);
-  letter-spacing: -0.025em;
-  line-height: 0.8;
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 0.94;
 }
 
 .landing-scene-nav {
@@ -582,7 +590,7 @@ select:focus-visible {
 .landing-poster-copy {
   max-width: 45rem;
   text-align: center;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Manrope', sans-serif;
   font-size: clamp(1.15rem, 2.2vw, 1.65rem);
   font-weight: 600;
   letter-spacing: -0.04em;

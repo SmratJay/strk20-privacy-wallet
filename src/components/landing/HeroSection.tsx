@@ -21,7 +21,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onJoinWaitlist, onOpen
     <section id="hero" className="landing-panel landing-candy-light flex min-h-[calc(100svh-5rem)] items-center justify-center px-5 pb-24 pt-36 sm:px-8 sm:pb-28 sm:pt-40">
       <div className="relative z-10 flex w-full max-w-5xl flex-col items-center text-center">
         <div className="landing-sticker-label mb-8"><span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_10px_#34d399]" /> ORRANGE WAITLIST / LIVE PREVIEW</div>
-        <h1 className="landing-scene-heading max-w-full text-[#1d111d] drop-shadow-[0_10px_0_rgba(255,255,255,.23)]">ORRANGE</h1>
+        <h1 className="landing-scene-heading max-w-full text-[#1d111d] drop-shadow-[0_10px_0_rgba(255,255,255,.23)]">Everything private, in one terminal.</h1>
         <p className="mt-7 font-mono text-[10px] font-bold uppercase tracking-[0.28em] text-[#673947] sm:text-xs">A PRIVATE WALLET FOR A NEW GENERATION</p>
         <p className="landing-poster-copy mt-9 max-w-2xl text-[#452533]">Shielded STRK20 payments on Starknet — make money private before it becomes public.</p>
 
