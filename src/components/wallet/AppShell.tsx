@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Flame,
   Menu,
   Moon,
   Repeat,
@@ -35,6 +36,7 @@ const ACTION_NAV = [
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
   { href: '/swap', label: 'Swap', icon: Repeat },
+  { href: '/explore', label: 'Explore', icon: Flame },
   { href: '/launch', label: 'Launch', icon: Rocket },
   { href: '/extended', label: 'Trade', icon: TrendingUp },
 ];

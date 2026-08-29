@@ -26,6 +26,7 @@ import {
   executePublicSell,
   getTokenBalance,
   baseUsdFor,
+  findTokenEntry,
 } from '@/services/launchService';
 import {
   buildPrivateBuyActions,
@@ -34,6 +35,7 @@ import {
   CURVE_OP,
 } from '@/services/privateLaunchService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
+import { fetchMetadataByToken, LaunchMetadataRecord } from '@/services/launchMetadata';
 import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/formatters';
 
 type Side = 'BUY' | 'SELL';
@@ -57,11 +59,13 @@ function fmtPriceUsd(v: number): string {
 export default function LaunchTokenPage() {
   const params = useParams<{ token: string }>();
   const id = params?.token ?? '';
-  const { wallet, networkId, balances, refreshAfterMutation } = useWallet();
+  const { wallet, networkId, balances, refreshAfterMutation, isSepolia } = useWallet();
 
   const net = getLaunchNetwork(networkId);
+  const explorerUrl = isSepolia ? 'https://sepolia.voyager.online' : 'https://voyager.online';
   const [entry, setEntry] = useState<LaunchTokenEntry | null>(null);
   const [snapshot, setSnapshot] = useState<TokenSnapshot | null>(null);
+  const [offchainMetadata, setOffchainMetadata] = useState<LaunchMetadataRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [side, setSide] = useState<Side>('BUY');
@@ -94,15 +98,14 @@ export default function LaunchTokenPage() {
   const decimals = snapshot?.metadata?.decimals ?? 18;
   const tokenSymbol = snapshot?.metadata?.symbol ?? entry?.symbol ?? 'TOKEN';
 
-  // Resolve entry from the registry / factory on mount.
+  // Resolve entry from the live factory by id, symbol, OR real token address (Explore
+  // cards link to /launch/<token-address>, so address resolution is required).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const { listTokens } = await import('@/services/launchService');
-        const list = await listTokens(networkId);
-        const found = list.find((e) => e.id === id || e.symbol.toLowerCase() === id.toLowerCase());
+        const found = await findTokenEntry(networkId, id);
         if (cancelled) return;
         if (!found) {
           setError(`No memecoin found for "${id}".`);
@@ -112,6 +115,8 @@ export default function LaunchTokenPage() {
         setEntry(found);
         const snap = await loadTokenSnapshot(networkId, found);
         if (!cancelled) setSnapshot(snap);
+        const meta = await fetchMetadataByToken(found.token);
+        if (!cancelled) setOffchainMetadata(meta);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || 'Could not load this token.');
       } finally {
@@ -261,9 +266,17 @@ export default function LaunchTokenPage() {
             {/* Header */}
             <div className="pt-2">
               <div className="flex items-center gap-3">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 border border-violet-500/30 flex items-center justify-center text-3xl">
-                  {entry.emoji}
-                </div>
+                {offchainMetadata?.image ? (
+                  <img
+                    src={offchainMetadata.image}
+                    alt={`${entry.symbol} artwork`}
+                    className="w-14 h-14 rounded-2xl object-cover border border-zinc-800"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 border border-violet-500/30 flex items-center justify-center text-3xl">
+                    {entry.emoji}
+                  </div>
+                )}
                 <div>
                   <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
                     {entry.symbol}
@@ -274,10 +287,43 @@ export default function LaunchTokenPage() {
                     )}
                   </h1>
                   <p className="text-sm text-zinc-500">
-                    {entry.name} · {shortenAddress(entry.curve, 5)}
+                    {offchainMetadata?.name || entry.name} · {shortenAddress(entry.curve, 5)}
                   </p>
+                  <div className="mt-1 flex items-center gap-3 text-[11px] text-zinc-500">
+                    {entry.creator && (
+                      <span>
+                        Creator <span className="text-violet-300 font-mono">{shortenAddress(entry.creator, 4)}</span>
+                      </span>
+                    )}
+                    {(offchainMetadata?.socials?.x ||
+                      offchainMetadata?.socials?.telegram ||
+                      offchainMetadata?.socials?.website) && (
+                      <span className="flex items-center gap-2">
+                        {offchainMetadata.socials.x && (
+                          <a href={offchainMetadata.socials.x} target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline">
+                            X
+                          </a>
+                        )}
+                        {offchainMetadata.socials.telegram && (
+                          <a href={offchainMetadata.socials.telegram} target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline">
+                            TG
+                          </a>
+                        )}
+                        {offchainMetadata.socials.website && (
+                          <a href={offchainMetadata.socials.website} target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline">
+                            Web
+                          </a>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+              {offchainMetadata?.description && (
+                <p className="mt-3 text-[13px] text-zinc-400 leading-relaxed max-w-2xl">
+                  {offchainMetadata.description}
+                </p>
+              )}
             </div>
 
             {!live && (
@@ -496,7 +542,7 @@ export default function LaunchTokenPage() {
                   <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-3 break-all">
                     <span>{txHash}</span>
                     <a
-                      href={`${snapshot ? '' : ''}https://voyager.online/tx/${txHash}`}
+                      href={`${explorerUrl}/tx/${txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="ml-2 shrink-0 text-emerald-300 underline"

@@ -11,10 +11,13 @@ import {
   LaunchTokenEntry,
   getLaunchNetwork,
   isTokenLive,
+  LAUNCH_METADATA_REF,
 } from '@/config/launch';
 import { parseTokenAmount } from '@/utils/formatters';
 
 const ONE = 10n ** 18n;
+
+export type ExploreSortMode = 'newest' | 'trending' | 'graduation';
 
 export interface CurveState {
   virtualBase: bigint;
@@ -143,17 +146,36 @@ async function readTokenMetadata(
   }
 }
 
-/** Decode a felt short string (or already-string) to a JS string. */
+/** Decode a felt short string to a JS string. Accepts a numeric felt (bigint) returned by
+ * the RPC or an already-hex/plain string. Null bytes terminate the string. */
 function feltToString(v: any): string {
+  const fromHex = (hex: string): string => {
+    let out = '';
+    for (let i = 0; i < hex.length; i += 2) {
+      const byte = parseInt(hex.slice(i, i + 2), 16);
+      if (byte === 0) break;
+      out += String.fromCharCode(byte);
+    }
+    return out;
+  };
+  if (typeof v === 'bigint' || typeof v === 'number') {
+    try {
+      const hex = v
+        .toString(16)
+        .padStart(Math.ceil(v.toString(16).length / 2) * 2, '0');
+      const cleaned = fromHex(hex);
+      return cleaned || v.toString();
+    } catch {
+      return String(v);
+    }
+  }
   if (typeof v === 'string') {
     if (/^0x[0-9a-f]+$/i.test(v)) {
       try {
-        const bytes = BigInt(v)
+        const hex = BigInt(v)
           .toString(16)
           .padStart(Math.ceil(BigInt(v).toString(16).length / 2) * 2, '0');
-        let out = '';
-        for (let i = 0; i < bytes.length; i += 2) out += String.fromCharCode(parseInt(bytes.slice(i, i + 2), 16));
-        const cleaned = out.replace(/\x00/g, '');
+        const cleaned = fromHex(hex);
         return cleaned || v;
       } catch {
         return v;
@@ -265,6 +287,13 @@ export async function listTokens(networkId: NetworkId): Promise<LaunchTokenEntry
         ]);
         const meta = await readTokenMetadata(provider, num.toHex(toBig(token)));
         const md = await callView(provider, net.factory, 'get_metadata', [toBig(token)]);
+        let creator: string | undefined;
+        try {
+          const c = await callView(provider, net.factory, 'get_creator', [toBig(token)]);
+          creator = num.toHex(toBig(c));
+        } catch {
+          creator = undefined;
+        }
         out.push({
           id: String(i),
           symbol: meta?.symbol ?? `TOKEN${i}`,
@@ -276,6 +305,7 @@ export async function listTokens(networkId: NetworkId): Promise<LaunchTokenEntry
           totalSupply: meta?.totalSupply?.toString() ?? '',
           params: DEFAULT_PARAMS_FROM_NET,
           metadataUri: feltToString(md) || undefined,
+          creator,
         });
       }
       if (out.length) return out;
@@ -292,6 +322,93 @@ const DEFAULT_PARAMS_FROM_NET = {
   graduationTarget: '50000000000000000000',
   feeBps: '100',
 };
+
+/** Normalize an address/felt to lowercase hex for comparison. */
+export function normalizeAddress(addr: string): string {
+  if (!addr) return '';
+  try {
+    return num.toHex(addr).toLowerCase();
+  } catch {
+    return addr.toLowerCase();
+  }
+}
+
+/**
+ * Pure resolver: match a token entry by factory id, symbol (case-insensitive), or the real
+ * token contract address. Used by the Explore → token page navigation so every card links
+ * to the actual deployed curve addresses.
+ */
+export function matchTokenEntry(list: LaunchTokenEntry[], key: string): LaunchTokenEntry | null {
+  if (!key || list.length === 0) return null;
+  const idKey = key.toLowerCase();
+  const addrKey = normalizeAddress(key);
+  return (
+    list.find(
+      (e) =>
+        String(e.id).toLowerCase() === idKey ||
+        e.symbol.toLowerCase() === idKey ||
+        e.token.toLowerCase() === idKey ||
+        normalizeAddress(e.token) === addrKey,
+    ) ?? null
+  );
+}
+
+/** Resolve a token entry from the live factory list by id, symbol, or address. */
+export async function findTokenEntry(
+  networkId: NetworkId,
+  idOrSymbolOrAddress: string,
+): Promise<LaunchTokenEntry | null> {
+  const list = await listTokens(networkId);
+  return matchTokenEntry(list, idOrSymbolOrAddress);
+}
+
+/** Sort snapshots for Explore: newest (factory id desc), trending (real reserves desc),
+ * or graduation (lowest remaining progress first). All keys derive from on-chain state. */
+export function sortSnapshots(
+  snapshots: TokenSnapshot[],
+  mode: ExploreSortMode,
+): TokenSnapshot[] {
+  const arr = [...snapshots];
+  if (mode === 'trending') {
+    return arr.sort((a, b) => {
+      const ra = a.curve?.baseReserve ?? 0n;
+      const rb = b.curve?.baseReserve ?? 0n;
+      return ra === rb ? 0 : ra > rb ? -1 : 1;
+    });
+  }
+  if (mode === 'graduation') {
+    return arr.sort((a, b) => {
+      const pa = a.metrics?.graduationPct ?? 0;
+      const pb = b.metrics?.graduationPct ?? 0;
+      return pa - pb;
+    });
+  }
+  // newest: highest factory id first (id = creation order)
+  return arr.sort((a, b) => Number(b.entry.id) - Number(a.entry.id));
+}
+
+/** Pure search filter over name/symbol. */
+export function filterSnapshots(snapshots: TokenSnapshot[], query: string): TokenSnapshot[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return snapshots;
+  return snapshots.filter(
+    (s) =>
+      s.entry.name.toLowerCase().includes(q) ||
+      s.entry.symbol.toLowerCase().includes(q),
+  );
+}
+
+/** On-chain metadata reference this app stamps on every launched token. */
+export function launchMetadataRef(): string {
+  return LAUNCH_METADATA_REF;
+}
+
+/** True when a factory-issued metadata felt points at the ORRANGE launch metadata store. */
+export function decodeMetadataRef(feltOrString: any): boolean {
+  if (!feltOrString) return false;
+  const asStr = feltToString(feltOrString);
+  return asStr === LAUNCH_METADATA_REF;
+}
 
 /** Public buy: approve the BASE asset for the curve, then call buy(). */
 export async function executePublicBuy(

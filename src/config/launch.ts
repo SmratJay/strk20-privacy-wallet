@@ -18,6 +18,12 @@ export interface LaunchCurveParams {
   feeBps: string;
 }
 
+export interface LaunchSocials {
+  x?: string;
+  telegram?: string;
+  website?: string;
+}
+
 export interface LaunchTokenEntry {
   id: string;
   symbol: string;
@@ -71,10 +77,36 @@ const DEFAULT_PARAMS: LaunchCurveParams = {
 
 const DEFAULT_TOTAL_SUPPLY = '1073000000000000000000000000';
 
+/**
+ * On-chain metadata reference stored in TokenFactory.metadata_uri. It is a short felt that
+ * marks a token as using the ORRANGE launch metadata store; the full description/image/
+ * socials payload lives off-chain in the /api/launch/metadata store, keyed by token address.
+ * Kept deliberately tiny (≤31 chars) so it fits in a felt short string.
+ */
+export const LAUNCH_METADATA_REF = 'orrange://meta';
+
+/** Create-form defaults (identical to the factory default curve the deploy script uses). */
+export const CREATE_DEFAULTS = {
+  decimals: 18,
+  totalSupply: DEFAULT_TOTAL_SUPPLY,
+  virtualBase: DEFAULT_PARAMS.virtualBase,
+  virtualToken: DEFAULT_PARAMS.virtualToken,
+  graduationTarget: DEFAULT_PARAMS.graduationTarget,
+  feeBps: DEFAULT_PARAMS.feeBps,
+};
+
 /** Addresses are read from env so a real deployment can be wired without code changes. */
 function envFactory(): { factory: string; router: string } {
   return {
     factory: process.env.NEXT_PUBLIC_UMBRA_FACTORY || '',
+    router: process.env.NEXT_PUBLIC_UMBRA_ROUTER || '',
+  };
+}
+
+function envFactorySepolia(): { factory: string; router: string } {
+  return {
+    factory:
+      process.env.NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY || process.env.NEXT_PUBLIC_UMBRA_FACTORY || '',
     router: process.env.NEXT_PUBLIC_UMBRA_ROUTER || '',
   };
 }
@@ -120,9 +152,9 @@ export const LAUNCH_NETWORKS: Record<'mainnet' | 'sepolia', LaunchNetworkConfig>
     poolAddress: SEPOLIA_UMBRA_POOL,
     baseAsset: STRK_SEPOLIA,
     baseAssetDecimals: 18,
-    factory: '',
-    router: '',
-    registry: [],
+    factory: envFactorySepolia().factory,
+    router: envFactorySepolia().router,
+    registry: seedRegistry(STRK_SEPOLIA, 'NEXT_PUBLIC_UMBRA_'),
   },
 };
 

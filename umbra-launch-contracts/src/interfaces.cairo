@@ -81,6 +81,7 @@ pub trait ITokenFactory<TContractState> {
     fn get_curve(self: @TContractState, id: u128) -> ContractAddress;
     fn get_executor(self: @TContractState, id: u128) -> ContractAddress;
     fn get_metadata(self: @TContractState, token: ContractAddress) -> felt252;
+    fn get_creator(self: @TContractState, token: ContractAddress) -> ContractAddress;
     fn get_router(self: @TContractState) -> ContractAddress;
     fn get_base_asset(self: @TContractState) -> ContractAddress;
     fn get_privacy_pool(self: @TContractState) -> ContractAddress;

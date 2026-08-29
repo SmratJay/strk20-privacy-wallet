@@ -1,130 +1,147 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
-import { Loader2, TrendingUp, Shield, Globe, Flame } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { CallData, shortString } from 'starknet';
+import { Loader2, Rocket, Globe, Shield, CheckCircle2, X } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
+import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { useWallet } from '@/context/WalletContext';
-import { LaunchTokenEntry } from '@/config/launch';
-import { listTokens, loadTokenSnapshot, TokenSnapshot, baseUsdFor } from '@/services/launchService';
+import { getLaunchNetwork, CREATE_DEFAULTS } from '@/config/launch';
+import { providerFor, launchMetadataRef, normalizeAddress } from '@/services/launchService';
 
-function formatUsd(v: number): string {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
-  if (v === 0) return '—';
-  return `$${v.toFixed(2)}`;
-}
+const MAX_SHORT_STRING = 31; // felt short-string limit
 
-function formatPriceUsd(v: number): string {
-  if (v === 0) return '—';
-  if (v >= 1) return `$${v.toFixed(4)}`;
-  if (v >= 0.0001) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(2)}`;
-}
+type Step = 'SIGNING' | 'CONFIRMING' | 'REGISTERING' | 'DONE';
 
-function TokenCard({ snapshot }: { snapshot: TokenSnapshot }) {
-  const { entry, metrics, live } = snapshot;
-  const pct = metrics?.graduationPct ?? 0;
-  const graduated = metrics?.graduated ?? false;
-  return (
-    <Link
-      href={`/launch/${entry.id}`}
-      className="group rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 hover:border-violet-500/40 hover:bg-zinc-900/60 transition-colors"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 border border-violet-500/30 flex items-center justify-center text-2xl">
-            {entry.emoji}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[15px] font-bold text-zinc-100">{entry.symbol}</span>
-              {graduated && (
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                  GRADUATED
-                </span>
-              )}
-              {!live && (
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  PENDING DEPLOY
-                </span>
-              )}
-            </div>
-            <div className="text-[12px] text-zinc-500">{entry.name}</div>
-          </div>
-        </div>
-        <TrendingUp className="w-4 h-4 text-emerald-400" />
-      </div>
+export default function LaunchCreatePage() {
+  const router = useRouter();
+  const { wallet, networkId, isSepolia } = useWallet();
 
-      {live && metrics ? (
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">MC</div>
-            <div className="text-[13px] font-semibold text-zinc-100">{formatUsd(metrics.marketCap)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Liquidity</div>
-            <div className="text-[13px] font-semibold text-zinc-100">{formatUsd(metrics.liquidity)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Price</div>
-            <div className="text-[13px] font-semibold text-violet-300">{formatPriceUsd(metrics.priceUsd)}</div>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-4 text-[12px] text-zinc-600">
-          Live curve data appears once the contracts are deployed and configured.
-        </div>
-      )}
+  const net = getLaunchNetwork(networkId);
+  const factoryConfigured = Boolean(net.factory);
 
-      {/* Graduation bar */}
-      <div className="mt-4">
-        <div className="flex items-center justify-between text-[10px] text-zinc-500">
-          <span>Graduation</span>
-          <span>{live ? `${pct.toFixed(0)}%` : '—'}</span>
-        </div>
-        <div className="mt-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${graduated ? 'bg-emerald-400' : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'}`}
-            style={{ width: `${Math.min(100, pct)}%` }}
-          />
-        </div>
-      </div>
-    </Link>
-  );
-}
+  const [name, setName] = useState('');
+  const [symbol, setSymbol] = useState('');
+  const [description, setDescription] = useState('');
+  const [image, setImage] = useState('');
+  const [socialX, setSocialX] = useState('');
+  const [socialTelegram, setSocialTelegram] = useState('');
+  const [socialWebsite, setSocialWebsite] = useState('');
 
-export default function LaunchPage() {
-  const { networkId, isSepolia } = useWallet();
-  const [tokens, setTokens] = useState<LaunchTokenEntry[]>([]);
-  const [snapshots, setSnapshots] = useState<TokenSnapshot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [step, setStep] = useState<Step | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [newToken, setNewToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
 
-  const baseUsd = useMemo(() => baseUsdFor(networkId), [networkId]);
+  const connected = wallet.isConnected;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
+  const validate = (): string | null => {
+    const n = name.trim();
+    const s = symbol.trim();
+    if (!n) return 'Give your coin a name.';
+    if (n.length > MAX_SHORT_STRING) return `Coin name must be ${MAX_SHORT_STRING} characters or fewer (on-chain short string).`;
+    if (!s) return 'Give your coin a ticker.';
+    if (s.length > MAX_SHORT_STRING) return `Ticker must be ${MAX_SHORT_STRING} characters or fewer.`;
+    if (!/^[A-Za-z0-9_]+$/.test(s)) return 'Ticker may only contain letters, numbers and underscores.';
+    return null;
+  };
+
+  const launch = async () => {
+    setFieldError(null);
+    setError(null);
+    setTxHash(null);
+    setNewToken(null);
+
+    if (!connected || !wallet.address) {
+      setError('Connect a Starknet wallet to launch a coin.');
+      return;
+    }
+    if (!isSepolia) {
+      setError('Launch is currently Starknet Sepolia only. Switch your wallet to Sepolia.');
+      return;
+    }
+    if (!factoryConfigured) {
+      setError('The ORRANGE TokenFactory is not deployed/configured for Sepolia yet.');
+      return;
+    }
+    const v = validate();
+    if (v) {
+      setFieldError(v);
+      return;
+    }
+    const account = wallet.walletAccount;
+    if (!account || typeof account.execute !== 'function') {
+      setError('Connected wallet does not support contract execution.');
+      return;
+    }
+
+    try {
+      setStep('SIGNING');
+      const calldata = CallData.compile({
+        name: shortString.encodeShortString(name.trim()),
+        symbol: shortString.encodeShortString(symbol.trim()),
+        decimals: CREATE_DEFAULTS.decimals,
+        metadata_uri: shortString.encodeShortString(launchMetadataRef()),
+        total_supply: BigInt(CREATE_DEFAULTS.totalSupply),
+        virtual_base_reserve: BigInt(CREATE_DEFAULTS.virtualBase),
+        virtual_token_reserve: BigInt(CREATE_DEFAULTS.virtualToken),
+        graduation_target: BigInt(CREATE_DEFAULTS.graduationTarget),
+        fee_bps: Number(CREATE_DEFAULTS.feeBps),
+      });
+      const res = await account.execute([
+        { contractAddress: net.factory, entrypoint: 'create_memecoin', calldata },
+      ]);
+      const hash = res.transaction_hash ?? res.transactionHash ?? res.hash;
+      setTxHash(hash);
+
+      setStep('CONFIRMING');
+      const provider = providerFor(networkId);
+      await provider.waitForTransaction(hash);
+
+      setStep('REGISTERING');
+      const countRes = await provider.callContract({
+        contractAddress: net.factory,
+        entrypoint: 'get_token_count',
+        calldata: [],
+      });
+      const count = Number(countRes[0] ?? 0);
+      const id = count - 1;
+      const tokenRes = await provider.callContract({
+        contractAddress: net.factory,
+        entrypoint: 'get_token',
+        calldata: [String(id)],
+      });
+      const token = normalizeAddress(tokenRes[0] ?? '');
+
+      // Best-effort off-chain enrichment (description / image / socials). The token is
+      // already on-chain and discoverable; metadata registration is additive.
       try {
-        const list = await listTokens(networkId);
-        if (cancelled) return;
-        setTokens(list);
-        const snaps = await Promise.all(list.map((e) => loadTokenSnapshot(networkId, e)));
-        if (cancelled) return;
-        setSnapshots(snaps);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Could not load the ORRANGE Launch market.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        await fetch('/api/launch/metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            name: name.trim(),
+            symbol: symbol.trim().toUpperCase(),
+            description,
+            image,
+            socials: { x: socialX, telegram: socialTelegram, website: socialWebsite },
+          }),
+        });
+      } catch {
+        // Non-fatal: the coin is live on-chain regardless.
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [networkId]);
+
+      setStep('DONE');
+      setNewToken(token);
+    } catch (e: any) {
+      setError(e?.message || 'Launch failed. Check your wallet and try again.');
+      setStep(null);
+    }
+  };
 
   return (
     <AppShell>
@@ -133,67 +150,206 @@ export default function LaunchPage() {
           <div>
             <div className="product-eyebrow">ORRANGE / LAUNCH</div>
             <h1 className="product-page-title flex items-center gap-2">
-            <Flame className="w-5 h-5 text-violet-400" /> ORRANGE Launch
-          </h1>
-          <p className="product-page-description">
-            Memecoins with a private execution layer.{' '}
-            <span className="text-violet-300">The market is public. Your trade doesn&apos;t have to be.</span>
-          </p>
-          {isSepolia && (
-            <p className="text-[12px] text-amber-300 mt-1">
-              On Sepolia the STRK20 private lane uses the Sepolia pool; mainnet is the primary target.
+              <Rocket className="w-5 h-5 text-violet-400" /> Launch a coin
+            </h1>
+            <p className="product-page-description">
+              Deploy a memecoin on Starknet Sepolia with a bonded curve.{' '}
+              <span className="text-violet-300">One transaction. Instantly tradable. Instantly discoverable.</span>
             </p>
-          )}
+            {isSepolia && factoryConfigured && (
+              <p className="text-[12px] text-emerald-300 mt-1">
+                Factory live · launching through <span className="font-mono">{net.factory.slice(0, 14)}…</span>
+              </p>
+            )}
           </div>
+          <Link href="/explore" className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 hover:border-violet-500/40 text-zinc-300 hover:text-zinc-100 text-[13px] font-semibold px-4 py-2.5 transition-colors">
+            <Globe className="w-4 h-4" /> Explore launched coins
+          </Link>
         </div>
 
-        {/* Privacy statement banner */}
-        <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4">
-          <div className="flex items-start gap-3">
-            <Shield className="w-5 h-5 text-violet-400 mt-0.5 shrink-0" />
-            <div className="text-[13px] leading-relaxed text-zinc-300">
-              <span className="font-semibold text-zinc-100">Public market · Private execution.</span>{' '}
-              Price, liquidity, curve state and market impact stay on-chain and visible to everyone.
-              Your <span className="text-violet-300">wallet → trade link</span> is executed through the
-              STRK20 privacy pool: shielded input, private executor, shielded output note.
-            </div>
+        {!connected ? (
+          <ConnectGate />
+        ) : !isSepolia ? (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-300">
+            Launch is Starknet <strong>Sepolia</strong> only for now. Switch your wallet to the
+            Sepolia network to create a coin.
           </div>
-          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-zinc-500">
-            <div><Globe className="inline w-3 h-3 mr-1 text-zinc-400" /> Market state: PUBLIC</div>
-            <div><Globe className="inline w-3 h-3 mr-1 text-zinc-400" /> Price: PUBLIC</div>
-            <div><Globe className="inline w-3 h-3 mr-1 text-zinc-400" /> Liquidity: PUBLIC</div>
-            <div><Shield className="inline w-3 h-3 mr-1 text-violet-400" /> Wallet→trade: PRIVATE</div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-          <span>Base asset:</span>
-          <span className="text-zinc-300 font-mono">STRK</span>
-          <span className="text-zinc-600">·</span>
-          <span>STRK ≈ ${baseUsd.toFixed(3)}</span>
-        </div>
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-[13px] text-zinc-500 py-10 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading the market…
-          </div>
-        ) : error ? (
-          <div className="text-[13px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-xl p-3">
-            {error}
+        ) : !factoryConfigured ? (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-300">
+            The ORRANGE TokenFactory is not configured for Sepolia yet. Set{' '}
+            <code className="text-amber-200 font-mono">NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY</code> and{' '}
+            <code className="text-amber-200 font-mono">NEXT_PUBLIC_UMBRA_ROUTER</code> to open the market.
           </div>
         ) : (
-          <>
-            {tokens.length === 0 && (
-            <div className="text-[13px] text-zinc-500 border border-zinc-800 rounded-xl p-4">
-                No memecoins launched yet. Deploy the ORRANGE TokenFactory to open the market.
+          <div className="grid lg:grid-cols-[1fr_320px] gap-4 items-start">
+            {/* Create form */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 space-y-4">
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-zinc-500">Coin name</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={MAX_SHORT_STRING}
+                  placeholder="Hampton the Hamster"
+                  className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                />
               </div>
-            )}
-            <div className="grid sm:grid-cols-2 gap-3">
-              {snapshots.map((s) => (
-                <TokenCard key={s.entry.id} snapshot={s} />
-              ))}
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-zinc-500">Ticker</label>
+                <input
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  maxLength={MAX_SHORT_STRING}
+                  placeholder="HAMSTR"
+                  className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] font-mono text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-zinc-500">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  placeholder="What is this coin about?"
+                  className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700 resize-none"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-zinc-500">Image URL</label>
+                <input
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  placeholder="https://…/coin.png (optional)"
+                  className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                />
+              </div>
+              <div className="grid sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] uppercase tracking-wide text-zinc-500">X / Twitter</label>
+                  <input
+                    value={socialX}
+                    onChange={(e) => setSocialX(e.target.value)}
+                    placeholder="@handle"
+                    className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[13px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase tracking-wide text-zinc-500">Telegram</label>
+                  <input
+                    value={socialTelegram}
+                    onChange={(e) => setSocialTelegram(e.target.value)}
+                    placeholder="t.me/…"
+                    className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[13px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase tracking-wide text-zinc-500">Website</label>
+                  <input
+                    value={socialWebsite}
+                    onChange={(e) => setSocialWebsite(e.target.value)}
+                    placeholder="https://…"
+                    className="mt-1 w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[13px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                  />
+                </div>
+              </div>
+
+              {fieldError && (
+                <div className="flex items-start gap-2 text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-2">
+                  <X className="w-4 h-4 shrink-0 mt-0.5" /> {fieldError}
+                </div>
+              )}
+              {error && (
+                <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3 break-words">
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={() => void launch()}
+                disabled={step !== null}
+                className="w-full py-3.5 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {step === 'SIGNING' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Signing in wallet…
+                  </span>
+                ) : step === 'CONFIRMING' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Deploying token + curve…
+                  </span>
+                ) : step === 'REGISTERING' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Registering metadata…
+                  </span>
+                ) : step === 'DONE' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-4 h-4" /> Launched
+                  </span>
+                ) : (
+                  'Launch Coin'
+                )}
+              </button>
+
+              {txHash && (
+                <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-3 break-all">
+                  <span>{txHash}</span>
+                  <a
+                    href={`https://sepolia.voyager.online/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-2 shrink-0 text-emerald-300 underline"
+                  >
+                    View
+                  </a>
+                </div>
+              )}
+
+              {newToken && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-[13px] text-emerald-300 space-y-2">
+                  <div>
+                    <strong>Coin is live!</strong> It is now discoverable on Explore and tradable on its bonded curve.
+                  </div>
+                  <div className="flex gap-2">
+                    <Link
+                      href={`/launch/${newToken}`}
+                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 text-black text-[13px] font-bold px-3 py-2"
+                    >
+                      <Rocket className="w-4 h-4" /> Open your coin
+                    </Link>
+                    <Link
+                      href="/explore"
+                      className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 text-emerald-200 text-[13px] font-semibold px-3 py-2"
+                    >
+                      <Globe className="w-4 h-4" /> Explore
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
-          </>
+
+            {/* Sidebar: curve config summary */}
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">Bonding curve</div>
+                <ul className="mt-2 space-y-1.5 text-[12px] text-zinc-300">
+                  <li className="flex justify-between"><span>Virtual base</span><span className="font-mono text-zinc-400">15 STRK</span></li>
+                  <li className="flex justify-between"><span>Supply</span><span className="font-mono text-zinc-400">1.073B</span></li>
+                  <li className="flex justify-between"><span>Graduation target</span><span className="font-mono text-zinc-400">50 STRK</span></li>
+                  <li className="flex justify-between"><span>Fee</span><span className="font-mono text-zinc-400">1%</span></li>
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4">
+                <div className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100">
+                  <Shield className="w-4 h-4 text-violet-400" /> Public market · private execution
+                </div>
+                <p className="mt-2 text-[12px] text-zinc-400 leading-relaxed">
+                  Your token gets a real on-chain TokenFactory deployment: memecoin + bonding curve
+                  + private executor, atomically. Trading on the curve is public; your wallet→trade
+                  link can stay shielded through STRK20.
+                </p>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AppShell>

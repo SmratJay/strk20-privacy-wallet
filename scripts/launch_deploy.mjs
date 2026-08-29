@@ -173,7 +173,11 @@ async function main() {
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(manifest, null, 2));
   console.log(`\nManifest written to ${OUTPUT_FILE}`);
   console.log('\n.env.local additions:');
-  console.log(`NEXT_PUBLIC_UMBRA_FACTORY=${factoryDeploy.contract_address}`);
+  console.log(
+    isSepolia
+      ? `NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY=${factoryDeploy.contract_address}`
+      : `NEXT_PUBLIC_UMBRA_FACTORY=${factoryDeploy.contract_address}`,
+  );
   console.log(`NEXT_PUBLIC_UMBRA_ROUTER=${routerDeploy.contract_address}`);
   console.log(`NEXT_PUBLIC_UMBRA_HAMSTR_TOKEN=${token}`);
   console.log(`NEXT_PUBLIC_UMBRA_HAMSTR_CURVE=${curve}`);

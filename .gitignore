@@ -46,6 +46,9 @@ yarn-error.log*
 .cache/
 .snfoundry_cache/
 
+# Launch metadata store (runtime-written, keyed by token address)
+data/
+
 # Rust (pel-risk-engine is a library; lock + target are not tracked)
 crates/**/target/
 crates/**/Cargo.lock

@@ -117,6 +117,15 @@ fn test_zero_supply_reverts() {
 }
 
 #[test]
+fn test_factory_records_creator() {
+    let (factory, _base) = factory();
+    let (token, _curve, _executor) = create_default(factory);
+    // The factory records the caller (this test contract) as the token's creator so the
+    // Explore/detail UI can attribute launches on-chain.
+    assert(factory.get_creator(token) == get_contract_address(), 'creator wrong');
+}
+
+#[test]
 fn test_created_token_can_trade() {
     let (factory, base) = factory();
     let (token, curve, _executor) = create_default(factory);
