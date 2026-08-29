@@ -16,12 +16,15 @@ function SendContent() {
     modeParam === 'deposit' ? 'DEPOSIT' : modeParam === 'withdraw' ? 'WITHDRAW' : 'SEND';
 
   return (
-    <div className="space-y-6">
-      <div className="pt-2 space-y-1">
-        <h1 className="text-2xl font-semibold text-zinc-100">Send</h1>
-        <p className="text-sm text-zinc-500">
+    <div className="product-page">
+      <div className="product-page-intro">
+        <div>
+          <div className="product-eyebrow">ORRANGE / PRIVACY</div>
+          <h1 className="product-page-title">Send privately</h1>
+          <p className="product-page-description">
           Send privately — sender, recipient, amount, and token stay hidden.
-        </p>
+          </p>
+        </div>
       </div>
 
       {!wallet.isConnected ? (

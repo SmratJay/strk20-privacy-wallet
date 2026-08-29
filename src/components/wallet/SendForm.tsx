@@ -315,7 +315,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
   return (
     <div className="space-y-4">
       {/* Mode selector */}
-      <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl bg-zinc-900 border border-zinc-800">
+      <div className="product-mode-selector grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl bg-zinc-900 border border-zinc-800">
         {MODES.map((m) => {
           const Icon = m.Icon;
           const active = mode === m.id;
@@ -328,8 +328,8 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
               }}
               className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-[13px] font-medium transition-colors ${
                 active
-                  ? 'bg-zinc-800 text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-300'
+                  ? 'product-tab-active'
+                  : 'product-tab-idle'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -361,7 +361,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
       )}
 
       {reviewing ? (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 space-y-4">
+        <div className="product-form-card rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 space-y-4">
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-zinc-100">
               {MODES.find((m) => m.id === mode)?.label}
@@ -427,7 +427,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
             <button
               onClick={execute}
               disabled={busy}
-              className="flex-1 py-3 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="product-primary-button flex-1 py-3 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />}
               {busy ? submitLabel() : `Confirm ${mode === 'SEND' ? 'private payment' : mode === 'DEPOSIT' ? 'deposit' : 'withdrawal'}`}
@@ -435,7 +435,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 space-y-4">
+        <div className="product-form-card rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 space-y-4">
           <div className="flex items-center justify-between text-[12px] text-zinc-500">
             <span>Asset</span>
             <span>
@@ -458,7 +458,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
                 const found = currentNetwork.tokens.find((t) => t.symbol === e.target.value);
                 if (found) setSelectedToken(found);
               }}
-              className="px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-sm font-medium outline-none"
+              className="product-token-select px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-sm font-medium outline-none"
             >
               {currentNetwork.tokens.map((t) => (
                 <option key={t.symbol} value={t.symbol}>
@@ -475,7 +475,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 disabled={busy}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 text-base font-medium outline-none"
+                className="product-amount-input w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 text-base font-medium outline-none"
               />
               <button
                 onClick={handleMax}
@@ -498,7 +498,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
                 disabled={busy}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 font-mono text-sm outline-none"
+                className="product-recipient-input w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:border-violet-500 text-zinc-100 font-mono text-sm outline-none"
               />
             </div>
           )}
@@ -534,7 +534,7 @@ export const SendForm: React.FC<{ initialMode?: Mode }> = ({ initialMode }) => {
               setReviewing(true);
             }}
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            className="product-primary-button w-full py-3 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-50"
           >
             {submitLabel()}
           </button>

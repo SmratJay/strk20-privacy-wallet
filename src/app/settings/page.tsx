@@ -40,9 +40,13 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
-        <div className="pt-2 space-y-1">
-          <h1 className="text-2xl font-semibold text-zinc-100">Settings</h1>
+      <div className="product-page">
+        <div className="product-page-intro">
+          <div>
+            <div className="product-eyebrow">ORRANGE / SETTINGS</div>
+            <h1 className="product-page-title">Settings</h1>
+            <p className="product-page-description">Account, privacy, network, and wallet controls.</p>
+          </div>
         </div>
 
         <Section title="Actions" icon={<SlidersHorizontal className="w-4 h-4" />}>

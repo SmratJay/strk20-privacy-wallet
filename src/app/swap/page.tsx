@@ -165,14 +165,17 @@ export default function SwapPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
-        <div className="pt-2 space-y-1">
-          <h1 className="text-2xl font-semibold text-zinc-100">Swap</h1>
-          <p className="text-sm text-zinc-500">
+      <div className="product-page">
+        <div className="product-page-intro">
+          <div>
+            <div className="product-eyebrow">ORRANGE / SWAP</div>
+            <h1 className="product-page-title">Swap quietly</h1>
+            <p className="product-page-description">
             {mode === 'PUBLIC'
               ? 'Public swap — wallet balance → AVNU → wallet balance.'
               : 'Private swap — STRK20 shielded balance → AVNU executor → shielded balance.'}
-          </p>
+            </p>
+          </div>
         </div>
 
         {!connected ? (
@@ -187,7 +190,7 @@ export default function SwapPage() {
             )}
 
             {/* Mode toggle */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="product-swap-mode grid grid-cols-2 gap-2">
               <button
                 onClick={() => setMode('PUBLIC')}
                 className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-semibold border transition-colors ${
@@ -219,7 +222,7 @@ export default function SwapPage() {
               </p>
             )}
 
-            <div className="border border-zinc-800 bg-zinc-950/60 rounded-2xl p-4 space-y-4">
+            <div className="product-swap-card border border-zinc-800 bg-zinc-950/60 rounded-2xl p-4 space-y-4">
               {/* Sell */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] text-zinc-500">
@@ -235,12 +238,12 @@ export default function SwapPage() {
                     value={sellAmount}
                     onChange={(e) => setSellAmount(e.target.value)}
                     placeholder="0.0"
-                    className="flex-1 bg-transparent text-2xl font-semibold text-zinc-100 outline-none placeholder:text-zinc-700"
+                    className="product-swap-input flex-1 bg-transparent text-2xl font-semibold text-zinc-100 outline-none placeholder:text-zinc-700"
                   />
                   <select
                     value={sellAddr}
                     onChange={(e) => setSellAddr(e.target.value)}
-                    className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
+                    className="product-token-select bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
                   >
                     {tokens.map((t) => (
                       <option key={t.address} value={t.address}>
@@ -272,7 +275,7 @@ export default function SwapPage() {
                   <select
                     value={buyAddr}
                     onChange={(e) => setBuyAddr(e.target.value)}
-                    className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
+                    className="product-token-select bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
                   >
                     {tokens.map((t) => (
                       <option key={t.address} value={t.address}>

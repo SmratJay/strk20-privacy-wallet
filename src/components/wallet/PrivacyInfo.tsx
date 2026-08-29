@@ -18,6 +18,8 @@ export const PrivacyInfo: React.FC = () => {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls="privacy-info-details"
         className="w-full flex items-center justify-between px-5 py-4 text-left"
       >
         <span className="flex items-center gap-2 text-sm font-medium text-zinc-100">
@@ -30,7 +32,7 @@ export const PrivacyInfo: React.FC = () => {
       </button>
 
       {open && (
-        <div className="px-5 pb-5 space-y-4">
+        <div id="privacy-info-details" className="px-5 pb-5 space-y-4">
           <p className="text-sm text-zinc-400 leading-relaxed">
             Your payments run through the STRK20 privacy pool on Starknet. What you send and
             receive stays private:

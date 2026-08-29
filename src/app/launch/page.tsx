@@ -116,7 +116,7 @@ export default function LaunchPage() {
         if (cancelled) return;
         setSnapshots(snaps);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Could not load the Umbra Launch market.');
+        if (!cancelled) setError(e?.message || 'Could not load the ORRANGE Launch market.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -128,12 +128,14 @@ export default function LaunchPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
-        <div className="pt-2">
-          <h1 className="text-2xl font-semibold text-zinc-100 flex items-center gap-2">
-            <Flame className="w-5 h-5 text-violet-400" /> Umbra Launch
+      <div className="product-page">
+        <div className="product-page-intro">
+          <div>
+            <div className="product-eyebrow">ORRANGE / LAUNCH</div>
+            <h1 className="product-page-title flex items-center gap-2">
+            <Flame className="w-5 h-5 text-violet-400" /> ORRANGE Launch
           </h1>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="product-page-description">
             Memecoins with a private execution layer.{' '}
             <span className="text-violet-300">The market is public. Your trade doesn&apos;t have to be.</span>
           </p>
@@ -142,6 +144,7 @@ export default function LaunchPage() {
               On Sepolia the STRK20 private lane uses the Sepolia pool; mainnet is the primary target.
             </p>
           )}
+          </div>
         </div>
 
         {/* Privacy statement banner */}
@@ -181,8 +184,8 @@ export default function LaunchPage() {
         ) : (
           <>
             {tokens.length === 0 && (
-              <div className="text-[13px] text-zinc-500 border border-zinc-800 rounded-xl p-4">
-                No memecoins launched yet. Deploy the Umbra TokenFactory to open the market.
+            <div className="text-[13px] text-zinc-500 border border-zinc-800 rounded-xl p-4">
+                No memecoins launched yet. Deploy the ORRANGE TokenFactory to open the market.
               </div>
             )}
             <div className="grid sm:grid-cols-2 gap-3">

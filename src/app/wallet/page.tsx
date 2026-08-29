@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight, Rocket } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight, Repeat } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { PublicBalanceCard } from '@/components/wallet/PublicBalanceCard';
@@ -12,6 +12,7 @@ import { TransactionList } from '@/components/wallet/TransactionList';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { PrivyConnect } from '@/components/wallet/PrivyConnect';
 import { useWallet } from '@/context/WalletContext';
+import { formatTokenAmount, shortenAddress } from '@/utils/formatters';
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -21,21 +22,31 @@ const greeting = () => {
 };
 
 export default function WalletPage() {
-  const { wallet, transactions } = useWallet();
+  const { wallet, transactions, balances } = useWallet();
+  const primaryBalance = balances[0];
+  const totalAvailable = Boolean(primaryBalance?.publicBalanceAvailable && primaryBalance?.shieldedBalanceAvailable === true);
+  const formatBalance = (value: bigint, available: boolean) => available && primaryBalance
+    ? `${formatTokenAmount(value, primaryBalance.token.decimals, 4)} ${primaryBalance.token.symbol}`
+    : '—';
 
   return (
     <AppShell>
-      <div className="space-y-6">
-        <div className="pt-2">
-          <h1 className="text-2xl font-semibold text-zinc-100">
-            {greeting()}
-            {wallet.isConnected ? '' : ','}
-          </h1>
-          <p className="text-sm text-zinc-500 mt-1">
+      <div className="product-page">
+        <div className="product-page-intro">
+          <div>
+            <div className="product-eyebrow">ORRANGE / WALLET</div>
+            <h1 className="product-page-title">{greeting()}</h1>
+            <p className="product-page-description">
             {wallet.isConnected
               ? 'Your private money, at a glance.'
               : 'Receive privately and spend freely on Starknet.'}
-          </p>
+            </p>
+          </div>
+          {wallet.isConnected && wallet.address && (
+            <div className="product-summary-address" title="Connected wallet address">
+              {wallet.walletName || 'Account 01'} · {shortenAddress(wallet.address, 6)}
+            </div>
+          )}
         </div>
 
         {!wallet.isConnected && <ConnectGate />}
@@ -44,53 +55,72 @@ export default function WalletPage() {
 
         {wallet.isConnected && (
           <>
-            <PublicBalanceCard />
+            <section className="product-summary" aria-label="Account balance summary">
+              <div className="product-summary-top">
+                <div>
+                  <div className="product-summary-label">Total balance</div>
+                  <div className="product-summary-value">
+                    {primaryBalance ? formatBalance(primaryBalance.publicBalance + primaryBalance.shieldedBalance, totalAvailable) : '—'}
+                  </div>
+                  <div className="product-summary-note">Values shown per asset · no fiat conversion</div>
+                </div>
+                <span className="product-summary-label">{primaryBalance?.token.symbol || 'STRK20'}</span>
+              </div>
+              <div className="product-summary-split">
+                <div>
+                  <div className="product-split-label"><span /> Public</div>
+                  <div className="product-split-value">{primaryBalance ? formatBalance(primaryBalance.publicBalance, primaryBalance.publicBalanceAvailable) : '—'}</div>
+                </div>
+                <div>
+                  <div className="product-split-label"><span className="is-private" /> Private</div>
+                  <div className="product-split-value">{primaryBalance ? formatBalance(primaryBalance.shieldedBalance, primaryBalance.shieldedBalanceAvailable === true) : '—'}</div>
+                </div>
+              </div>
+            </section>
 
-            <BalanceCard />
+            <div>
+              <div className="product-eyebrow mb-3">ASSETS</div>
+              <div className="product-balance-grid">
+                <PublicBalanceCard />
+                <BalanceCard />
+              </div>
+            </div>
 
             {/* Primary actions */}
-            <div className="grid grid-cols-4 gap-2">
-              <Link
-                href="/launch"
-                className="flex flex-col items-center gap-2 rounded-2xl border border-violet-500/30 bg-violet-500/5 py-4 hover:bg-violet-500/10 transition-colors"
-              >
-                <div className="w-9 h-9 rounded-full bg-violet-500/15 text-violet-300 flex items-center justify-center">
-                  <Rocket className="w-4 h-4" />
-                </div>
-                <span className="text-[13px] font-medium text-zinc-100">Launch</span>
-              </Link>
+            <div className="product-action-row" aria-label="Wallet actions">
               <Link
                 href="/send"
-                className="flex flex-col items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/60 py-4 hover:bg-zinc-900/60 transition-colors"
+                className="product-action"
               >
-                <div className="w-9 h-9 rounded-full bg-rose-500/10 text-rose-300 flex items-center justify-center">
-                  <ArrowUpRight className="w-4 h-4" />
-                </div>
-                <span className="text-[13px] font-medium text-zinc-100">Send</span>
+                <ArrowUpRight aria-hidden="true" />
+                <span>Send</span>
               </Link>
               <Link
                 href="/receive"
-                className="flex flex-col items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/60 py-4 hover:bg-zinc-900/60 transition-colors"
+                className="product-action"
               >
-                <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center">
-                  <ArrowDownLeft className="w-4 h-4" />
-                </div>
-                <span className="text-[13px] font-medium text-zinc-100">Receive</span>
+                <ArrowDownLeft aria-hidden="true" />
+                <span>Receive</span>
               </Link>
               <Link
                 href="/send?mode=deposit"
-                className="flex flex-col items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/60 py-4 hover:bg-zinc-900/60 transition-colors"
+                className="product-action is-primary"
               >
-                <div className="w-9 h-9 rounded-full bg-[#C45B2C]/15 text-[#F08A3C] flex items-center justify-center">
-                  <Shield className="w-4 h-4" />
-                </div>
-                <span className="text-[13px] font-medium text-zinc-100">Make private</span>
+                <Shield aria-hidden="true" />
+                <span>Shield</span>
+              </Link>
+              <Link
+                href="/swap"
+                className="product-action"
+              >
+                <Repeat aria-hidden="true" />
+                <span>Swap</span>
               </Link>
             </div>
 
             <ReceivePanel />
 
-            <div className="space-y-2">
+            <div className="product-card-flat p-5 sm:p-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-zinc-300">Recent activity</h2>
                 <Link
@@ -100,7 +130,7 @@ export default function WalletPage() {
                   View all <ChevronRight className="w-4 h-4" />
                 </Link>
               </div>
-              <TransactionList transactions={transactions} limit={3} />
+              <div className="mt-4"><TransactionList transactions={transactions} limit={3} /></div>
             </div>
 
             <PrivacyInfo />

@@ -11,10 +11,13 @@ export default function ActivityPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
-        <div className="pt-2 space-y-1">
-          <h1 className="text-2xl font-semibold text-zinc-100">Activity</h1>
-          <p className="text-sm text-zinc-500">Your private payments.</p>
+      <div className="product-page">
+        <div className="product-page-intro">
+          <div>
+            <div className="product-eyebrow">ORRANGE / ACTIVITY</div>
+            <h1 className="product-page-title">Activity</h1>
+            <p className="product-page-description">A quiet record of your private payments.</p>
+          </div>
         </div>
 
         {!wallet.isConnected ? (

@@ -1,42 +1,63 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  ShieldCheck,
-  ArrowUpRight,
+  Activity,
   ArrowDownLeft,
-  Clock,
-  Settings as SettingsIcon,
-  Lock,
-  Copy,
+  ArrowUpRight,
   Check,
-  TrendingUp,
+  ChevronDown,
+  Copy,
+  Moon,
   Repeat,
   Rocket,
+  Settings,
+  ShieldCheck,
+  Sun,
+  TrendingUp,
 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
 import { useToast } from '@/components/Toast';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
-const NAV_ITEMS = [
-  { href: '/wallet', label: 'Wallet', icon: Lock },
-  { href: '/launch', label: 'Launch', icon: Rocket },
-  { href: '/swap', label: 'Swap', icon: Repeat },
+const PRIMARY_NAV = [
+  { href: '/wallet', label: 'Wallet', icon: ShieldCheck },
+  { href: '/activity', label: 'Activity', icon: Activity },
+  { href: '/settings', label: 'Settings', icon: Settings },
+];
+
+const ACTION_NAV = [
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
-  { href: '/extended', label: 'Extended', icon: TrendingUp },
-  { href: '/activity', label: 'Activity', icon: Clock },
-  { href: '/settings', label: 'Settings', icon: SettingsIcon },
+  { href: '/swap', label: 'Swap', icon: Repeat },
+  { href: '/launch', label: 'Launch', icon: Rocket },
+  { href: '/extended', label: 'Trade', icon: TrendingUp },
 ];
+
+type AppTheme = 'light' | 'dark';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
   const { wallet, currentNetwork, isSepolia } = useWallet();
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [theme, setTheme] = useState<AppTheme>('light');
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem('orrange-product-theme');
+    if (stored === 'dark' || stored === 'light') setTheme(stored);
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((current) => {
+      const next = current === 'light' ? 'dark' : 'light';
+      window.localStorage.setItem('orrange-product-theme', next);
+      return next;
+    });
+  };
 
   const handleCopyAddress = async () => {
     if (!wallet.address) return;
@@ -45,137 +66,93 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       setCopied(true);
       showToast({
         type: 'success',
-        title: 'Address Copied',
+        title: 'Address copied',
         description: `${shortenAddress(wallet.address, 6)} copied to clipboard.`,
       });
       setTimeout(() => setCopied(false), 2000);
     } else {
-      showToast({
-        type: 'error',
-        title: 'Failed to Copy',
-        description: 'Could not copy address to clipboard.',
-      });
+      showToast({ type: 'error', title: 'Could not copy address', description: 'Try again from your wallet.' });
     }
   };
 
-  const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-zinc-800/70 bg-zinc-950/80 backdrop-blur-md">
-        <div className="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
-          <Link href="/" className="flex items-center gap-2.5 shrink-0">
-            <div className="w-8 h-8 rounded-xl bg-violet-500/15 border border-violet-500/30 flex items-center justify-center text-violet-300">
-              <ShieldCheck className="w-4 h-4" />
-            </div>
-            <div className="leading-none">
-              <div className="text-sm font-semibold text-zinc-100">STRK20</div>
-              <div className="text-[10px] text-violet-300/80 font-medium">Private Wallet</div>
-            </div>
+    <div className="product-app min-h-screen" data-theme={theme}>
+      <header className="product-header">
+        <div className="product-header-inner">
+          <Link href="/" className="product-brand" aria-label="Return to ORRANGE home">
+            <span className="product-brand-mark"><span /></span>
+            <span>
+              <span className="product-brand-name">ORRANGE</span>
+              <span className="product-brand-subtitle">private wallet</span>
+            </span>
           </Link>
 
-          <div className="flex items-center gap-2">
-            <span
-              className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border ${
-                isSepolia
-                  ? 'border-amber-500/30 text-amber-300 bg-amber-500/10'
-                  : 'border-zinc-700 text-zinc-400 bg-zinc-900'
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${isSepolia ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+          <nav className="product-primary-nav" aria-label="Primary navigation">
+            {PRIMARY_NAV.map(({ href, label, icon: Icon }) => (
+              <Link key={href} href={href} className={`product-nav-link ${isActive(href) ? 'is-active' : ''}`}>
+                <Icon aria-hidden="true" />
+                {label}
+              </Link>
+            ))}
+            <details className="product-actions-menu">
+              <summary className="product-nav-link">
+                <span>Actions</span>
+                <ChevronDown aria-hidden="true" />
+              </summary>
+              <div className="product-actions-popover">
+                {ACTION_NAV.map(({ href, label, icon: Icon }) => (
+                  <Link key={href} href={href} className={`product-menu-link ${isActive(href) ? 'is-active' : ''}`}>
+                    <Icon aria-hidden="true" />
+                    {label}
+                  </Link>
+                ))}
+              </div>
+            </details>
+          </nav>
+
+          <div className="product-header-tools">
+            <span className="product-network-status" title={`Connected to ${currentNetwork.name}`}>
+              <span className={isSepolia ? 'is-sepolia' : 'is-mainnet'} />
               {isSepolia ? 'Sepolia' : 'Mainnet'}
             </span>
-
+            <button type="button" className="product-icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} aria-pressed={theme === 'dark'}>
+              {theme === 'light' ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
+            </button>
             {wallet.isConnected && wallet.address ? (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopyAddress}
-                  title="Click to copy full wallet address"
-                  className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono hover:text-zinc-200 transition-colors cursor-pointer group"
-                >
-                  {copied ? (
-                    <span className="text-emerald-400 flex items-center gap-1">
-                      <Check className="w-3 h-3" />
-                      Copied
-                    </span>
-                  ) : (
-                    <>
-                      {shortenAddress(wallet.address, 6)}
-                      <Copy className="w-3 h-3 text-zinc-500 group-hover:text-zinc-300" />
-                    </>
-                  )}
-                </button>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  Connected
+              <button type="button" onClick={handleCopyAddress} className="product-account-button" title="Copy wallet address">
+                <span className="product-account-avatar">{wallet.walletIcon || '◌'}</span>
+                <span className="product-account-copy">
+                  <strong>{wallet.walletName || 'Wallet'}</strong>
+                  <span>{copied ? <><Check aria-hidden="true" /> Copied</> : shortenAddress(wallet.address, 5)}</span>
                 </span>
-              </div>
-            ) : (
-              <button
-                onClick={wallet.openConnectModal}
-                className="text-[12px] font-semibold px-4 py-2 rounded-xl bg-violet-500 hover:bg-violet-400 text-white transition-colors"
-              >
-                Connect Wallet
               </button>
+            ) : (
+              <button type="button" onClick={wallet.openConnectModal} className="product-primary-button product-connect-button">Connect</button>
             )}
           </div>
         </div>
-
-        {/* Desktop nav */}
-        <nav className="hidden sm:block border-t border-zinc-800/50">
-          <div className="max-w-2xl mx-auto px-4 flex items-center gap-1">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-2 px-4 py-3 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
-                    active
-                      ? 'border-violet-500 text-zinc-100'
-                      : 'border-transparent text-zinc-500 hover:text-zinc-200'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
       </header>
 
-      {/* Main */}
-      <main className="flex-1 w-full">
-        <div className="max-w-2xl mx-auto px-4 py-6 pb-24 sm:pb-10">{children}</div>
+      <main className="product-main">
+        <div className="product-content">{children}</div>
       </main>
 
-      {/* Mobile bottom nav */}
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-md">
-        <div className="flex items-stretch justify-around">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors ${
-                  active ? 'text-violet-300' : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </div>
+      <nav className="product-mobile-nav" aria-label="Mobile navigation">
+        {[
+          PRIMARY_NAV[0],
+          ACTION_NAV[0],
+          ACTION_NAV[1],
+          PRIMARY_NAV[1],
+        ].map(({ href, label, icon: Icon }) => (
+          <Link key={href} href={href} className={`product-mobile-nav-link ${isActive(href) ? 'is-active' : ''}`}>
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+          </Link>
+        ))}
       </nav>
 
-      {/* Connect modal */}
       <ConnectWalletModal
         isOpen={wallet.isConnectModalOpen}
         onClose={wallet.closeConnectModal}
