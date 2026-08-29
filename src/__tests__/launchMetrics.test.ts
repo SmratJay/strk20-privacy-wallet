@@ -48,6 +48,29 @@ describe('computeMetrics', () => {
     expect(m.marketCap).toBe(0);
     expect(Number.isFinite(m.price)).toBe(true);
   });
+
+  it('market cap is unit-correct: priceUsd × human-readable supply (not raw 1e18)', () => {
+    const curve = makeCurve();
+    // tokenReserve = 5e23 raw → 500,000 tokens at 18 dp
+    const humanCirculating = Number(curve.tokenReserve) / 10 ** 18;
+    const priceUsd = (Number(curve.priceBase) / Number(curve.priceToken)) * 0.35;
+    const m = computeMetrics(curve, metadata, 'mainnet', 0n);
+    expect(m.marketCap).toBeCloseTo(priceUsd * humanCirculating, 8);
+    // Regression: must NOT be price × raw smallest-unit supply (previously ~1e19).
+    expect(m.marketCap).toBeLessThan(1_000_000);
+    expect(m.marketCap).toBeLessThan((Number(curve.priceBase) / Number(curve.priceToken)) * Number(curve.tokenReserve));
+  });
+
+  it('volume is cumulative traded volume, never current liquidity/reserves', () => {
+    const m = computeMetrics(makeCurve(), metadata, 'mainnet', 12345n * ONE);
+    expect(m.volume).toBeCloseTo(12345, 5);
+    // Changing the reserve must NOT change volume.
+    const m2 = computeMetrics(makeCurve({ baseReserve: 999n * ONE }), metadata, 'mainnet', 12345n * ONE);
+    expect(m2.volume).toBeCloseTo(12345, 5);
+    // Zero events → zero volume, even when the curve holds reserves.
+    const m3 = computeMetrics(makeCurve({ baseReserve: 30n * ONE }), metadata, 'mainnet', 0n);
+    expect(m3.volume).toBe(0);
+  });
 });
 
 describe('parseTokenAmount / formatTokenAmount round trip', () => {

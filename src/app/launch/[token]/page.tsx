@@ -85,14 +85,48 @@ export default function LaunchTokenPage() {
   const baseSymbol = 'STRK';
   const baseDecimals = net.baseAssetDecimals;
 
-  // Public/private base balances from the wallet context (STRK is a configured token).
+  // Private base balance comes from the wallet context (STRK is a configured token).
   const strkBalanceRow = useMemo(
     () => balances.find((b) => b.token.address.toLowerCase() === base.toLowerCase()),
     [balances, base],
   );
-  const publicStrk = strkBalanceRow?.publicBalance ?? 0n;
   const privateStrk = strkBalanceRow?.shieldedBalance ?? 0n;
   const privateStrkAvailable = strkBalanceRow?.shieldedBalanceAvailable === true;
+
+  // PUBLIC base (STRK) balance: read live from the connected wallet on the ACTIVE network
+  // via RPC. Never rely on the wallet context's possibly-stale/zero public balance and never
+  // use a shielded balance for PUBLIC mode. `null` = read failed → UI shows "—" and does not
+  // block the buy on a fabricated zero.
+  const [publicStrk, setPublicStrk] = useState<bigint | null>(null);
+  const [publicStrkStatus, setPublicStrkStatus] = useState<'UNKNOWN' | 'OK' | 'ERR'>('UNKNOWN');
+
+  const refreshPublicStrk = useCallback(async () => {
+    if (!wallet.address) {
+      setPublicStrk(null);
+      setPublicStrkStatus('UNKNOWN');
+      return;
+    }
+    try {
+      const b = await getTokenBalance(networkId, base, wallet.address);
+      if (b !== null) {
+        setPublicStrk(b);
+        setPublicStrkStatus('OK');
+      } else {
+        setPublicStrkStatus('ERR');
+      }
+    } catch {
+      setPublicStrkStatus('ERR');
+    }
+  }, [wallet.address, networkId, base]);
+
+  useEffect(() => {
+    void refreshPublicStrk();
+  }, [refreshPublicStrk, snapshot?.curve?.priceBase]);
+
+  useEffect(() => {
+    const t = setInterval(() => void refreshPublicStrk(), 8000);
+    return () => clearInterval(t);
+  }, [refreshPublicStrk]);
 
   const live = entry ? isTokenLive(entry) : false;
   const decimals = snapshot?.metadata?.decimals ?? 18;
@@ -190,12 +224,22 @@ export default function LaunchTokenPage() {
     void refreshQuote();
   }, [refreshQuote]);
 
-  const maxBalanceForSide = (): bigint => {
-    if (side === 'BUY') return mode === 'PRIVATE' ? privateStrk : publicStrk;
-    return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
-  };
+const maxBalanceForSide = (): bigint => {
+  if (side === 'BUY') return mode === 'PRIVATE' ? privateStrk : (publicStrk ?? 0n);
+  return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
+};
 
-  const insufficient = amount.length > 0 && parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals) > maxBalanceForSide();
+// Only block the trade when the relevant balance is ACTUALLY known. A null/unknown public
+// balance (RPC read failed) must never be treated as a fabricated 0 that disables the buy.
+const balanceKnown =
+  (side === 'BUY' && mode === 'PUBLIC' && publicStrkStatus === 'OK') ||
+  (side === 'BUY' && mode === 'PRIVATE') ||
+  (side === 'SELL' && mode === 'PUBLIC' && publicTokenBalance !== null) ||
+  (side === 'SELL' && mode === 'PRIVATE');
+const insufficient =
+  balanceKnown &&
+  amount.length > 0 &&
+  parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals) > maxBalanceForSide();
 
   const execute = async () => {
     if (!connected || !wallet.address || !entry) return;
@@ -385,7 +429,12 @@ export default function LaunchTokenPage() {
                         : '—'}
                     </div>
                     <div className="text-[11px] text-zinc-600 mt-0.5">
-                      Public STRK: {formatTokenAmount(publicStrk, baseDecimals, 4)}
+                      Public STRK:{' '}
+                      {publicStrkStatus === 'OK'
+                        ? formatTokenAmount(publicStrk ?? 0n, baseDecimals, 4)
+                        : publicStrkStatus === 'ERR'
+                          ? 'unavailable'
+                          : '—'}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-3">

@@ -135,8 +135,8 @@ async function readTokenMetadata(
       ? BigInt(totalSupplyRaw)
       : toBig(await callView(provider, token, 'total_supply'));
     return {
-      name: feltToString(name),
-      symbol: feltToString(symbol),
+      name: decodeShortString(name),
+      symbol: decodeShortString(symbol),
       decimals: Number(toBig(decimals)),
       totalSupply: supply,
     };
@@ -146,9 +146,16 @@ async function readTokenMetadata(
   }
 }
 
-/** Decode a felt short string to a JS string. Accepts a numeric felt (bigint) returned by
- * the RPC or an already-hex/plain string. Null bytes terminate the string. */
-function feltToString(v: any): string {
+/**
+ * Decode a felt short string to a JS string.
+ *
+ * `callContract` returns a `felt252` view result as a 1-element array (e.g.
+ * `['0x5354524b465457']`), so unwrap that first, then decode the felt whether it arrived as
+ * a bigint, a hex string, or a plain string. Null bytes terminate the string.
+ */
+export function decodeShortString(v: any): string {
+  const unwrapped = Array.isArray(v) ? (v.length > 0 ? v[0] : '') : v;
+  if (unwrapped === null || unwrapped === undefined) return '';
   const fromHex = (hex: string): string => {
     let out = '';
     for (let i = 0; i < hex.length; i += 2) {
@@ -158,32 +165,32 @@ function feltToString(v: any): string {
     }
     return out;
   };
-  if (typeof v === 'bigint' || typeof v === 'number') {
+  if (typeof unwrapped === 'bigint' || typeof unwrapped === 'number') {
     try {
-      const hex = v
+      const hex = unwrapped
         .toString(16)
-        .padStart(Math.ceil(v.toString(16).length / 2) * 2, '0');
+        .padStart(Math.ceil(unwrapped.toString(16).length / 2) * 2, '0');
       const cleaned = fromHex(hex);
-      return cleaned || v.toString();
+      return cleaned || unwrapped.toString();
     } catch {
-      return String(v);
+      return String(unwrapped);
     }
   }
-  if (typeof v === 'string') {
-    if (/^0x[0-9a-f]+$/i.test(v)) {
+  if (typeof unwrapped === 'string') {
+    if (/^0x[0-9a-f]+$/i.test(unwrapped)) {
       try {
-        const hex = BigInt(v)
+        const hex = BigInt(unwrapped)
           .toString(16)
-          .padStart(Math.ceil(BigInt(v).toString(16).length / 2) * 2, '0');
+          .padStart(Math.ceil(BigInt(unwrapped).toString(16).length / 2) * 2, '0');
         const cleaned = fromHex(hex);
-        return cleaned || v;
+        return cleaned || unwrapped;
       } catch {
-        return v;
+        return unwrapped;
       }
     }
-    return v;
+    return unwrapped;
   }
-  return String(v ?? '');
+  return String(unwrapped ?? '');
 }
 
 /**
@@ -231,13 +238,21 @@ export function computeMetrics(
   curve: CurveState,
   metadata: TokenMetadata | null,
   networkId: NetworkId,
+  cumulativeVolumeBase: bigint = 0n,
 ): MarketMetrics {
   const price = curve.priceToken > 0n ? Number(curve.priceBase) / Number(curve.priceToken) : 0;
   const priceUsd = price * baseUsdFor(networkId);
-  const circulating = curve.tokenReserve > 0n ? curve.tokenReserve : (metadata?.totalSupply ?? 0n);
-  const marketCap = price * Number(circulating);
+  // circulating supply is on-chain in smallest units — normalize by token decimals so the
+  // market cap is priceUsd × human-readable token count (never price × raw 1e18 supply).
+  const decimals = metadata?.decimals ?? 18;
+  const circulatingRaw = curve.tokenReserve > 0n ? curve.tokenReserve : (metadata?.totalSupply ?? 0n);
+  const circulatingHuman = Number(circulatingRaw) / 10 ** decimals;
+  const marketCap = priceUsd * circulatingHuman;
+  // liquidity is the real STRK reserve currently held by the curve.
   const liquidity = Number(curve.baseReserve) / Number(ONE);
-  const volume = Number(curve.baseReserve) / Number(ONE);
+  // volume is CUMULATIVE traded base volume from on-chain Buy/Sell events — never the
+  // current reserve. Passed in separately (base smallest units).
+  const volume = Number(cumulativeVolumeBase) / Number(ONE);
   const graduationPct =
     curve.graduationTarget > 0n
       ? Math.min(100, (Number(curve.baseReserve) / Number(curve.graduationTarget)) * 100)
@@ -254,6 +269,51 @@ export function computeMetrics(
   };
 }
 
+/**
+ * Cumulative traded volume (base-denominated) for a curve, derived from its on-chain
+ * `Buy`/`Sell` events:
+ *   Buy  { trader, recipient, base_amount, token_out }  → + data[2]
+ *   Sell { trader, recipient, token_amount, base_out }  → + data[3]
+ * This is real traded volume, not current liquidity. Events are scanned from the network's
+ * configured `eventScanStartBlock` (before the factory deployment) with continuation
+ * pagination. Returns null when event scanning is unavailable.
+ */
+export async function readCumulativeVolume(
+  networkId: NetworkId,
+  curve: string,
+): Promise<bigint | null> {
+  const net = getLaunchNetwork(networkId);
+  const start = net.eventScanStartBlock;
+  if (!curve || !start) return null;
+  try {
+    const provider = providerFor(networkId);
+    const buySel = hash.getSelectorFromName('Buy');
+    const sellSel = hash.getSelectorFromName('Sell');
+    let total = 0n;
+    let cont: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const filter: any = {
+        from_block: { block_number: start },
+        address: curve,
+        keys: [[buySel, sellSel]],
+        chunk_size: 1000,
+      };
+      if (cont) filter.continuation_token = cont;
+      const res = await provider.getEvents(filter);
+      for (const e of res.events ?? []) {
+        if (e.keys?.[0] === buySel) total += BigInt(e.data?.[2] ?? 0);
+        else if (e.keys?.[0] === sellSel) total += BigInt(e.data?.[3] ?? 0);
+      }
+      if (!res.continuation_token) break;
+      cont = res.continuation_token;
+    }
+    return total;
+  } catch (e) {
+    console.warn('[launch] readCumulativeVolume failed', e);
+    return null;
+  }
+}
+
 export async function loadTokenSnapshot(
   networkId: NetworkId,
   entry: LaunchTokenEntry,
@@ -262,11 +322,12 @@ export async function loadTokenSnapshot(
     return { entry, metadata: null, curve: null, metrics: null, live: false };
   }
   const provider = providerFor(networkId);
-  const [metadata, curve] = await Promise.all([
+  const [metadata, curve, volume] = await Promise.all([
     readTokenMetadata(provider, entry.token, entry.totalSupply),
     readCurveState(provider, entry.curve),
+    readCumulativeVolume(networkId, entry.curve),
   ]);
-  const metrics = metadata && curve ? computeMetrics(curve, metadata, networkId) : null;
+  const metrics = metadata && curve ? computeMetrics(curve, metadata, networkId, volume ?? 0n) : null;
   return { entry, metadata, curve, metrics, live: true };
 }
 
@@ -304,7 +365,7 @@ export async function listTokens(networkId: NetworkId): Promise<LaunchTokenEntry
           executor: num.toHex(toBig(executor)),
           totalSupply: meta?.totalSupply?.toString() ?? '',
           params: DEFAULT_PARAMS_FROM_NET,
-          metadataUri: feltToString(md) || undefined,
+          metadataUri: decodeShortString(md) || undefined,
           creator,
         });
       }
@@ -414,7 +475,7 @@ export function launchMetadataRef(): string {
 /** True when a factory-issued metadata felt points at the ORRANGE launch metadata store. */
 export function decodeMetadataRef(feltOrString: any): boolean {
   if (!feltOrString) return false;
-  const asStr = feltToString(feltOrString);
+  const asStr = decodeShortString(feltOrString);
   return asStr === LAUNCH_METADATA_REF;
 }
 
@@ -459,7 +520,9 @@ export async function executePublicSell(
 export { parseTokenAmount, providerFor, hash, num }; // re-exported for tests
 
 /** Public ERC20 balance of `address` for `token` on the active network. The UMBRA
- * memecoin exposes its entrypoint as `balance_of` (snake_case, per its Cairo interface). */
+ * memecoin exposes `balance_of` (snake_case); the canonical STRK token also accepts
+ * `balanceOf`. Tries both so either deployed ABI reads correctly. Returns null only when
+ * every read failed (UI must show "—", never a fabricated 0). */
 export async function getTokenBalance(
   networkId: NetworkId,
   token: string,
@@ -468,8 +531,15 @@ export async function getTokenBalance(
   if (!token || !address) return null;
   try {
     const provider = providerFor(networkId);
-    const res = await callView(provider, token, 'balance_of', [address]);
-    return toBig(res);
+    for (const ep of ['balance_of', 'balanceOf']) {
+      try {
+        const res = await callView(provider, token, ep, [address]);
+        return toBig(res);
+      } catch {
+        // entrypoint not on this ABI — try the other
+      }
+    }
+    return null;
   } catch {
     return null;
   }

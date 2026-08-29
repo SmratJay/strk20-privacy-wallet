@@ -12,6 +12,7 @@ import {
   decodeMetadataRef,
   normalizeAddress,
   splitU256,
+  decodeShortString,
 } from '@/services/launchService';
 
 const PARAMS: LaunchCurveParams = {
@@ -147,6 +148,27 @@ describe('metadata reference (on-chain felt ↔ store)', () => {
     expect(decodeMetadataRef('0xdeadbeef')).toBe(false);
     expect(decodeMetadataRef(null)).toBe(false);
     expect(decodeMetadataRef('')).toBe(false);
+  });
+});
+
+describe('decodeShortString (felt → ticker display)', () => {
+  it('decodes STRKFTW from the raw RPC array result (callContract shape)', () => {
+    // starknet.js returns a felt252 view as a 1-element array — this is exactly what the
+    // token page received and wrongly displayed as 0x5354524B465457.
+    expect(decodeShortString(['0x5354524b465457'])).toBe('STRKFTW');
+    expect(decodeShortString(['0x5354524B465457'])).toBe('STRKFTW');
+  });
+
+  it('decodes STRKFTW from a bigint and from a bare hex string', () => {
+    expect(decodeShortString(BigInt('0x5354524b465457'))).toBe('STRKFTW');
+    expect(decodeShortString('0x5354524B465457')).toBe('STRKFTW');
+  });
+
+  it('leaves already-decoded strings and empty values intact', () => {
+    expect(decodeShortString('STRKFTW')).toBe('STRKFTW');
+    expect(decodeShortString('')).toBe('');
+    expect(decodeShortString(null)).toBe('');
+    expect(decodeShortString(undefined)).toBe('');
   });
 });
 

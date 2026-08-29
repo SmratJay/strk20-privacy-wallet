@@ -54,6 +54,12 @@ export interface LaunchNetworkConfig {
   factory: string;
   /** GraduationRouter address (empty until deployed). */
   router: string;
+  /**
+   * Block to start BondingCurve Buy/Sell event scans from for cumulative volume.
+   * Should be set to a block before the TokenFactory deployment on the network so every
+   * factory-launched curve's full trade history is covered. 0 disables volume reads.
+   */
+  eventScanStartBlock: number;
   /** Seeded demo registry used when the factory is not deployed/configured. */
   registry: LaunchTokenEntry[];
 }
@@ -145,6 +151,7 @@ export const LAUNCH_NETWORKS: Record<'mainnet' | 'sepolia', LaunchNetworkConfig>
     baseAssetDecimals: 18,
     factory: envFactory().factory,
     router: envFactory().router,
+    eventScanStartBlock: 0, // no factory on mainnet yet — volume reads disabled
     registry: seedRegistry(STRK_MAINNET, 'NEXT_PUBLIC_UMBRA_'),
   },
   sepolia: {
@@ -154,6 +161,9 @@ export const LAUNCH_NETWORKS: Record<'mainnet' | 'sepolia', LaunchNetworkConfig>
     baseAssetDecimals: 18,
     factory: envFactorySepolia().factory,
     router: envFactorySepolia().router,
+    // A few blocks before the Sepolia TokenFactory deployment (block 14247451) so every
+    // factory-launched curve's Buy/Sell events are scanned for cumulative volume.
+    eventScanStartBlock: 14247000,
     registry: seedRegistry(STRK_SEPOLIA, 'NEXT_PUBLIC_UMBRA_'),
   },
 };
