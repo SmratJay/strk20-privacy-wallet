@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -16,6 +16,7 @@ import {
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
 import { useWallet } from '@/context/WalletContext';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
 import { getLaunchNetwork, LaunchTokenEntry, isTokenLive } from '@/config/launch';
 import {
   loadTokenSnapshot,
@@ -85,13 +86,42 @@ export default function LaunchTokenPage() {
   const baseSymbol = 'STRK';
   const baseDecimals = net.baseAssetDecimals;
 
-  // Private base balance comes from the wallet context (STRK is a configured token).
-  const strkBalanceRow = useMemo(
-    () => balances.find((b) => b.token.address.toLowerCase() === base.toLowerCase()),
-    [balances, base],
-  );
-  const privateStrk = strkBalanceRow?.shieldedBalance ?? 0n;
-  const privateStrkAvailable = strkBalanceRow?.shieldedBalanceAvailable === true;
+  const privy = usePrivyWallet();
+  // A Privy embedded wallet has its own STRK20 lane: WalletContext only loads private
+  // balances via the Ready-wallet Wallet API, so a Privy user's shielded balances must be
+  // read through the Privy discovery adapter (same rule as the wallet dashboard BalanceCard).
+  const privyConnected = privy.authenticated && privy.account !== null && privy.viewingKey !== null;
+
+  // Private base (STRK) balance.
+  // Ready lane → WalletContext balances (shieldedBalanceAvailable). Privy lane → live STRK20
+  // discovery read. `privateStrkAvailable=false` = unknown → UI shows "—", never a fake 0.
+  const [privateStrk, setPrivateStrk] = useState<bigint>(0n);
+  const [privateStrkAvailable, setPrivateStrkAvailable] = useState(false);
+
+  const refreshPrivateStrk = useCallback(async () => {
+    if (privyConnected) {
+      try {
+        const b = await privy.getPrivateBalance(base);
+        setPrivateStrk(b);
+        setPrivateStrkAvailable(true);
+      } catch {
+        setPrivateStrkAvailable(false);
+      }
+      return;
+    }
+    const row = balances.find((b) => b.token.address.toLowerCase() === base.toLowerCase());
+    setPrivateStrk(row?.shieldedBalance ?? 0n);
+    setPrivateStrkAvailable(row?.shieldedBalanceAvailable === true);
+  }, [privyConnected, privy, base, balances]);
+
+  useEffect(() => {
+    void refreshPrivateStrk();
+  }, [refreshPrivateStrk]);
+
+  useEffect(() => {
+    const t = setInterval(() => void refreshPrivateStrk(), 10000);
+    return () => clearInterval(t);
+  }, [refreshPrivateStrk]);
 
   // PUBLIC base (STRK) balance: read live from the connected wallet on the ACTIVE network
   // via RPC. Never rely on the wallet context's possibly-stale/zero public balance and never
@@ -175,18 +205,29 @@ export default function LaunchTokenPage() {
     void refreshBalances();
   }, [refreshBalances, snapshot?.curve?.priceBase]);
 
-  // Private token balance via the STRK20 wallet lane (best-effort).
+  // Private memecoin balance (best-effort). Ready lane → Wallet API; Privy lane → STRK20
+  // discovery adapter. Loaded on mount so the private card isn't a dash until PRIVATE mode
+  // is clicked.
   const refreshPrivateTokenBalance = useCallback(async () => {
     if (!entry) return;
     try {
-      const entries = await strk20WalletApiService.getPrivateBalances(wallet, [entry.token]);
-      const row = entries.find((e) => e.token.toLowerCase() === entry.token.toLowerCase());
-      setPrivateTokenBalance(row?.balance ?? 0n);
+      if (privyConnected) {
+        const bal = await privy.getPrivateBalance(entry.token);
+        setPrivateTokenBalance(bal);
+      } else {
+        const entries = await strk20WalletApiService.getPrivateBalances(wallet, [entry.token]);
+        const row = entries.find((e) => e.token.toLowerCase() === entry.token.toLowerCase());
+        setPrivateTokenBalance(row?.balance ?? 0n);
+      }
       setPrivateBalanceStatus('OK');
     } catch {
       setPrivateBalanceStatus('ERR');
     }
-  }, [entry, wallet]);
+  }, [entry, wallet, privyConnected, privy]);
+
+  useEffect(() => {
+    void refreshPrivateTokenBalance();
+  }, [refreshPrivateTokenBalance]);
 
   const connected = wallet.isConnected;
   const privateCapable = connected && !!(wallet.walletAccount || wallet.rawWallet);
@@ -229,13 +270,14 @@ const maxBalanceForSide = (): bigint => {
   return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
 };
 
-// Only block the trade when the relevant balance is ACTUALLY known. A null/unknown public
-// balance (RPC read failed) must never be treated as a fabricated 0 that disables the buy.
+// Only block the trade when the relevant balance is ACTUALLY known. A null/unknown public or
+// private balance (RPC/Wallet-API/discovery read failed or not yet loaded) must never be
+// treated as a fabricated 0 that disables the trade.
 const balanceKnown =
   (side === 'BUY' && mode === 'PUBLIC' && publicStrkStatus === 'OK') ||
-  (side === 'BUY' && mode === 'PRIVATE') ||
+  (side === 'BUY' && mode === 'PRIVATE' && privateStrkAvailable) ||
   (side === 'SELL' && mode === 'PUBLIC' && publicTokenBalance !== null) ||
-  (side === 'SELL' && mode === 'PRIVATE');
+  (side === 'SELL' && mode === 'PRIVATE' && privateBalanceStatus === 'OK');
 const insufficient =
   balanceKnown &&
   amount.length > 0 &&
