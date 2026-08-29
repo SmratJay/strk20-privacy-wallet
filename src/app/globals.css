@@ -94,18 +94,15 @@
   height: 2rem;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--app-accent);
+  overflow: hidden;
   border-radius: 0.7rem;
-  background: var(--app-accent-soft);
-  color: var(--app-accent);
+  box-shadow: 0 4px 12px rgba(39, 12, 29, 0.18);
 }
 
-.product-brand-mark span {
-  width: 0.65rem;
-  height: 0.65rem;
-  border: 1px solid currentColor;
-  border-radius: 0.18rem;
-  transform: rotate(45deg);
+.product-brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .product-brand-name,

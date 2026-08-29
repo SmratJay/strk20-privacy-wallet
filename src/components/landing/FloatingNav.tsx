@@ -20,9 +20,7 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ onOpenWaitlist }) => {
     <header className="landing-scene-nav px-1">
       <div className="landing-nav-glass flex items-center justify-between rounded-full px-3 py-2 sm:px-4">
         <Link href="/" className="group flex min-w-0 items-center gap-2.5 rounded-full px-1 py-1.5" aria-label="ORRANGE home">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#25142a] shadow-[0_4px_12px_rgba(39,12,29,.25)] transition-transform duration-300 group-hover:rotate-6">
-            <span className="h-3.5 w-3.5 rotate-45 border-2 border-[#ffab75] bg-[#f97316]" />
-          </span>
+          <img src="/orrange.png" alt="" aria-hidden="true" className="h-8 w-8 shrink-0 rounded-xl object-cover shadow-[0_4px_12px_rgba(39,12,29,.25)] transition-transform duration-300 group-hover:rotate-6" />
           <span className="truncate font-bebas text-[1.6rem] tracking-[0.12em] leading-none text-[#2b1621]">ORRANGE</span>
         </Link>
 

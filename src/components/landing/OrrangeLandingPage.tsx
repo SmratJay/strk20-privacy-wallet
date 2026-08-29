@@ -124,9 +124,9 @@ export const OrrangeLandingPage: React.FC = () => {
         <div className="-mx-5 overflow-hidden border-b border-white/[0.08] pb-8 sm:-mx-8 lg:-mx-12">
           <div className="flex w-max animate-marquee items-center gap-10 whitespace-nowrap font-bebas text-6xl tracking-[0.02em] text-white/[0.09] sm:text-8xl">{Array.from({ length: 4 }, (_, index) => <span key={index}>JOIN THE QUIET SIDE <span className="text-[#ffb45c]">✦</span></span>)}</div>
         </div>
-        <div className="flex flex-col items-start justify-between gap-8 text-left sm:flex-row sm:items-end">
+          <div className="flex flex-col items-start justify-between gap-8 text-left sm:flex-row sm:items-end">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[#ffb45c]/50 bg-[#f97316]/20"><span className="h-3 w-3 rotate-45 border border-[#ffb45c]" /></div>
+            <img src="/orrange.png" alt="" aria-hidden="true" className="h-8 w-8 rounded-xl object-cover shadow-[0_4px_12px_rgba(39,12,29,.25)]" />
             <span className="font-bebas text-3xl tracking-[0.08em] text-[#f8f1ea]">ORRANGE</span>
             <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#75645a]">// Starknet privacy</span>
           </div>

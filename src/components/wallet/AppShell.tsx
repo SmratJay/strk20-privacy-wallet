@@ -82,7 +82,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       <header className="product-header">
         <div className="product-header-inner">
           <Link href="/" className="product-brand" aria-label="Return to ORRANGE home">
-            <span className="product-brand-mark"><span /></span>
+            <span className="product-brand-mark">
+              <img src="/orrange.png" alt="" aria-hidden="true" />
+            </span>
             <span>
               <span className="product-brand-name">ORRANGE</span>
               <span className="product-brand-subtitle">private wallet</span>

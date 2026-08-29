@@ -10,6 +10,10 @@ export const metadata: Metadata = {
   title: 'ORRANGE — Starknet privacy wallet',
   description:
     'A consumer privacy wallet for shielded STRK20 payments on Starknet.',
+  icons: {
+    icon: '/orrange.png',
+    apple: '/orrange.png',
+  },
 };
 
 export default function RootLayout({
