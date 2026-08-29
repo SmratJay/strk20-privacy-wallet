@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Menu,
   Moon,
   Repeat,
   Rocket,
@@ -17,6 +18,7 @@ import {
   ShieldCheck,
   Sun,
   TrendingUp,
+  X,
 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
@@ -45,6 +47,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<AppTheme>('light');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem('orrange-product-theme');
@@ -115,6 +118,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </nav>
 
           <div className="product-header-tools">
+            <button type="button" className="product-mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-expanded={mobileMenuOpen} aria-controls="product-mobile-menu" aria-label={mobileMenuOpen ? 'Close app menu' : 'Open app menu'}>
+              {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+            </button>
             <span className="product-network-status" title={`Connected to ${currentNetwork.name}`}>
               <span className={isSepolia ? 'is-sepolia' : 'is-mainnet'} />
               {isSepolia ? 'Sepolia' : 'Mainnet'}
@@ -136,6 +142,15 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </div>
         </div>
       </header>
+
+      {mobileMenuOpen && <nav id="product-mobile-menu" className="product-mobile-menu" aria-label="All wallet tools">
+        {[...PRIMARY_NAV, ...ACTION_NAV].map(({ href, label, icon: Icon }) => (
+          <Link key={href} href={href} onClick={() => setMobileMenuOpen(false)} className={`product-mobile-menu-link ${isActive(href) ? 'is-active' : ''}`}>
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+          </Link>
+        ))}
+      </nav>}
 
       <main className="product-main">
         <div className="product-content">{children}</div>

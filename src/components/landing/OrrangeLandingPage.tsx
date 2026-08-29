@@ -59,7 +59,7 @@ export const OrrangeLandingPage: React.FC = () => {
       <MarqueeTicker />
 
       {/* Floating Pill Navigation Bar */}
-      <FloatingNav onOpenWaitlist={handleOpenWaitlistModal} />
+      <FloatingNav />
 
       {/* Section 1: Hero ("ORRANGE") */}
       <ScrollReveal>
@@ -110,7 +110,7 @@ export const OrrangeLandingPage: React.FC = () => {
       <ScrollReveal delay={1}>
         <section id="faq" className="landing-panel landing-candy-night min-h-[46rem] px-5 py-24 sm:px-8 sm:py-32 lg:px-10 lg:py-40">
         <div className="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[0.75fr_1.25fr] lg:gap-24">
-          <div className="lg:pt-4"><div className="landing-kicker mb-6 text-[#ffb45c]">05 / PRODUCT TRUTH</div><h2 className="landing-scene-heading text-[#f8f1ea]">QUESTIONS,<br /><span className="text-[#ffb45c]">ANSWERED.</span></h2><p className="mt-8 max-w-sm text-base leading-7 text-[#b8a59a]">Privacy is easier to trust when the boundaries are clear. Here is what ORRANGE does — and what it does not pretend to do.</p></div>
+          <div className="lg:pt-4"><div className="landing-kicker mb-6 text-[#ffb45c]">05 / PRODUCT TRUTH</div><h2 className="landing-scene-heading landing-faq-heading text-[#f8f1ea]">QUESTIONS,<br /><span className="text-[#ffb45c]">ANSWERED.</span></h2><p className="mt-8 max-w-sm text-base leading-7 text-[#b8a59a]">Privacy is easier to trust when the boundaries are clear. Here is what ORRANGE does — and what it does not pretend to do.</p></div>
           <div className="border-t border-white/10">
             {FAQ_ITEMS.map((item, index) => { const isOpen = openFaq === index; return <div key={item.question} className={`border-b border-white/10 ${isOpen ? 'border-l-2 border-l-[#ffb45c]' : 'border-l-2 border-l-transparent'}`}><button type="button" onClick={() => setOpenFaq(isOpen ? -1 : index)} aria-expanded={isOpen} className="flex w-full items-center gap-4 px-4 py-5 text-left sm:px-6"><span className="font-mono text-[10px] text-[#ffb45c]">0{index + 1}</span><span className="flex-1 font-space text-base font-semibold text-[#f8f1ea] sm:text-lg">{item.question}</span><span className="font-space text-xl font-light text-[#ffb45c]">{isOpen ? '−' : '+'}</span></button>{isOpen && <div className="px-12 pb-6 text-sm leading-6 text-[#a99589] sm:px-16">{item.answer}</div>}</div>; })}
           </div>
@@ -120,7 +120,7 @@ export const OrrangeLandingPage: React.FC = () => {
 
       {/* Global Landing Footer */}
       <ScrollReveal delay={2}>
-        <footer className="landing-panel landing-candy-night mx-3 max-w-none space-y-8 border-white/[0.08] px-5 py-14 text-center sm:mx-4 sm:px-8 lg:px-12">
+        <footer className="landing-panel landing-candy-night mx-3 max-w-none space-y-8 border-white/[0.08] px-5 py-10 text-center sm:mx-4 sm:px-8 sm:py-12 lg:px-12">
         <div className="-mx-5 overflow-hidden border-b border-white/[0.08] pb-8 sm:-mx-8 lg:-mx-12">
           <div className="flex w-max animate-marquee items-center gap-10 whitespace-nowrap font-bebas text-6xl tracking-[0.02em] text-white/[0.09] sm:text-8xl">{Array.from({ length: 4 }, (_, index) => <span key={index}>JOIN THE QUIET SIDE <span className="text-[#ffb45c]">✦</span></span>)}</div>
         </div>
