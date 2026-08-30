@@ -33,7 +33,7 @@ describe('computeMetrics', () => {
   it('computes price, market cap, liquidity and graduation from on-chain curve state', () => {
     const m = computeMetrics(makeCurve(), metadata, 'mainnet');
     expect(m.price).toBeGreaterThan(0);
-    expect(m.priceUsd).toBeGreaterThan(0);
+    expect(m.priceUsd).toBeNull();
     expect(m.liquidity).toBeCloseTo(10, 5);
     expect(m.graduationPct).toBeCloseTo(8.3333333, 5); // 10/120
     expect(m.graduated).toBe(false);
@@ -52,13 +52,13 @@ describe('computeMetrics', () => {
     expect(Number.isFinite(m.price)).toBe(true);
   });
 
-  it('market cap is unit-correct: priceUsd × human-readable supply (not raw 1e18)', () => {
+  it('market cap is unit-correct: STRK price × human-readable supply (not raw 1e18)', () => {
     const curve = makeCurve();
     // tokenReserve = 5e23 raw → 500,000 tokens at 18 dp
     const humanCirculating = Number(curve.tokenReserve) / 10 ** 18;
-    const priceUsd = (Number(curve.priceBase) / Number(curve.priceToken)) * 0.35;
+    const price = Number(curve.priceBase) / Number(curve.priceToken);
     const m = computeMetrics(curve, metadata, 'mainnet', 0n);
-    expect(m.marketCap).toBeCloseTo(priceUsd * humanCirculating, 8);
+    expect(m.marketCap).toBeCloseTo(price * humanCirculating, 8);
     // Regression: must NOT be price × raw smallest-unit supply (previously ~1e19).
     expect(m.marketCap).toBeLessThan(1_000_000);
     expect(m.marketCap).toBeLessThan((Number(curve.priceBase) / Number(curve.priceToken)) * Number(curve.tokenReserve));

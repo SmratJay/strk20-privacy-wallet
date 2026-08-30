@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -31,7 +31,6 @@ import {
   executePublicBuy,
   executePublicSell,
   getTokenBalance,
-  baseUsdFor,
   findTokenEntry,
   readPriceHistory,
   PricePoint,
@@ -40,6 +39,7 @@ import {
   readPrivateStats,
   readMigratedState,
   maxTradeTokenOut,
+  providerFor,
 } from '@/services/launchService';
 import {
   buildPrivateBuyActions,
@@ -59,27 +59,27 @@ type Step = 'QUOTING' | 'SIGNING' | 'PROVING' | 'SUBMITTING' | 'DONE';
 type PrivacyAsset = 'TOKEN' | 'STRK';
 type PrivacyAction = 'SHIELD' | 'UNSHIELD';
 
-function fmtUsd(v: number): string {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+function fmtStrk(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M STRK`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K STRK`;
   if (v === 0) return '—';
-  return `$${v.toFixed(2)}`;
+  return `${v.toFixed(3)} STRK`;
 }
 
-function fmtPriceUsd(v: number): string {
+function fmtPrice(v: number): string {
   if (v === 0) return '—';
-  if (v >= 1) return `$${v.toFixed(4)}`;
-  if (v >= 0.0001) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(2)}`;
+  if (v >= 1) return `${v.toFixed(4)} STRK`;
+  return `${v.toExponential(3)} STRK`;
 }
 
 export default function LaunchTokenPage() {
   const params = useParams<{ token: string }>();
   const id = params?.token ?? '';
-  const { wallet, networkId, balances, refreshAfterMutation, isSepolia } = useWallet();
+  const { wallet, balances, refreshAfterMutation } = useWallet();
+  const launchNetworkId = 'sepolia' as const;
 
-  const net = getLaunchNetwork(networkId);
-  const explorerUrl = isSepolia ? 'https://sepolia.voyager.online' : 'https://voyager.online';
+  const net = getLaunchNetwork(launchNetworkId);
+  const explorerUrl = 'https://sepolia.voyager.online';
   const [entry, setEntry] = useState<LaunchTokenEntry | null>(null);
   const [snapshot, setSnapshot] = useState<TokenSnapshot | null>(null);
   const [offchainMetadata, setOffchainMetadata] = useState<LaunchMetadataRecord | null>(null);
@@ -88,8 +88,9 @@ export default function LaunchTokenPage() {
   const [side, setSide] = useState<Side>('BUY');
   const [mode, setMode] = useState<Mode>('PUBLIC');
   const [amount, setAmount] = useState('');
-  const [quote, setQuote] = useState<{ output: string; outputSymbol: string; error?: string } | null>(null);
+  const [quote, setQuote] = useState<{ output: string; outputSymbol: string; outputRaw?: bigint; inputRaw?: bigint; error?: string } | null>(null);
   const [quoting, setQuoting] = useState(false);
+  const quoteRequest = useRef(0);
   const [step, setStep] = useState<Step | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +156,7 @@ export default function LaunchTokenPage() {
       return;
     }
     try {
-      const b = await getTokenBalance(networkId, base, wallet.address);
+      const b = await getTokenBalance(launchNetworkId, base, wallet.address);
       if (b !== null) {
         setPublicStrk(b);
         setPublicStrkStatus('OK');
@@ -165,7 +166,7 @@ export default function LaunchTokenPage() {
     } catch {
       setPublicStrkStatus('ERR');
     }
-  }, [wallet.address, networkId, base]);
+  }, [wallet.address, base]);
 
   useEffect(() => {
     void refreshPublicStrk();
@@ -177,6 +178,7 @@ export default function LaunchTokenPage() {
   }, [refreshPublicStrk]);
 
   const live = entry ? isTokenLive(entry) : false;
+  const curve = snapshot?.curve;
   const decimals = snapshot?.metadata?.decimals ?? 18;
   const tokenSymbol = snapshot?.metadata?.symbol ?? entry?.symbol ?? 'TOKEN';
 
@@ -186,7 +188,7 @@ export default function LaunchTokenPage() {
     (async () => {
       setLoading(true);
       try {
-        const found = await findTokenEntry(networkId, id);
+        const found = await findTokenEntry(launchNetworkId, id);
         if (cancelled) return;
         if (!found) {
           setError(`No memecoin found for "${id}".`);
@@ -194,7 +196,7 @@ export default function LaunchTokenPage() {
           return;
         }
         setEntry(found);
-        const snap = await loadTokenSnapshot(networkId, found);
+        const snap = await loadTokenSnapshot(launchNetworkId, found);
         if (!cancelled) setSnapshot(snap);
         const meta = await fetchMetadataByToken(found.token);
         if (!cancelled) setOffchainMetadata(meta);
@@ -207,22 +209,22 @@ export default function LaunchTokenPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, networkId]);
+  }, [id]);
 
   // V2 analytics refresh.
   const refreshAnalytics = useCallback(async () => {
     if (!entry || !isTokenLive(entry)) return;
     const [hist, tr, priv, mig] = await Promise.all([
-      readPriceHistory(networkId, entry.curve),
-      readRecentTrades(networkId, entry.curve, entry.executor),
-      readPrivateStats(networkId, entry.executor),
-      readMigratedState(networkId, entry.curve),
+      readPriceHistory(launchNetworkId, entry.curve),
+      readRecentTrades(launchNetworkId, entry.curve, entry.executor),
+      readPrivateStats(launchNetworkId, entry.executor),
+      readMigratedState(launchNetworkId, entry.curve),
     ]);
     setPriceHistory(hist);
     setTrades(tr);
     setPrivateStats(priv);
     setMigrated(mig);
-  }, [entry, networkId]);
+  }, [entry]);
 
   useEffect(() => {
     void refreshAnalytics();
@@ -237,10 +239,10 @@ export default function LaunchTokenPage() {
   const refreshBalances = useCallback(async () => {
     if (!wallet.address || !entry) return;
     if (isTokenLive(entry)) {
-      const pub = await getTokenBalance(networkId, entry.token, wallet.address);
+      const pub = await getTokenBalance(launchNetworkId, entry.token, wallet.address);
       if (pub !== null) setPublicTokenBalance(pub);
     }
-  }, [wallet.address, entry, networkId]);
+  }, [wallet.address, entry]);
 
   useEffect(() => {
     void refreshBalances();
@@ -271,8 +273,10 @@ export default function LaunchTokenPage() {
   const privateCapable = connected && !!(wallet.walletAccount || wallet.rawWallet);
 
   const refreshQuote = useCallback(async () => {
+    const requestId = ++quoteRequest.current;
     if (!entry || !live || !amount || parseFloat(amount) <= 0) {
       setQuote(null);
+      setQuoting(false);
       return;
     }
     setQuoting(true);
@@ -280,9 +284,10 @@ export default function LaunchTokenPage() {
     try {
       const parsed = parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals);
       let output: bigint | null = null;
-      if (side === 'BUY') output = await quoteBuy(networkId, entry.curve, parsed);
-      else output = await quoteSell(networkId, entry.curve, parsed);
+      if (side === 'BUY') output = await quoteBuy(launchNetworkId, entry.curve, parsed);
+      else output = await quoteSell(launchNetworkId, entry.curve, parsed);
       if (output === null) {
+        if (requestId !== quoteRequest.current) return;
         setQuote({
           output: '',
           outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
@@ -292,24 +297,39 @@ export default function LaunchTokenPage() {
         });
         return;
       }
+      if (requestId !== quoteRequest.current) return;
       setQuote({
         output: formatTokenAmount(output, side === 'BUY' ? decimals : baseDecimals, decimals >= 8 ? 6 : 4),
         outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
+        outputRaw: output,
+        inputRaw: parsed,
       });
     } catch (e: any) {
+      if (requestId !== quoteRequest.current) return;
       setQuote({
         output: '',
         outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
         error: e?.message || 'Quote failed.',
       });
     } finally {
-      setQuoting(false);
+      if (requestId === quoteRequest.current) setQuoting(false);
     }
-  }, [entry, live, amount, side, networkId, baseDecimals, decimals, tokenSymbol]);
+  }, [entry, live, amount, side, baseDecimals, decimals, tokenSymbol]);
 
   useEffect(() => {
     void refreshQuote();
   }, [refreshQuote]);
+
+  const priceImpactPct = useMemo(() => {
+    if (!quote?.outputRaw || !quote.inputRaw || !curve || quote.outputRaw <= 0n || quote.inputRaw <= 0n) return null;
+    const spotBase = Number(curve.priceBase) / Number(curve.priceToken);
+    if (!spotBase) return null;
+    const input = Number(quote.inputRaw) / 1e18;
+    const output = Number(quote.outputRaw) / 1e18;
+    const effective = side === 'BUY' ? input / output : output / input;
+    const impact = side === 'BUY' ? (effective / spotBase - 1) * 100 : (1 - effective / spotBase) * 100;
+    return Math.max(0, impact);
+  }, [quote, curve, side]);
 
   const maxTradeCap = snapshot?.curve ? maxTradeTokenOut(snapshot.curve) : 0n;
   const maxBalanceForSide = (): bigint => {
@@ -376,6 +396,7 @@ export default function LaunchTokenPage() {
       }
       setStep('SUBMITTING');
       setTxHash(hash);
+      await providerFor(launchNetworkId).waitForTransaction(hash);
       setStep('DONE');
       await refreshAfterMutation();
       await refreshPrivateTokenBalance();
@@ -429,7 +450,6 @@ export default function LaunchTokenPage() {
   const metrics = snapshot?.metrics;
   const pct = metrics?.graduationPct ?? 0;
   const graduated = metrics?.graduated ?? false;
-  const curve = snapshot?.curve;
   const feePct = curve ? (Number(curve.feeBps) / 100).toFixed(2) : '1.00';
   const creatorFeePct = curve ? (Number(curve.creatorFeeBps) / 100).toFixed(2) : '0.25';
   const protocolFeePct = curve ? (Number(curve.protocolFeeBps) / 100).toFixed(2) : '0.25';
@@ -457,7 +477,8 @@ export default function LaunchTokenPage() {
         ) : (
           <>
             {/* Header */}
-            <div className="pt-2">
+            <div className="pt-2 launch-token-hero">
+              {offchainMetadata?.banner && <div className="launch-token-banner" style={{ backgroundImage: `url(${offchainMetadata.banner})` }} aria-hidden="true" />}
               <div className="flex items-center gap-3">
                 {offchainMetadata?.image ? (
                   <img
@@ -558,12 +579,11 @@ export default function LaunchTokenPage() {
                   </div>
                   {metrics && (
                     <div className="text-[12px] text-zinc-300">
-                      {fmtPriceUsd(metrics.priceUsd)}
-                      <span className="text-zinc-600 ml-1">STRK {metrics.price.toExponential(3)}</span>
+                      {fmtPrice(metrics.price)}
                     </div>
                   )}
                 </div>
-                <PriceChart points={priceHistory} />
+                <PriceChart points={priceHistory} trades={trades} />
               </div>
             )}
 
@@ -571,10 +591,10 @@ export default function LaunchTokenPage() {
             {live && metrics && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
-                  ['Price', fmtPriceUsd(metrics.priceUsd)],
-                  ['Market Cap', fmtUsd(metrics.marketCap)],
-                  ['Liquidity', fmtUsd(metrics.liquidity)],
-                  ['Volume (cumulative)', fmtUsd(metrics.volume)],
+                  ['Price', fmtPrice(metrics.price)],
+                  ['Market Cap', fmtStrk(metrics.marketCap)],
+                  ['Liquidity', fmtStrk(metrics.liquidity)],
+                  ['Volume (cumulative)', fmtStrk(metrics.volume)],
                 ].map(([label, val]) => (
                   <div key={label} className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3">
                     <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
@@ -756,16 +776,15 @@ export default function LaunchTokenPage() {
                     </div>
                   )}
                   {quote && !quoting && (
-                    <div className="flex items-center gap-2 text-[13px] text-zinc-300">
+                    <div className="launch-quote-card text-[13px] text-zinc-300">
                       {quote.error ? (
                         <span className="text-amber-400">{quote.error}</span>
                       ) : (
-                        <>
-                          <span className="text-zinc-500">You receive</span>
-                          <span className="font-semibold text-zinc-100">{quote.output}</span>
-                          <span className="text-zinc-500">{quote.outputSymbol}</span>
-                          {mode === 'PRIVATE' && <Shield className="w-3.5 h-3.5 text-violet-400" />}
-                        </>
+                        <div className="space-y-2 w-full">
+                          <div className="flex items-center justify-between gap-2"><span className="text-zinc-500">Estimated output</span><span className="font-semibold text-zinc-100">{quote.output} {quote.outputSymbol}</span></div>
+                          <div className="flex items-center justify-between gap-2 text-[11px]"><span className="text-zinc-500">Estimated price impact</span><span className={priceImpactPct !== null && priceImpactPct > 5 ? 'text-amber-300' : 'text-emerald-300'}>{priceImpactPct === null ? '—' : `${priceImpactPct.toFixed(2)}%`}</span></div>
+                          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">{mode === 'PRIVATE' ? <><Shield className="w-3.5 h-3.5 text-orange-300" /> STRK20 note → PrivateCurveExecutor → same public curve</> : <><Globe className="w-3.5 h-3.5" /> Direct wallet execution on the public curve</>}</div>
+                        </div>
                       )}
                     </div>
                   )}

@@ -28,6 +28,8 @@ export interface LaunchMetadataRecord {
   symbol: string;
   description: string;
   image?: string;
+  /** Optional wide hero media, persisted off-chain alongside the token image. */
+  banner?: string;
   socials: LaunchSocials;
   createdAt: number;
 }
@@ -38,6 +40,7 @@ export interface LaunchMetadataInput {
   symbol: string;
   description?: string;
   image?: string;
+  banner?: string;
   socials?: Partial<LaunchSocials>;
 }
 
@@ -48,6 +51,12 @@ export function defaultStoreFilePath(): string {
 /** Trim, normalize, and drop empty social fields. Pure — safe to unit test. */
 export function sanitizeMetadata(input: LaunchMetadataInput): LaunchMetadataRecord {
   const clean = (v: string | undefined): string => (v ?? '').trim().slice(0, 4000);
+  const media = (v: string | undefined): string | undefined => {
+    const t = (v ?? '').trim();
+    // Uploaded media is intentionally off-chain. Keep URLs compact and allow data URLs
+    // only within a bounded payload so the JSON store cannot grow without limit.
+    return t ? t.slice(0, 2_000_000) : undefined;
+  };
   const social = (v: string | undefined): string | undefined => {
     const t = clean(v);
     return t || undefined;
@@ -59,7 +68,8 @@ export function sanitizeMetadata(input: LaunchMetadataInput): LaunchMetadataReco
     name: clean(input.name) || 'Untitled',
     symbol: clean(input.symbol).toUpperCase() || 'TOKEN',
     description: clean(input.description),
-    image: social(input.image),
+    image: media(input.image),
+    banner: media(input.banner),
     socials: {
       x: social(input.socials?.x),
       telegram: social(input.socials?.telegram),

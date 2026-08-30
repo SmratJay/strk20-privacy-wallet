@@ -19,7 +19,7 @@ import { parseTokenAmount } from '@/utils/formatters';
 
 const ONE = 10n ** 18n;
 
-export type ExploreSortMode = 'newest' | 'trending' | 'graduation';
+export type ExploreSortMode = 'newest' | 'trending' | 'recent' | 'graduation' | 'graduated';
 
 export interface CurveState {
   virtualBase: bigint;
@@ -48,8 +48,9 @@ export interface TokenMetadata {
 
 export interface MarketMetrics {
   price: number; // STRK per token
-  priceUsd: number; // price * baseUsd
-  marketCap: number; // price * circulating supply
+  /** USD is intentionally not inferred on Sepolia; launchpad values stay STRK-denominated. */
+  priceUsd: null;
+  marketCap: number; // STRK price * circulating supply
   liquidity: number; // real base reserves
   volume: number; // accumulated base volume
   graduationPct: number; // 0..100
@@ -322,11 +323,6 @@ export async function quoteSell(
   }
 }
 
-export function baseUsdFor(networkId: NetworkId): number {
-  // Sepolia STRK display estimate. Kept explicit so it is never confused with on-chain truth.
-  return networkId === 'mainnet' ? 0.35 : 0.001;
-}
-
 export function computeMetrics(
   curve: CurveState,
   metadata: TokenMetadata | null,
@@ -334,13 +330,12 @@ export function computeMetrics(
   cumulativeVolumeBase: bigint = 0n,
 ): MarketMetrics {
   const price = curve.priceToken > 0n ? Number(curve.priceBase) / Number(curve.priceToken) : 0;
-  const priceUsd = price * baseUsdFor(networkId);
   // circulating supply is on-chain in smallest units — normalize by token decimals so the
-  // market cap is priceUsd × human-readable token count (never price × raw 1e18 supply).
+  // market cap is STRK price × human-readable token count (never price × raw 1e18 supply).
   const decimals = metadata?.decimals ?? 18;
   const circulatingRaw = curve.tokenReserve > 0n ? curve.tokenReserve : (metadata?.totalSupply ?? 0n);
   const circulatingHuman = Number(circulatingRaw) / 10 ** decimals;
-  const marketCap = priceUsd * circulatingHuman;
+  const marketCap = price * circulatingHuman;
   // liquidity is the real STRK reserve currently held by the curve.
   const liquidity = Number(curve.baseReserve) / Number(ONE);
   // volume is CUMULATIVE traded base volume from on-chain Buy/Sell events — never the
@@ -352,7 +347,7 @@ export function computeMetrics(
       : 0;
   return {
     price,
-    priceUsd,
+    priceUsd: null,
     marketCap,
     liquidity,
     volume,
@@ -712,8 +707,7 @@ export async function findTokenEntry(
   return matchTokenEntry(list, idOrSymbolOrAddress);
 }
 
-/** Sort snapshots for Explore: newest (factory id desc), trending (real reserves desc),
- * or graduation (lowest remaining progress first). All keys derive from on-chain state. */
+/** Sort snapshots for Explore. Every sort key derives from live V2 state or real events. */
 export function sortSnapshots(
   snapshots: TokenSnapshot[],
   mode: ExploreSortMode,
@@ -721,16 +715,15 @@ export function sortSnapshots(
   const arr = [...snapshots];
   if (mode === 'trending') {
     return arr.sort((a, b) => {
-      const ra = a.curve?.baseReserve ?? 0n;
-      const rb = b.curve?.baseReserve ?? 0n;
-      return ra === rb ? 0 : ra > rb ? -1 : 1;
+      return (b.metrics?.volume ?? 0) - (a.metrics?.volume ?? 0);
     });
   }
+  if (mode === 'graduated') return arr.filter((s) => s.metrics?.graduated === true);
   if (mode === 'graduation') {
     return arr.sort((a, b) => {
       const pa = a.metrics?.graduationPct ?? 0;
       const pb = b.metrics?.graduationPct ?? 0;
-      return pa - pb;
+      return pb - pa;
     });
   }
   // newest: highest factory id first (id = creation order)
@@ -758,6 +751,24 @@ export function decodeMetadataRef(feltOrString: any): boolean {
   if (!feltOrString) return false;
   const asStr = decodeShortString(feltOrString);
   return asStr === LAUNCH_METADATA_REF;
+}
+
+/** Resolve the token created by a confirmed V2 factory transaction from its receipt event.
+ * This avoids the race-prone "latest token" fallback when multiple users launch together. */
+export function resolveCreatedTokenFromReceipt(receipt: any): string | null {
+  const selector = hash.getSelectorFromName('TokenCreated');
+  const events = receipt?.events ?? receipt?.transaction?.events ?? [];
+  for (const event of events) {
+    const keys = event?.keys ?? [];
+    if (!keys.length || normalizeAddress(String(keys[0])) !== normalizeAddress(selector)) continue;
+    const data = event?.data ?? [];
+    // TokenCreated(id, creator, token, curve, executor, ...)
+    const tokenRaw = data[2];
+    if (tokenRaw === undefined) continue;
+    const token = normalizeAddress(num.toHex(BigInt(tokenRaw)));
+    if (token && token !== '0x0') return token;
+  }
+  return null;
 }
 
 /** Public buy: approve the BASE asset for the curve, then call buy(). The ERC20 approve

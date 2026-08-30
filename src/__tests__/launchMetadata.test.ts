@@ -23,6 +23,7 @@ const input: LaunchMetadataInput = {
   symbol: '  hamstr  ',
   description: 'A very good boy.',
   image: 'https://example.com/hamster.png',
+  banner: 'https://example.com/hamstr-banner.png',
   socials: { x: ' @hamstr ', telegram: '', website: 'https://hamstr.example' },
 };
 
@@ -32,6 +33,7 @@ describe('launchMetadata store', () => {
     expect(r.token).toBe('0x1234abcdef');
     expect(r.name).toBe('Hampton the Hamster');
     expect(r.symbol).toBe('HAMSTR');
+    expect(r.banner).toBe('https://example.com/hamstr-banner.png');
     expect(r.socials.x).toBe('@hamstr');
     expect(r.socials.telegram).toBeUndefined(); // empty dropped
     expect(r.socials.website).toBe('https://hamstr.example');

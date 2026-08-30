@@ -13,6 +13,8 @@ import {
   normalizeAddress,
   splitU256,
   decodeShortString,
+  resolveCreatedTokenFromReceipt,
+  hash,
 } from '@/services/launchService';
 
 const PARAMS: LaunchCurveParams = {
@@ -57,7 +59,7 @@ function snapshot(entry: LaunchTokenEntry, over: Partial<any> = {}): TokenSnapsh
       priceBase: 40n * 10n ** 18n,
       priceToken: 1000000000000000000000000000n - 5n * 10n ** 23n,
     },
-    metrics: { price: 0.1, priceUsd: 0.0001, marketCap: 100, liquidity: 10, volume: 10, graduationPct: 20, graduated: false, holders: null },
+    metrics: { price: 0.1, priceUsd: null, marketCap: 100, liquidity: 10, volume: 10, graduationPct: 20, graduated: false, holders: null },
     live: true,
     migrated: false,
     ...over,
@@ -102,19 +104,19 @@ describe('sortSnapshots (Explore ordering)', () => {
     expect(sorted.map((s) => s.entry.id)).toEqual(['2', '1', '0']);
   });
 
-  it('sorts trending by on-chain real reserves (volume proxy), descending', () => {
+  it('sorts trending by cumulative on-chain volume, descending', () => {
     const sorted = sortSnapshots(
       [
-        snapshot(t0, { curve: { baseReserve: 5n * 10n ** 18n } }),
-        snapshot(t1, { curve: { baseReserve: 50n * 10n ** 18n } }),
-        snapshot(t2, { curve: { baseReserve: 30n * 10n ** 18n } }),
+        snapshot(t0, { metrics: { volume: 5 } }),
+        snapshot(t1, { metrics: { volume: 50 } }),
+        snapshot(t2, { metrics: { volume: 30 } }),
       ],
       'trending',
     );
     expect(sorted.map((s) => s.entry.symbol)).toEqual(['ORANGE', 'PEPE', 'HAMSTR']);
   });
 
-  it('sorts graduation by lowest progress first', () => {
+  it('sorts near-graduation progress first', () => {
     const sorted = sortSnapshots(
       [
         snapshot(t0, { metrics: { graduationPct: 80 } }),
@@ -123,7 +125,7 @@ describe('sortSnapshots (Explore ordering)', () => {
       ],
       'graduation',
     );
-    expect(sorted.map((s) => s.entry.symbol)).toEqual(['ORANGE', 'PEPE', 'HAMSTR']);
+    expect(sorted.map((s) => s.entry.symbol)).toEqual(['HAMSTR', 'PEPE', 'ORANGE']);
   });
 });
 
@@ -176,6 +178,23 @@ describe('decodeShortString (felt → ticker display)', () => {
     expect(decodeShortString('')).toBe('');
     expect(decodeShortString(null)).toBe('');
     expect(decodeShortString(undefined)).toBe('');
+  });
+});
+
+describe('resolveCreatedTokenFromReceipt (race-safe creation)', () => {
+  it('resolves the token address from the V2 TokenCreated event', () => {
+    const selector = hash.getSelectorFromName('TokenCreated');
+    const receipt = {
+      events: [{
+        keys: [selector],
+        data: ['0x0', '0x123', '0xABCDEF', '0x456', '0x789'],
+      }],
+    };
+    expect(resolveCreatedTokenFromReceipt(receipt)).toBe('0xabcdef');
+  });
+
+  it('does not guess a token when the creation event is absent', () => {
+    expect(resolveCreatedTokenFromReceipt({ events: [] })).toBeNull();
   });
 });
 
