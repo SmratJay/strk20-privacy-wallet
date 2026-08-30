@@ -8,8 +8,8 @@ use umbra_launch::interfaces::{
 };
 
 use crate::test_utils::{
-    deploy_base_asset, declare_factory, deploy_router, GRAD_TARGET, SUPPLY, VIRTUAL_BASE,
-    VIRTUAL_TOKEN, FEE_BPS,
+    deploy_base_asset, declare_factory, deploy_router, CREATOR_FEE_BPS, GRAD_TARGET, MAX_TRADE_BPS,
+    PROTOCOL_FEE_BPS, SUPPLY, treasury, VIRTUAL_BASE, VIRTUAL_TOKEN, FEE_BPS,
 };
 use umbra_launch::test_base_asset::{
     ITestBaseAssetDispatcher, ITestBaseAssetDispatcherTrait,
@@ -26,7 +26,9 @@ fn memecoin(addr: ContractAddress) -> IMemecoinDispatcher {
     IMemecoinDispatcher { contract_address: addr }
 }
 
-fn create_default(factory: ITokenFactoryDispatcher) -> (ContractAddress, ContractAddress, ContractAddress) {
+fn create_default(
+    factory: ITokenFactoryDispatcher,
+) -> (ContractAddress, ContractAddress, ContractAddress) {
     factory
         .create_memecoin(
             'HAMSTR',
@@ -38,6 +40,9 @@ fn create_default(factory: ITokenFactoryDispatcher) -> (ContractAddress, Contrac
             VIRTUAL_TOKEN,
             GRAD_TARGET,
             FEE_BPS,
+            CREATOR_FEE_BPS,
+            PROTOCOL_FEE_BPS,
+            MAX_TRADE_BPS,
         )
 }
 
@@ -54,13 +59,18 @@ fn test_create_token_returns_full_stack() {
     assert(factory.get_curve(0) == curve, 'curve record wrong');
     assert(factory.get_executor(0) == executor, 'executor record wrong');
     assert(factory.get_base_asset() == base, 'base wrong');
+    assert(factory.get_protocol_treasury() == treasury(), 'treasury wrong');
     assert(factory.get_metadata(token) == 'ipfs://hamstr', 'metadata wrong');
 
-    // Curve is configured correctly.
+    // Curve is configured correctly with the V2 fee split.
     let curve_disp = IBondingCurveDispatcher { contract_address: curve };
     assert(curve_disp.get_token() == token, 'curve token wrong');
     assert(curve_disp.get_base_asset() == base, 'curve base wrong');
     assert(curve_disp.get_graduation_target() == GRAD_TARGET, 'curve target wrong');
+    assert(curve_disp.get_creator_fee_bps() == CREATOR_FEE_BPS, 'curve creator fee wrong');
+    assert(curve_disp.get_protocol_fee_bps() == PROTOCOL_FEE_BPS, 'curve protocol fee wrong');
+    assert(curve_disp.get_max_trade_bps() == MAX_TRADE_BPS, 'curve max trade wrong');
+    assert(curve_disp.get_protocol_treasury() == treasury(), 'curve treasury wrong');
 
     // Supply is fully owned by the curve.
     assert(memecoin(token).total_supply() == SUPPLY, 'supply wrong');
@@ -97,7 +107,7 @@ fn test_factory_supply_fully_in_curve() {
 fn test_zero_name_reverts() {
     let (factory, _base) = factory();
     let _ = factory
-        .create_memecoin(0, 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, FEE_BPS);
+        .create_memecoin(0, 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, FEE_BPS, CREATOR_FEE_BPS, PROTOCOL_FEE_BPS, MAX_TRADE_BPS);
 }
 
 #[test]
@@ -105,7 +115,23 @@ fn test_zero_name_reverts() {
 fn test_fee_too_high_reverts() {
     let (factory, _base) = factory();
     let _ = factory
-        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, 10_001);
+        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, 10_001, CREATOR_FEE_BPS, PROTOCOL_FEE_BPS, MAX_TRADE_BPS);
+}
+
+#[test]
+#[should_panic(expected: ('FEE_SPLIT_EXCEEDS_TOTAL',))]
+fn test_fee_split_exceeds_total_reverts() {
+    let (factory, _base) = factory();
+    let _ = factory
+        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, 25, 25, 25, MAX_TRADE_BPS);
+}
+
+#[test]
+#[should_panic(expected: ('FEES_EXCEED_100PCT',))]
+fn test_fees_exceed_100_percent_reverts() {
+    let (factory, _base) = factory();
+    let _ = factory
+        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', SUPPLY, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, 10_000, 5_000, 5_000, MAX_TRADE_BPS);
 }
 
 #[test]
@@ -113,7 +139,7 @@ fn test_fee_too_high_reverts() {
 fn test_zero_supply_reverts() {
     let (factory, _base) = factory();
     let _ = factory
-        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', 0, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, FEE_BPS);
+        .create_memecoin('HAMSTR', 'HSTR', 18, 'ipfs', 0, VIRTUAL_BASE, VIRTUAL_TOKEN, GRAD_TARGET, FEE_BPS, CREATOR_FEE_BPS, PROTOCOL_FEE_BPS, MAX_TRADE_BPS);
 }
 
 #[test]

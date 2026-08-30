@@ -6,15 +6,18 @@ const ONE = 10n ** 18n;
 
 function makeCurve(over: Partial<any> = {}) {
   return {
-    virtualBase: 15n * ONE,
-    virtualToken: 1073000000000000000000000000n,
+    virtualBase: 30n * ONE,
+    virtualToken: 1000000000000000000000000000n,
     baseReserve: 10n * ONE,
     tokenReserve: 5n * 10n ** 23n,
-    graduationTarget: 50n * ONE,
+    graduationTarget: 120n * ONE,
     graduated: false,
     feeBps: 100n,
-    priceBase: 25n * ONE,
-    priceToken: 1073000000000000000000000000n - 5n * 10n ** 23n,
+    creatorFeeBps: 25n,
+    protocolFeeBps: 25n,
+    maxTradeBps: 1000n,
+    priceBase: 40n * ONE,
+    priceToken: 1000000000000000000000000000n - 5n * 10n ** 23n,
     ...over,
   };
 }
@@ -23,7 +26,7 @@ const metadata = {
   name: 'HAMSTR',
   symbol: 'HAMSTR',
   decimals: 18,
-  totalSupply: 1073000000000000000000000000n,
+  totalSupply: 1000000000000000000000000000n,
 };
 
 describe('computeMetrics', () => {
@@ -32,12 +35,12 @@ describe('computeMetrics', () => {
     expect(m.price).toBeGreaterThan(0);
     expect(m.priceUsd).toBeGreaterThan(0);
     expect(m.liquidity).toBeCloseTo(10, 5);
-    expect(m.graduationPct).toBeCloseTo(20, 5); // 10/50
+    expect(m.graduationPct).toBeCloseTo(8.3333333, 5); // 10/120
     expect(m.graduated).toBe(false);
   });
 
   it('reports graduation at 100% when graduated', () => {
-    const m = computeMetrics(makeCurve({ graduated: true, baseReserve: 60n * ONE }), metadata, 'mainnet');
+    const m = computeMetrics(makeCurve({ graduated: true, baseReserve: 120n * ONE }), metadata, 'mainnet');
     expect(m.graduated).toBe(true);
     expect(m.graduationPct).toBe(100);
   });

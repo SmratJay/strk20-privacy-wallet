@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CallData, shortString } from 'starknet';
 import { Loader2, Rocket, Globe, Shield, CheckCircle2, X } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
@@ -13,7 +12,7 @@ import {
   providerFor,
   launchMetadataRef,
   normalizeAddress,
-  splitU256,
+  buildCreateCalldata,
 } from '@/services/launchService';
 
 const MAX_SHORT_STRING = 31; // felt short-string limit
@@ -65,11 +64,11 @@ export default function LaunchCreatePage() {
       return;
     }
     if (!isSepolia) {
-      setError('Launch is currently Starknet Sepolia only. Switch your wallet to Sepolia.');
+      setError('Launch is Starknet Sepolia only. Switch your wallet to Sepolia.');
       return;
     }
     if (!factoryConfigured) {
-      setError('The ORRANGE TokenFactory is not deployed/configured for Sepolia yet.');
+      setError('The ORRANGE TokenFactory V2 is not deployed/configured for Sepolia yet.');
       return;
     }
     const v = validate();
@@ -85,19 +84,22 @@ export default function LaunchCreatePage() {
 
     try {
       setStep('SIGNING');
-      // Flat calldata with the u256 total_supply split into [low, high] — CallData.compile
-      // without an ABI serializes a bigint as one felt252, which would misalign the params.
-      const calldata = CallData.compile([
-        shortString.encodeShortString(name.trim()),
-        shortString.encodeShortString(symbol.trim()),
-        CREATE_DEFAULTS.decimals,
-        shortString.encodeShortString(launchMetadataRef()),
-        ...splitU256(BigInt(CREATE_DEFAULTS.totalSupply)),
-        BigInt(CREATE_DEFAULTS.virtualBase).toString(),
-        BigInt(CREATE_DEFAULTS.virtualToken).toString(),
-        BigInt(CREATE_DEFAULTS.graduationTarget).toString(),
-        Number(CREATE_DEFAULTS.feeBps),
-      ]);
+      // V2 flat calldata: u256 total_supply split [low, high], then the fee-split and
+      // max-trade curve params (buildCreateCalldata handles all of it).
+      const calldata = buildCreateCalldata({
+        name: name.trim(),
+        symbol: symbol.trim(),
+        decimals: CREATE_DEFAULTS.decimals,
+        metadataUri: launchMetadataRef(),
+        totalSupply: CREATE_DEFAULTS.totalSupply,
+        virtualBase: CREATE_DEFAULTS.virtualBase,
+        virtualToken: CREATE_DEFAULTS.virtualToken,
+        graduationTarget: CREATE_DEFAULTS.graduationTarget,
+        feeBps: CREATE_DEFAULTS.feeBps,
+        creatorFeeBps: CREATE_DEFAULTS.creatorFeeBps,
+        protocolFeeBps: CREATE_DEFAULTS.protocolFeeBps,
+        maxTradeBps: CREATE_DEFAULTS.maxTradeBps,
+      });
       const res = await account.execute([
         { contractAddress: net.factory, entrypoint: 'create_memecoin', calldata },
       ]);
@@ -157,15 +159,15 @@ export default function LaunchCreatePage() {
           <div>
             <div className="product-eyebrow">ORRANGE / LAUNCH</div>
             <h1 className="product-page-title flex items-center gap-2">
-              <Rocket className="w-5 h-5 text-violet-400" /> Launch a coin
+              <Rocket className="w-5 h-5 text-violet-400" /> Create a coin
             </h1>
             <p className="product-page-description">
-              Deploy a memecoin on Starknet Sepolia with a bonded curve.{' '}
+              Deploy a memecoin on Starknet Sepolia with a V2 bonded curve.{' '}
               <span className="text-violet-300">One transaction. Instantly tradable. Instantly discoverable.</span>
             </p>
             {isSepolia && factoryConfigured && (
               <p className="text-[12px] text-emerald-300 mt-1">
-                Factory live · launching through <span className="font-mono">{net.factory.slice(0, 14)}…</span>
+                Factory V2 live · launching through <span className="font-mono">{net.factory.slice(0, 14)}…</span>
               </p>
             )}
           </div>
@@ -183,7 +185,7 @@ export default function LaunchCreatePage() {
           </div>
         ) : !factoryConfigured ? (
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-300">
-            The ORRANGE TokenFactory is not configured for Sepolia yet. Set{' '}
+            The ORRANGE TokenFactory V2 is not configured for Sepolia yet. Set{' '}
             <code className="text-amber-200 font-mono">NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY</code> and{' '}
             <code className="text-amber-200 font-mono">NEXT_PUBLIC_UMBRA_ROUTER</code> to open the market.
           </div>
@@ -293,7 +295,7 @@ export default function LaunchCreatePage() {
                     <CheckCircle2 className="w-4 h-4" /> Launched
                   </span>
                 ) : (
-                  'Launch Coin'
+                  'Create Coin'
                 )}
               </button>
 
@@ -337,12 +339,14 @@ export default function LaunchCreatePage() {
             {/* Sidebar: curve config summary */}
             <div className="space-y-4">
               <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">Bonding curve</div>
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">Bonding curve V2</div>
                 <ul className="mt-2 space-y-1.5 text-[12px] text-zinc-300">
-                  <li className="flex justify-between"><span>Virtual base</span><span className="font-mono text-zinc-400">15 STRK</span></li>
-                  <li className="flex justify-between"><span>Supply</span><span className="font-mono text-zinc-400">1.073B</span></li>
-                  <li className="flex justify-between"><span>Graduation target</span><span className="font-mono text-zinc-400">50 STRK</span></li>
-                  <li className="flex justify-between"><span>Fee</span><span className="font-mono text-zinc-400">1%</span></li>
+                  <li className="flex justify-between"><span>Virtual base</span><span className="font-mono text-zinc-400">30 STRK</span></li>
+                  <li className="flex justify-between"><span>Supply</span><span className="font-mono text-zinc-400">1B</span></li>
+                  <li className="flex justify-between"><span>Graduation target</span><span className="font-mono text-zinc-400">120 STRK</span></li>
+                  <li className="flex justify-between"><span>Fee</span><span className="font-mono text-zinc-400">1% (in STRK)</span></li>
+                  <li className="flex justify-between"><span>Creator / protocol</span><span className="font-mono text-zinc-400">0.25% / 0.25%</span></li>
+                  <li className="flex justify-between"><span>Max buy</span><span className="font-mono text-zinc-400">10% of reserve</span></li>
                 </ul>
               </div>
               <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4">
@@ -352,7 +356,8 @@ export default function LaunchCreatePage() {
                 <p className="mt-2 text-[12px] text-zinc-400 leading-relaxed">
                   Your token gets a real on-chain TokenFactory deployment: memecoin + bonding curve
                   + private executor, atomically. Trading on the curve is public; your wallet→trade
-                  link can stay shielded through STRK20.
+                  link can stay shielded through STRK20. Your token is STRK20-eligible by default —
+                  shield it to hold it privately.
                 </p>
               </div>
             </div>

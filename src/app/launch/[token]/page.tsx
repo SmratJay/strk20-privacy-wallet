@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -12,9 +12,14 @@ import {
   X,
   AlertTriangle,
   ShieldCheck,
+  ShieldOff,
+  ExternalLink,
+  Activity,
+  LineChart,
 } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { ConnectGate } from '@/components/wallet/ConnectGate';
+import PriceChart from '@/components/launch/PriceChart';
 import { useWallet } from '@/context/WalletContext';
 import { usePrivyWallet } from '@/context/PrivyWalletContext';
 import { getLaunchNetwork, LaunchTokenEntry, isTokenLive } from '@/config/launch';
@@ -28,11 +33,20 @@ import {
   getTokenBalance,
   baseUsdFor,
   findTokenEntry,
+  readPriceHistory,
+  PricePoint,
+  readRecentTrades,
+  TradeEvent,
+  readPrivateStats,
+  readMigratedState,
+  maxTradeTokenOut,
 } from '@/services/launchService';
 import {
   buildPrivateBuyActions,
   buildPrivateSellActions,
   executePrivateTrade,
+  shieldLaunchToken,
+  unshieldLaunchToken,
   CURVE_OP,
 } from '@/services/privateLaunchService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
@@ -42,6 +56,8 @@ import { formatTokenAmount, parseTokenAmount, shortenAddress } from '@/utils/for
 type Side = 'BUY' | 'SELL';
 type Mode = 'PUBLIC' | 'PRIVATE';
 type Step = 'QUOTING' | 'SIGNING' | 'PROVING' | 'SUBMITTING' | 'DONE';
+type PrivacyAsset = 'TOKEN' | 'STRK';
+type PrivacyAction = 'SHIELD' | 'UNSHIELD';
 
 function fmtUsd(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
@@ -72,9 +88,8 @@ export default function LaunchTokenPage() {
   const [side, setSide] = useState<Side>('BUY');
   const [mode, setMode] = useState<Mode>('PUBLIC');
   const [amount, setAmount] = useState('');
-  const [quote, setQuote] = useState<{ output: string; outputSymbol: string; gasEstimate: string | null } | null>(null);
+  const [quote, setQuote] = useState<{ output: string; outputSymbol: string; error?: string } | null>(null);
   const [quoting, setQuoting] = useState(false);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [step, setStep] = useState<Step | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,21 +97,28 @@ export default function LaunchTokenPage() {
   const [privateTokenBalance, setPrivateTokenBalance] = useState<bigint | null>(null);
   const [privateBalanceStatus, setPrivateBalanceStatus] = useState<'UNKNOWN' | 'OK' | 'ERR'>('UNKNOWN');
 
+  // V2 analytics: price history, trades, private stats, migration truth.
+  const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
+  const [trades, setTrades] = useState<TradeEvent[]>([]);
+  const [privateStats, setPrivateStats] = useState<{ tradeCount: bigint; volumeBase: bigint } | null>(null);
+  const [migrated, setMigrated] = useState<boolean | null>(null);
+
   const base = net.baseAsset;
   const baseSymbol = 'STRK';
   const baseDecimals = net.baseAssetDecimals;
 
   const privy = usePrivyWallet();
-  // A Privy embedded wallet has its own STRK20 lane: WalletContext only loads private
-  // balances via the Ready-wallet Wallet API, so a Privy user's shielded balances must be
-  // read through the Privy discovery adapter (same rule as the wallet dashboard BalanceCard).
   const privyConnected = privy.authenticated && privy.account !== null && privy.viewingKey !== null;
 
-  // Private base (STRK) balance.
-  // Ready lane → WalletContext balances (shieldedBalanceAvailable). Privy lane → live STRK20
-  // discovery read. `privateStrkAvailable=false` = unknown → UI shows "—", never a fake 0.
   const [privateStrk, setPrivateStrk] = useState<bigint>(0n);
   const [privateStrkAvailable, setPrivateStrkAvailable] = useState(false);
+
+  // Privacy management panel state.
+  const [privacyAsset, setPrivacyAsset] = useState<PrivacyAsset>('TOKEN');
+  const [privacyAmount, setPrivacyAmount] = useState('');
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+  const [privacyTx, setPrivacyTx] = useState<string | null>(null);
 
   const refreshPrivateStrk = useCallback(async () => {
     if (privyConnected) {
@@ -123,10 +145,6 @@ export default function LaunchTokenPage() {
     return () => clearInterval(t);
   }, [refreshPrivateStrk]);
 
-  // PUBLIC base (STRK) balance: read live from the connected wallet on the ACTIVE network
-  // via RPC. Never rely on the wallet context's possibly-stale/zero public balance and never
-  // use a shielded balance for PUBLIC mode. `null` = read failed → UI shows "—" and does not
-  // block the buy on a fabricated zero.
   const [publicStrk, setPublicStrk] = useState<bigint | null>(null);
   const [publicStrkStatus, setPublicStrkStatus] = useState<'UNKNOWN' | 'OK' | 'ERR'>('UNKNOWN');
 
@@ -162,8 +180,7 @@ export default function LaunchTokenPage() {
   const decimals = snapshot?.metadata?.decimals ?? 18;
   const tokenSymbol = snapshot?.metadata?.symbol ?? entry?.symbol ?? 'TOKEN';
 
-  // Resolve entry from the live factory by id, symbol, OR real token address (Explore
-  // cards link to /launch/<token-address>, so address resolution is required).
+  // Load entry + snapshot from the live factory.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -192,7 +209,31 @@ export default function LaunchTokenPage() {
     };
   }, [id, networkId]);
 
-  // Refresh token balances after connection / mutation.
+  // V2 analytics refresh.
+  const refreshAnalytics = useCallback(async () => {
+    if (!entry || !isTokenLive(entry)) return;
+    const [hist, tr, priv, mig] = await Promise.all([
+      readPriceHistory(networkId, entry.curve),
+      readRecentTrades(networkId, entry.curve, entry.executor),
+      readPrivateStats(networkId, entry.executor),
+      readMigratedState(networkId, entry.curve),
+    ]);
+    setPriceHistory(hist);
+    setTrades(tr);
+    setPrivateStats(priv);
+    setMigrated(mig);
+  }, [entry, networkId]);
+
+  useEffect(() => {
+    void refreshAnalytics();
+  }, [refreshAnalytics]);
+
+  useEffect(() => {
+    const t = setInterval(() => void refreshAnalytics(), 15000);
+    return () => clearInterval(t);
+  }, [refreshAnalytics]);
+
+  // Public/private token balances.
   const refreshBalances = useCallback(async () => {
     if (!wallet.address || !entry) return;
     if (isTokenLive(entry)) {
@@ -205,9 +246,6 @@ export default function LaunchTokenPage() {
     void refreshBalances();
   }, [refreshBalances, snapshot?.curve?.priceBase]);
 
-  // Private memecoin balance (best-effort). Ready lane → Wallet API; Privy lane → STRK20
-  // discovery adapter. Loaded on mount so the private card isn't a dash until PRIVATE mode
-  // is clicked.
   const refreshPrivateTokenBalance = useCallback(async () => {
     if (!entry) return;
     try {
@@ -238,7 +276,6 @@ export default function LaunchTokenPage() {
       return;
     }
     setQuoting(true);
-    setQuoteError(null);
     setQuote(null);
     try {
       const parsed = parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals);
@@ -246,16 +283,25 @@ export default function LaunchTokenPage() {
       if (side === 'BUY') output = await quoteBuy(networkId, entry.curve, parsed);
       else output = await quoteSell(networkId, entry.curve, parsed);
       if (output === null) {
-        setQuoteError('Could not fetch an on-chain quote for this amount.');
+        setQuote({
+          output: '',
+          outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
+          error: side === 'BUY'
+            ? 'Order too large for one trade (single buys are capped at 10% of the token reserve).'
+            : 'Could not fetch an on-chain quote for this amount.',
+        });
         return;
       }
       setQuote({
         output: formatTokenAmount(output, side === 'BUY' ? decimals : baseDecimals, decimals >= 8 ? 6 : 4),
         outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
-        gasEstimate: null,
       });
     } catch (e: any) {
-      setQuoteError(e?.message || 'Quote failed.');
+      setQuote({
+        output: '',
+        outputSymbol: side === 'BUY' ? tokenSymbol : baseSymbol,
+        error: e?.message || 'Quote failed.',
+      });
     } finally {
       setQuoting(false);
     }
@@ -265,23 +311,21 @@ export default function LaunchTokenPage() {
     void refreshQuote();
   }, [refreshQuote]);
 
-const maxBalanceForSide = (): bigint => {
-  if (side === 'BUY') return mode === 'PRIVATE' ? privateStrk : (publicStrk ?? 0n);
-  return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
-};
+  const maxTradeCap = snapshot?.curve ? maxTradeTokenOut(snapshot.curve) : 0n;
+  const maxBalanceForSide = (): bigint => {
+    if (side === 'BUY') return mode === 'PRIVATE' ? privateStrk : (publicStrk ?? 0n);
+    return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
+  };
 
-// Only block the trade when the relevant balance is ACTUALLY known. A null/unknown public or
-// private balance (RPC/Wallet-API/discovery read failed or not yet loaded) must never be
-// treated as a fabricated 0 that disables the trade.
-const balanceKnown =
-  (side === 'BUY' && mode === 'PUBLIC' && publicStrkStatus === 'OK') ||
-  (side === 'BUY' && mode === 'PRIVATE' && privateStrkAvailable) ||
-  (side === 'SELL' && mode === 'PUBLIC' && publicTokenBalance !== null) ||
-  (side === 'SELL' && mode === 'PRIVATE' && privateBalanceStatus === 'OK');
-const insufficient =
-  balanceKnown &&
-  amount.length > 0 &&
-  parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals) > maxBalanceForSide();
+  const balanceKnown =
+    (side === 'BUY' && mode === 'PUBLIC' && publicStrkStatus === 'OK') ||
+    (side === 'BUY' && mode === 'PRIVATE' && privateStrkAvailable) ||
+    (side === 'SELL' && mode === 'PUBLIC' && publicTokenBalance !== null) ||
+    (side === 'SELL' && mode === 'PRIVATE' && privateBalanceStatus === 'OK');
+  const insufficient =
+    balanceKnown &&
+    amount.length > 0 &&
+    parseTokenAmount(amount, side === 'BUY' ? baseDecimals : decimals) > maxBalanceForSide();
 
   const execute = async () => {
     if (!connected || !wallet.address || !entry) return;
@@ -307,8 +351,6 @@ const insufficient =
       } else {
         setStep('PROVING');
         if (privyConnected) {
-          // Privy lane: STRK20 adapter builds withdraw → OPEN note → privacy_invoke and
-          // submits through the Privy signer + Stwo prover + discovery.
           const res = await privy.privateTrade({
             operation: side === 'BUY' ? CURVE_OP.BUY : CURVE_OP.SELL,
             curveExecutor: entry.executor,
@@ -318,7 +360,6 @@ const insufficient =
           });
           hash = res.transactionHash;
         } else {
-          // Ready lane: Wallet API prepare+submit of the 3 ordered STRK20 invoke actions.
           const plan = {
             operation: side === 'BUY' ? CURVE_OP.BUY : CURVE_OP.SELL,
             inputToken: side === 'BUY' ? base : entry.token,
@@ -339,20 +380,72 @@ const insufficient =
       await refreshAfterMutation();
       await refreshPrivateTokenBalance();
       await refreshBalances();
+      await refreshAnalytics();
     } catch (e: any) {
       setError(e?.message || 'Trade failed.');
       setStep(null);
     }
   };
 
+  const runPrivacyAction = async (action: PrivacyAction) => {
+    if (!connected || !wallet.address || !entry) return;
+    setPrivacyError(null);
+    setPrivacyTx(null);
+    const parsed = parseTokenAmount(
+      privacyAmount,
+      privacyAsset === 'TOKEN' ? decimals : baseDecimals,
+    );
+    if (parsed <= 0n) {
+      setPrivacyError('Enter an amount greater than zero.');
+      return;
+    }
+    const token = privacyAsset === 'TOKEN' ? entry.token : base;
+    setPrivacyBusy(true);
+    try {
+      const res =
+        action === 'SHIELD'
+          ? await shieldLaunchToken({ wallet, privy, privyConnected, token, amountBase: parsed })
+          : await unshieldLaunchToken({
+              wallet,
+              privy,
+              privyConnected,
+              token,
+              amountBase: parsed,
+              recipient: wallet.address,
+            });
+      setPrivacyTx(res.transactionHash);
+      await refreshAfterMutation();
+      await refreshPrivateTokenBalance();
+      await refreshPrivateStrk();
+      await refreshBalances();
+      setPrivacyAmount('');
+    } catch (e: any) {
+      setPrivacyError(e?.message || `${action === 'SHIELD' ? 'Shield' : 'Unshield'} failed.`);
+    } finally {
+      setPrivacyBusy(false);
+    }
+  };
+
   const metrics = snapshot?.metrics;
   const pct = metrics?.graduationPct ?? 0;
+  const graduated = metrics?.graduated ?? false;
+  const curve = snapshot?.curve;
+  const feePct = curve ? (Number(curve.feeBps) / 100).toFixed(2) : '1.00';
+  const creatorFeePct = curve ? (Number(curve.creatorFeeBps) / 100).toFixed(2) : '0.25';
+  const protocolFeePct = curve ? (Number(curve.protocolFeeBps) / 100).toFixed(2) : '0.25';
+  const privateVolumePct = useMemo(() => {
+    if (!privateStats || !metrics?.volume || metrics.volume <= 0) return null;
+    // privateStats.volumeBase is in smallest units; metrics.volume is in STRK.
+    const privateVolumeStrk = Number(privateStats.volumeBase) / 1e18;
+    const share = (privateVolumeStrk / metrics.volume) * 100;
+    return Math.min(100, Math.max(0, share));
+  }, [privateStats, metrics]);
 
   return (
     <AppShell>
       <div className="space-y-6">
-        <Link href="/launch" className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 hover:text-zinc-200">
-          <ArrowLeft className="w-4 h-4" /> Launch
+        <Link href="/explore" className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 hover:text-zinc-200">
+          <ArrowLeft className="w-4 h-4" /> Explore
         </Link>
 
         {loading ? (
@@ -378,11 +471,16 @@ const insufficient =
                   </div>
                 )}
                 <div>
-                  <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
+                  <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2 flex-wrap">
                     {entry.symbol}
-                    {metrics?.graduated && (
+                    {graduated && (
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        GRADUATED
+                        CURVE GRADUATED
+                      </span>
+                    )}
+                    {graduated && migrated === true && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                        LIQUIDITY MIGRATED
                       </span>
                     )}
                   </h1>
@@ -426,10 +524,46 @@ const insufficient =
               )}
             </div>
 
+            {/* Contract addresses */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Contracts (on-chain)</div>
+              {[
+                ['Token', entry.token, `${explorerUrl}/contract/${entry.token}`],
+                ['Curve', entry.curve, `${explorerUrl}/contract/${entry.curve}`],
+                ['Private executor', entry.executor, `${explorerUrl}/contract/${entry.executor}`],
+              ].map(([label, addr, url]) => (
+                <div key={label} className="flex items-center justify-between text-[12px]">
+                  <span className="text-zinc-500 w-32">{label}</span>
+                  <span className="font-mono text-zinc-300 truncate">{shortenAddress(addr, 10)}</span>
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:text-violet-200 shrink-0 ml-2">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              ))}
+            </div>
+
             {!live && (
               <div className="text-[13px] text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-xl p-3">
-                This token&apos;s contracts are not deployed/configured yet. Configure
-                NEXT_PUBLIC_UMBRA_{entry.symbol}_CURVE / _TOKEN / _EXECUTOR to go live.
+                This token&apos;s contracts are not configured yet. Set
+                NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY to go live.
+              </div>
+            )}
+
+            {/* Chart */}
+            {live && (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-[12px] text-zinc-400">
+                    <LineChart className="w-4 h-4 text-violet-400" /> Price history (on-chain trades)
+                  </div>
+                  {metrics && (
+                    <div className="text-[12px] text-zinc-300">
+                      {fmtPriceUsd(metrics.priceUsd)}
+                      <span className="text-zinc-600 ml-1">STRK {metrics.price.toExponential(3)}</span>
+                    </div>
+                  )}
+                </div>
+                <PriceChart points={priceHistory} />
               </div>
             )}
 
@@ -440,7 +574,7 @@ const insufficient =
                   ['Price', fmtPriceUsd(metrics.priceUsd)],
                   ['Market Cap', fmtUsd(metrics.marketCap)],
                   ['Liquidity', fmtUsd(metrics.liquidity)],
-                  ['Volume', fmtUsd(metrics.volume)],
+                  ['Volume (cumulative)', fmtUsd(metrics.volume)],
                 ].map(([label, val]) => (
                   <div key={label} className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3">
                     <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
@@ -450,23 +584,53 @@ const insufficient =
               </div>
             )}
 
+            {live && privateStats && privateVolumePct !== null && (
+              <div className="flex items-center gap-2 text-[11px] text-violet-300/80 border border-violet-500/20 bg-violet-500/5 rounded-xl px-3 py-2">
+                <Shield className="w-3.5 h-3.5" />
+                Private execution: {privateStats.tradeCount.toString()} trade(s) ·{' '}
+                {privateVolumePct.toFixed(1)}% of traded volume ran through the shielded STRK20 lane.
+              </div>
+            )}
+
             {/* Graduation */}
             {live && (
               <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
                 <div className="flex items-center justify-between text-[12px] text-zinc-400">
                   <span className="font-medium">Graduation</span>
-                  <span>{metrics?.graduated ? 'COMPLETE' : `${pct.toFixed(0)}%`}</span>
+                  <span>
+                    {graduated
+                      ? migrated === true
+                        ? 'CURVE GRADUATED · LIQUIDITY MIGRATED'
+                        : 'CURVE GRADUATED · awaiting migration'
+                      : `${pct.toFixed(0)}%`}
+                  </span>
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-zinc-800 overflow-hidden">
                   <div
-                    className={`h-full rounded-full ${metrics?.graduated ? 'bg-emerald-400' : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'}`}
+                    className={`h-full rounded-full ${
+                      graduated
+                        ? migrated === true
+                          ? 'bg-sky-400'
+                          : 'bg-emerald-400'
+                        : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'
+                    }`}
                     style={{ width: `${Math.min(100, pct)}%` }}
                   />
                 </div>
                 <div className="mt-2 text-[11px] text-zinc-600">
-                  {metrics?.graduated
-                    ? 'Trading stopped; reserves moved to the GraduationRouter for DEX liquidity seeding.'
-                    : `Reaches graduation at ${formatTokenAmount(snapshot?.curve?.graduationTarget ?? 0n, baseDecimals, 2)} STRK of real reserves.`}
+                  {graduated ? (
+                    migrated === true ? (
+                      'The curve graduated and its reserves were forwarded to the DEX liquidity boundary.'
+                    ) : (
+                      'The curve graduated and its reserves are held by the GraduationRouter. Migration forwards them to the liquidity manager.'
+                    )
+                  ) : (
+                    <>
+                      Reaches graduation at{' '}
+                      {formatTokenAmount(snapshot?.curve?.graduationTarget ?? 0n, baseDecimals, 2)} STRK of
+                      real reserves. The trade that crosses the target closes the curve automatically.
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -593,16 +757,47 @@ const insufficient =
                   )}
                   {quote && !quoting && (
                     <div className="flex items-center gap-2 text-[13px] text-zinc-300">
-                      <span className="text-zinc-500">You receive</span>
-                      <span className="font-semibold text-zinc-100">{quote.output}</span>
-                      <span className="text-zinc-500">{quote.outputSymbol}</span>
-                      {mode === 'PRIVATE' && <Shield className="w-3.5 h-3.5 text-violet-400" />}
+                      {quote.error ? (
+                        <span className="text-amber-400">{quote.error}</span>
+                      ) : (
+                        <>
+                          <span className="text-zinc-500">You receive</span>
+                          <span className="font-semibold text-zinc-100">{quote.output}</span>
+                          <span className="text-zinc-500">{quote.outputSymbol}</span>
+                          {mode === 'PRIVATE' && <Shield className="w-3.5 h-3.5 text-violet-400" />}
+                        </>
+                      )}
                     </div>
                   )}
-                  {quoteError && (
-                    <div className="flex items-start gap-2 text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-2">
-                      <X className="w-4 h-4 shrink-0 mt-0.5" /> {quoteError}
+
+                  {/* Fee breakdown (real on-chain curve params) */}
+                  {curve && !graduated && (
+                    <div className="text-[11px] text-zinc-600 space-y-0.5">
+                      <div className="flex justify-between">
+                        <span>Fee on this trade</span>
+                        <span className="font-mono text-zinc-400">{feePct}% (in STRK)</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Creator</span>
+                        <span className="font-mono text-zinc-400">{creatorFeePct}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Protocol</span>
+                        <span className="font-mono text-zinc-400">{protocolFeePct}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Retained as liquidity</span>
+                        <span className="font-mono text-zinc-400">
+                          {(Number(curve.feeBps) - Number(curve.creatorFeeBps) - Number(curve.protocolFeeBps)) / 100}%
+                        </span>
+                      </div>
                     </div>
+                  )}
+                  {side === 'BUY' && maxTradeCap > 0n && !graduated && (
+                    <p className="text-[11px] text-zinc-600">
+                      Single buys are capped at {formatTokenAmount(maxTradeCap, decimals, 2)} {tokenSymbol} (10% of the
+                      token reserve).
+                    </p>
                   )}
                   {insufficient && !error && (
                     <p className="text-[12px] text-rose-400">
@@ -613,7 +808,7 @@ const insufficient =
 
                 <button
                   onClick={() => void execute()}
-                  disabled={!live || !connected || quoting || step !== null || !amount || parseFloat(amount) <= 0 || insufficient}
+                  disabled={!live || !connected || quoting || step !== null || !amount || parseFloat(amount) <= 0 || insufficient || graduated}
                   className={`w-full py-3.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                     mode === 'PRIVATE'
                       ? 'bg-violet-500 hover:bg-violet-400 text-white'
@@ -622,7 +817,9 @@ const insufficient =
                         : 'bg-rose-500 hover:bg-rose-400 text-white'
                   }`}
                 >
-                  {step === 'QUOTING' || step === 'PROVING' ? (
+                  {graduated ? (
+                    'Curve graduated — trading closed'
+                  ) : step === 'QUOTING' || step === 'PROVING' ? (
                     <span className="flex items-center justify-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" /> {step === 'PROVING' ? 'Proving private trade…' : 'Quoting…'}
                     </span>
@@ -660,6 +857,123 @@ const insufficient =
                 {error && (
                   <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3 break-words">
                     {error}
+                  </div>
+                )}
+
+                {/* Shield / Unshield */}
+                {!graduated && (
+                  <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-[14px] font-semibold text-zinc-100">
+                      <ShieldCheck className="w-4 h-4 text-violet-400" /> Shield / Unshield
+                    </div>
+                    <p className="text-[12px] text-zinc-400 leading-relaxed">
+                      Your {entry.symbol} balance is the SAME standard ERC20 whether public or private.
+                      Shielding moves it into a STRK20 note in the privacy pool; unshielding returns it to
+                      your public wallet. No wrapped token is involved.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['TOKEN', 'STRK'] as PrivacyAsset[]).map((a) => (
+                        <button
+                          key={a}
+                          onClick={() => setPrivacyAsset(a)}
+                          className={`py-2 rounded-lg text-[12px] font-semibold border transition-colors ${
+                            privacyAsset === a
+                              ? 'bg-violet-500 text-white border-violet-500'
+                              : 'border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {a === 'TOKEN' ? entry.symbol : 'STRK'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={privacyAmount}
+                        onChange={(e) => setPrivacyAmount(e.target.value)}
+                        placeholder={`0.0 ${privacyAsset === 'TOKEN' ? entry.symbol : 'STRK'}`}
+                        className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
+                      />
+                      <button
+                        onClick={() => void runPrivacyAction('SHIELD')}
+                        disabled={privacyBusy || !connected}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-[13px] font-bold px-4 py-2.5 disabled:opacity-40"
+                      >
+                        <Shield className="w-4 h-4" /> Shield
+                      </button>
+                      <button
+                        onClick={() => void runPrivacyAction('UNSHIELD')}
+                        disabled={privacyBusy || !connected}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/40 text-violet-200 text-[13px] font-bold px-4 py-2.5 hover:bg-violet-500/10 disabled:opacity-40"
+                      >
+                        <ShieldOff className="w-4 h-4" /> Unshield
+                      </button>
+                    </div>
+                    {privacyBusy && (
+                      <div className="flex items-center gap-2 text-[12px] text-zinc-500">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting STRK20 proof…
+                      </div>
+                    )}
+                    {privacyTx && (
+                      <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-2 break-all">
+                        <span>{privacyTx}</span>
+                        <a href={`${explorerUrl}/tx/${privacyTx}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-emerald-300 underline">
+                          View
+                        </a>
+                      </div>
+                    )}
+                    {privacyError && (
+                      <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-2 break-words">
+                        {privacyError}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Trades */}
+                {live && (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100 mb-2">
+                      <Activity className="w-4 h-4 text-violet-400" /> Recent trades (on-chain)
+                    </div>
+                    {trades.length === 0 ? (
+                      <div className="text-[12px] text-zinc-600">No trades yet.</div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {trades.map((t, i) => (
+                          <div key={`${t.txHash}-${i}`} className="flex items-center justify-between text-[12px]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  t.side === 'BUY' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                                }`}
+                              >
+                                {t.side}
+                              </span>
+                              {t.private ? (
+                                <span className="inline-flex items-center gap-1 text-violet-300/80">
+                                  <Shield className="w-3 h-3" /> private
+                                </span>
+                              ) : (
+                                <span className="text-zinc-500 font-mono">{shortenAddress(t.trader, 4)}</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-zinc-400 font-mono shrink-0">
+                              <span>
+                                {formatTokenAmount(t.input, t.side === 'BUY' ? baseDecimals : decimals, 4)}{' '}
+                                {t.side === 'BUY' ? baseSymbol : tokenSymbol}
+                              </span>
+                              <span className="text-zinc-600">→</span>
+                              <span className="text-zinc-200">
+                                {formatTokenAmount(t.output, t.side === 'BUY' ? decimals : baseDecimals, 4)}{' '}
+                                {t.side === 'BUY' ? tokenSymbol : baseSymbol}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

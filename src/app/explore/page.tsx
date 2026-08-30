@@ -71,7 +71,7 @@ export default function ExplorePage() {
               <Flame className="w-5 h-5 text-violet-400" /> Explore
             </h1>
             <p className="product-page-description">
-              Every coin launched on ORRANGE, straight from the on-chain factory.{' '}
+              Every coin launched on ORRANGE, straight from the on-chain factory V2.{' '}
               <span className="text-violet-300">No listings. Real contracts.</span>
             </p>
             {isSepolia && (
@@ -84,7 +84,7 @@ export default function ExplorePage() {
             href="/launch"
             className="inline-flex items-center gap-2 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-[13px] font-bold px-4 py-2.5 transition-colors"
           >
-            <Rocket className="w-4 h-4" /> Launch a coin
+            <Rocket className="w-4 h-4" /> Create a coin
           </Link>
         </div>
 
@@ -128,7 +128,7 @@ export default function ExplorePage() {
           <span className="text-zinc-600">·</span>
           <span>STRK ≈ ${baseUsd.toFixed(3)}</span>
           <span className="text-zinc-600">·</span>
-          <span className="text-zinc-500">Trending = real reserves on-chain (no indexer → volume proxy)</span>
+          <span className="text-zinc-500">Trending = real reserves on-chain · volume = cumulative trades</span>
         </div>
 
         {loading ? (
@@ -143,7 +143,7 @@ export default function ExplorePage() {
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-8 text-center">
             <Globe className="w-6 h-6 text-zinc-600 mx-auto" />
             <p className="text-[13px] text-zinc-500 mt-3">
-              No memecoins launched yet. Deploy the ORRANGE TokenFactory to open the market —
+              No memecoins launched yet. Deploy the ORRANGE TokenFactory V2 to open the market —
               then every launch appears here instantly.
             </p>
             <Link
@@ -163,8 +163,8 @@ export default function ExplorePage() {
 
         <div className="flex items-center gap-2 text-[11px] text-zinc-600 pt-2">
           <Shield className="w-3.5 h-3.5 text-violet-400" />
-          Public market data. Every price, cap, liquidity and graduation % is read live from
-          the bonded curve — nothing is mocked.
+          Public market data. Every price, cap, liquidity, volume and graduation % is read live
+          from the bonded curve — nothing is mocked.
         </div>
       </div>
     </AppShell>

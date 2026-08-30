@@ -1,17 +1,19 @@
 /**
  * @file src/services/launchService.ts
- * @description UMBRA LAUNCH on-chain reads + PUBLIC execution against the canonical
- * BondingCurve. All reads go straight to Starknet RPC (never local mocks); settlement
+ * @description ORRANGE LAUNCHPAD V2 on-chain reads + PUBLIC execution against the canonical
+ * BondingCurve V2. All reads go straight to Starknet RPC (never local mocks); settlement
  * math is on-chain only. Public trades use plain ERC20 calls; private trades live in
- * privateLaunchService.
+ * privateLaunchService. Sepolia only.
  */
-import { RpcProvider, hash, num } from 'starknet';
+import { RpcProvider, hash, num, CallData, shortString } from 'starknet';
 import { getNetworkConfig, NetworkId } from '@/config/networks';
 import {
   LaunchTokenEntry,
   getLaunchNetwork,
   isTokenLive,
   LAUNCH_METADATA_REF,
+  DEFAULT_PARAMS,
+  LaunchCurveParams,
 } from '@/config/launch';
 import { parseTokenAmount } from '@/utils/formatters';
 
@@ -27,6 +29,9 @@ export interface CurveState {
   graduationTarget: bigint;
   graduated: boolean;
   feeBps: bigint;
+  creatorFeeBps: bigint;
+  protocolFeeBps: bigint;
+  maxTradeBps: bigint;
   /** price = baseReserveTotal / tokenReserveTotal as (base, token) */
   priceBase: bigint;
   priceToken: bigint;
@@ -58,6 +63,89 @@ export interface TokenSnapshot {
   curve: CurveState | null;
   metrics: MarketMetrics | null;
   live: boolean;
+  /** Truthful migration state from the GraduationRouter (null when unknown). */
+  migrated: boolean | null;
+}
+
+export interface TradeEvent {
+  block: number;
+  txHash: string;
+  side: 'BUY' | 'SELL';
+  trader: string;
+  recipient: string;
+  /** Gross input (STRK for BUY, tokens for SELL). */
+  input: bigint;
+  /** Net output (tokens for BUY, STRK for SELL). */
+  output: bigint;
+  fee: bigint;
+  baseAfter: bigint;
+  tokenAfter: bigint;
+  /** True when this curve trade was executed through the private executor lane. */
+  private: boolean;
+  /** Price ratio (totalBase, totalToken) after this trade — exact, no float. */
+  priceBase: bigint;
+  priceToken: bigint;
+}
+
+export interface PrivateStats {
+  tradeCount: bigint;
+  volumeBase: bigint;
+}
+
+export interface PricePoint {
+  block: number;
+  /** price = totalBase / totalToken as a float for charting. */
+  price: number;
+  base: bigint;
+  token: bigint;
+}
+
+export interface RawCurveEventLike {
+  keys?: string[];
+  data?: (string | number)[];
+  block_number?: string | number;
+}
+
+/** Exact price (totalBase / totalToken) reconstructed from post-trade reserve state. */
+export function computePriceFromReserves(
+  virtualBase: bigint,
+  virtualToken: bigint,
+  baseAfter: bigint,
+  tokenAfter: bigint,
+): number | null {
+  const totalBase = virtualBase + baseAfter;
+  const totalToken = virtualToken - tokenAfter;
+  if (totalToken <= 0n) return null;
+  return Number(totalBase) / Number(totalToken);
+}
+
+/**
+ * Pure price-history replay from raw curve Buy/Sell events. Every V2 event carries the
+ * post-trade reserve state (data[5]=base_after, data[6]=token_after), so the price at each
+ * trade is exact — no float reconstruction, no assumptions. Returns oldest → newest, capped
+ * to the most recent `limit` points.
+ */
+export function replayPricePoints(
+  events: RawCurveEventLike[],
+  virtualBase: bigint,
+  virtualToken: bigint,
+  limit = 120,
+): PricePoint[] {
+  const points: PricePoint[] = [];
+  for (const e of events) {
+    const baseAfter = BigInt(e.data?.[5] ?? 0);
+    const tokenAfter = BigInt(e.data?.[6] ?? 0);
+    const totalBase = virtualBase + baseAfter;
+    const totalToken = virtualToken - tokenAfter;
+    if (totalToken <= 0n) continue;
+    points.push({
+      block: Number(BigInt(e.block_number ?? 0)),
+      price: Number(totalBase) / Number(totalToken),
+      base: totalBase,
+      token: totalToken,
+    });
+  }
+  return points.slice(Math.max(0, points.length - limit));
 }
 
 function providerFor(networkId: NetworkId): RpcProvider {
@@ -73,7 +161,6 @@ function toBig(res: any, index = 0): bigint {
   const v = arr[index];
   if (v && typeof v.low !== 'undefined') return BigInt(v.low) + (BigInt(v.high ?? 0) << 128n);
   if (v && typeof v === 'object') {
-    // struct tuple destructuring
     const keys = Object.keys(v);
     if (keys.includes('low')) return BigInt(v.low) + (BigInt(v.high ?? 0) << 128n);
   }
@@ -104,6 +191,9 @@ async function readCurveState(provider: RpcProvider, curve: string): Promise<Cur
     const gt = await callView(provider, curve, 'get_graduation_target');
     const graduated = await callView(provider, curve, 'is_graduated');
     const fee = await callView(provider, curve, 'get_fee_bps');
+    const creatorFee = await callView(provider, curve, 'get_creator_fee_bps');
+    const protocolFee = await callView(provider, curve, 'get_protocol_fee_bps');
+    const maxTrade = await callView(provider, curve, 'get_max_trade_bps');
     const [pb, pt] = await callView(provider, curve, 'get_price');
     return {
       virtualBase: toBig(vb),
@@ -113,6 +203,9 @@ async function readCurveState(provider: RpcProvider, curve: string): Promise<Cur
       graduationTarget: toBig(gt),
       graduated: Boolean(toBig(graduated)),
       feeBps: toBig(fee),
+      creatorFeeBps: toBig(creatorFee),
+      protocolFeeBps: toBig(protocolFee),
+      maxTradeBps: toBig(maxTrade),
       priceBase: toBig(pb),
       priceToken: toBig(pt),
     };
@@ -195,7 +288,8 @@ export function decodeShortString(v: any): string {
 
 /**
  * On-chain quote for a buy. Returns token output in the smallest unit.
- * baseAmount is in the smallest unit (18 dp).
+ * baseAmount is in the smallest unit (18 dp). An oversized order reverts on-chain with
+ * MAX_TRADE_EXCEEDED — the caller should surface that to the user.
  */
 export async function quoteBuy(
   networkId: NetworkId,
@@ -229,8 +323,7 @@ export async function quoteSell(
 }
 
 export function baseUsdFor(networkId: NetworkId): number {
-  // STRK ~ $0.35 placeholder; real feed is out of MVP scope. Kept explicit so it is never
-  // confused with on-chain truth.
+  // Sepolia STRK display estimate. Kept explicit so it is never confused with on-chain truth.
   return networkId === 'mainnet' ? 0.35 : 0.001;
 }
 
@@ -269,14 +362,35 @@ export function computeMetrics(
   };
 }
 
+/** Max single-trade token output enforced by the curve (for UI warnings). */
+export function maxTradeTokenOut(curve: CurveState): bigint {
+  if (!curve || curve.maxTradeBps <= 0n) return 0n;
+  return (curve.virtualToken * curve.maxTradeBps) / 10000n;
+}
+
+/** Max compliant STRK buy for a given curve state (what the UI should cap the input at). */
+export function maxTradeBaseIn(curve: CurveState): bigint {
+  if (!curve) return 0n;
+  const capTokens = maxTradeTokenOut(curve);
+  if (capTokens <= 0n) return 0n;
+  // Invert the curve math: find the gross base input whose token output is <= capTokens.
+  // Safe upper bound: price a buy of capTokens tokens directly is non-trivial, so use a
+  // conservative estimate from the current price ratio.
+  const price = curve.priceToken > 0n ? Number(curve.priceBase) / Number(curve.priceToken) : 0;
+  if (price <= 0) return 0n;
+  const feeFactor = 1 - (Number(curve.creatorFeeBps) + Number(curve.protocolFeeBps)) / 10000;
+  const est = BigInt(Math.floor((Number(capTokens) * price) / Math.max(feeFactor, 0.01)));
+  return est > 0n ? est : 0n;
+}
+
 /**
  * Cumulative traded volume (base-denominated) for a curve, derived from its on-chain
  * `Buy`/`Sell` events:
- *   Buy  { trader, recipient, base_amount, token_out }  → + data[2]
- *   Sell { trader, recipient, token_amount, base_out }  → + data[3]
+ *   Buy  { trader, recipient, base_amount, token_out, fee, base_after, token_after } → + data[2]
+ *   Sell { trader, recipient, token_amount, base_out, fee, base_after, token_after } → + data[3]+data[4]
  * This is real traded volume, not current liquidity. Events are scanned from the network's
- * configured `eventScanStartBlock` (before the factory deployment) with continuation
- * pagination. Returns null when event scanning is unavailable.
+ * configured `eventScanStartBlock` with continuation pagination. Returns null when event
+ * scanning is unavailable.
  */
 export async function readCumulativeVolume(
   networkId: NetworkId,
@@ -302,7 +416,7 @@ export async function readCumulativeVolume(
       const res = await provider.getEvents(filter);
       for (const e of res.events ?? []) {
         if (e.keys?.[0] === buySel) total += BigInt(e.data?.[2] ?? 0);
-        else if (e.keys?.[0] === sellSel) total += BigInt(e.data?.[3] ?? 0);
+        else if (e.keys?.[0] === sellSel) total += BigInt(e.data?.[3] ?? 0) + BigInt(e.data?.[4] ?? 0);
       }
       if (!res.continuation_token) break;
       cont = res.continuation_token;
@@ -314,75 +428,242 @@ export async function readCumulativeVolume(
   }
 }
 
+/**
+ * Private-execution stats from the executor (no identity): cumulative private trade count
+ * and cumulative private base volume. Returns null when unavailable.
+ */
+export async function readPrivateStats(
+  networkId: NetworkId,
+  executor: string,
+): Promise<PrivateStats | null> {
+  if (!executor) return null;
+  try {
+    const provider = providerFor(networkId);
+    const [count, volume] = await Promise.all([
+      callView(provider, executor, 'get_private_trade_count'),
+      callView(provider, executor, 'get_private_volume_base'),
+    ]);
+    return { tradeCount: toBig(count), volumeBase: toBig(volume) };
+  } catch (e) {
+    console.warn('[launch] readPrivateStats failed', e);
+    return null;
+  }
+}
+
+/** Truthful migration state: has this curve's graduation reserves moved to the liquidity
+ * manager? Reads GraduationRouter.is_migrated(curve). Null when the router is not configured. */
+export async function readMigratedState(
+  networkId: NetworkId,
+  curve: string,
+): Promise<boolean | null> {
+  const net = getLaunchNetwork(networkId);
+  if (!net.router || !curve) return null;
+  try {
+    const provider = providerFor(networkId);
+    const res = await callView(provider, net.router, 'is_migrated', [curve]);
+    return Boolean(toBig(res));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reconstruct the curve price series from its real Buy/Sell events. Every V2 event carries
+ * the post-trade reserve state (base_after/token_after), so the price at each trade is exact
+ * — no float reconstruction, no assumptions. Returns the most recent `limit` points
+ * (oldest → newest). Blocks are read for the x-axis.
+ */
+export async function readPriceHistory(
+  networkId: NetworkId,
+  curve: string,
+  limit = 120,
+): Promise<PricePoint[]> {
+  const net = getLaunchNetwork(networkId);
+  const start = net.eventScanStartBlock;
+  if (!curve || !start) return [];
+  try {
+    const provider = providerFor(networkId);
+    const state = await readCurveState(provider, curve);
+    if (!state) return [];
+    const buySel = hash.getSelectorFromName('Buy');
+    const sellSel = hash.getSelectorFromName('Sell');
+    const events: any[] = [];
+    let cont: string | undefined;
+    for (let page = 0; page < 10 && events.length <= limit * 2; page++) {
+      const filter: any = {
+        from_block: { block_number: start },
+        address: curve,
+        keys: [[buySel, sellSel]],
+        chunk_size: 1000,
+      };
+      if (cont) filter.continuation_token = cont;
+      const res = await provider.getEvents(filter);
+      events.push(...(res.events ?? []));
+      if (!res.continuation_token) break;
+      cont = res.continuation_token;
+    }
+    // Oldest → newest, then keep the most recent `limit` points.
+    return replayPricePoints(events, state.virtualBase, state.virtualToken, limit);
+  } catch (e) {
+    console.warn('[launch] readPriceHistory failed', e);
+    return [];
+  }
+}
+
+/**
+ * Recent real trades for a curve, newest first. A trade whose `trader` is the private
+ * executor address was executed through the shielded lane (labeled `private: true`) — this
+ * exposes private execution without linking to any user identity.
+ */
+export async function readRecentTrades(
+  networkId: NetworkId,
+  curve: string,
+  executor: string,
+  limit = 20,
+): Promise<TradeEvent[]> {
+  const net = getLaunchNetwork(networkId);
+  const start = net.eventScanStartBlock;
+  if (!curve || !start) return [];
+  try {
+    const provider = providerFor(networkId);
+    const state = await readCurveState(provider, curve);
+    if (!state) return [];
+    const buySel = hash.getSelectorFromName('Buy');
+    const sellSel = hash.getSelectorFromName('Sell');
+    const executorNorm = normalizeAddress(executor);
+    const events: any[] = [];
+    let cont: string | undefined;
+    for (let page = 0; page < 8 && events.length <= limit * 3; page++) {
+      const filter: any = {
+        from_block: { block_number: start },
+        address: curve,
+        keys: [[buySel, sellSel]],
+        chunk_size: 1000,
+      };
+      if (cont) filter.continuation_token = cont;
+      const res = await provider.getEvents(filter);
+      events.push(...(res.events ?? []));
+      if (!res.continuation_token) break;
+      cont = res.continuation_token;
+    }
+    const trades: TradeEvent[] = [];
+    for (const e of events) {
+      const trader = num.toHex(BigInt(e.data?.[0] ?? 0));
+      const recipient = num.toHex(BigInt(e.data?.[1] ?? 0));
+      const isBuy = e.keys?.[0] === buySel;
+      const baseAfter = BigInt(e.data?.[5] ?? 0);
+      const tokenAfter = BigInt(e.data?.[6] ?? 0);
+      trades.push({
+        block: Number(BigInt(e.block_number ?? 0)),
+        txHash: e.transaction_hash ?? '',
+        side: isBuy ? 'BUY' : 'SELL',
+        trader,
+        recipient,
+        input: BigInt(e.data?.[2] ?? 0),
+        output: BigInt(e.data?.[3] ?? 0),
+        fee: BigInt(e.data?.[4] ?? 0),
+        baseAfter,
+        tokenAfter,
+        private: normalizeAddress(trader) === executorNorm,
+        priceBase: state.virtualBase + baseAfter,
+        priceToken: state.virtualToken - tokenAfter,
+      });
+    }
+    trades.reverse(); // newest first
+    return trades.slice(0, limit);
+  } catch (e) {
+    console.warn('[launch] readRecentTrades failed', e);
+    return [];
+  }
+}
+
 export async function loadTokenSnapshot(
   networkId: NetworkId,
   entry: LaunchTokenEntry,
 ): Promise<TokenSnapshot> {
   if (!isTokenLive(entry)) {
-    return { entry, metadata: null, curve: null, metrics: null, live: false };
+    return { entry, metadata: null, curve: null, metrics: null, live: false, migrated: null };
   }
   const provider = providerFor(networkId);
-  const [metadata, curve, volume] = await Promise.all([
+  const [metadata, curve, volume, migrated] = await Promise.all([
     readTokenMetadata(provider, entry.token, entry.totalSupply),
     readCurveState(provider, entry.curve),
     readCumulativeVolume(networkId, entry.curve),
+    readMigratedState(networkId, entry.curve),
   ]);
   const metrics = metadata && curve ? computeMetrics(curve, metadata, networkId, volume ?? 0n) : null;
-  return { entry, metadata, curve, metrics, live: true };
+  return { entry, metadata, curve, metrics, live: true, migrated };
 }
 
-/** Resolve the token list: factory-read when configured, else the seeded registry. */
+/** Resolve the token list from the live factory (no seeded registry in V2). */
 export async function listTokens(networkId: NetworkId): Promise<LaunchTokenEntry[]> {
   const net = getLaunchNetwork(networkId);
-  if (net.factory) {
-    try {
-      const provider = providerFor(networkId);
-      const countRes = await callView(provider, net.factory, 'get_token_count');
-      const count = Number(toBig(countRes));
-      const out: LaunchTokenEntry[] = [];
-      for (let i = 0; i < count && i < 50; i++) {
-        const [token, curve, executor] = await Promise.all([
-          callView(provider, net.factory, 'get_token', [BigInt(i)]),
-          callView(provider, net.factory, 'get_curve', [BigInt(i)]),
-          callView(provider, net.factory, 'get_executor', [BigInt(i)]),
-        ]);
-        const meta = await readTokenMetadata(provider, num.toHex(toBig(token)));
-        const md = await callView(provider, net.factory, 'get_metadata', [toBig(token)]);
-        let creator: string | undefined;
-        try {
-          const c = await callView(provider, net.factory, 'get_creator', [toBig(token)]);
-          creator = num.toHex(toBig(c));
-        } catch {
-          creator = undefined;
-        }
-        out.push({
-          id: String(i),
-          symbol: meta?.symbol ?? `TOKEN${i}`,
-          name: meta?.name ?? `Token ${i}`,
-          emoji: '🪙',
-          token: num.toHex(toBig(token)),
-          curve: num.toHex(toBig(curve)),
-          executor: num.toHex(toBig(executor)),
-          totalSupply: meta?.totalSupply?.toString() ?? '',
-          params: DEFAULT_PARAMS_FROM_NET,
-          metadataUri: decodeShortString(md) || undefined,
-          creator,
-        });
+  if (!net.factory) return [];
+  try {
+    const provider = providerFor(networkId);
+    const countRes = await callView(provider, net.factory, 'get_token_count');
+    const count = Number(toBig(countRes));
+    const out: LaunchTokenEntry[] = [];
+    for (let i = 0; i < count && i < 50; i++) {
+      const [token, curve, executor] = await Promise.all([
+        callView(provider, net.factory, 'get_token', [BigInt(i)]),
+        callView(provider, net.factory, 'get_curve', [BigInt(i)]),
+        callView(provider, net.factory, 'get_executor', [BigInt(i)]),
+      ]);
+      const meta = await readTokenMetadata(provider, num.toHex(toBig(token)));
+      const md = await callView(provider, net.factory, 'get_metadata', [toBig(token)]);
+      let creator: string | undefined;
+      try {
+        const c = await callView(provider, net.factory, 'get_creator', [toBig(token)]);
+        creator = num.toHex(toBig(c));
+      } catch {
+        creator = undefined;
       }
-      if (out.length) return out;
-    } catch (e) {
-      console.warn('[launch] factory list failed, falling back to registry', e);
+      out.push({
+        id: String(i),
+        symbol: meta?.symbol ?? `TOKEN${i}`,
+        name: meta?.name ?? `Token ${i}`,
+        emoji: '🪙',
+        token: num.toHex(toBig(token)),
+        curve: num.toHex(toBig(curve)),
+        executor: num.toHex(toBig(executor)),
+        totalSupply: meta?.totalSupply?.toString() ?? '',
+        params: await readCurveParams(networkId, num.toHex(toBig(curve))),
+        metadataUri: decodeShortString(md) || undefined,
+        creator,
+      });
     }
+    return out;
+  } catch (e) {
+    console.warn('[launch] factory list failed', e);
+    return [];
   }
-  return net.registry;
 }
 
-const DEFAULT_PARAMS_FROM_NET = {
-  virtualBase: '15000000000000000000',
-  virtualToken: '1073000000000000000000000000',
-  graduationTarget: '50000000000000000000',
-  feeBps: '100',
-};
+/** Read the real curve params for a token entry (fee split + max trade from the curve). */
+async function readCurveParams(networkId: NetworkId, curve: string): Promise<LaunchCurveParams> {
+  if (!curve) return { ...DEFAULT_PARAMS };
+  try {
+    const provider = providerFor(networkId);
+    const [vb, vt] = await callView(provider, curve, 'get_virtual_reserves');
+    const [gt] = await callView(provider, curve, 'get_graduation_target');
+    const [fee] = await callView(provider, curve, 'get_fee_bps');
+    const [cf] = await callView(provider, curve, 'get_creator_fee_bps');
+    const [pf] = await callView(provider, curve, 'get_protocol_fee_bps');
+    const [mt] = await callView(provider, curve, 'get_max_trade_bps');
+    return {
+      virtualBase: toBig(vb).toString(),
+      virtualToken: toBig(vt).toString(),
+      graduationTarget: toBig(gt).toString(),
+      feeBps: toBig(fee).toString(),
+      creatorFeeBps: toBig(cf).toString(),
+      protocolFeeBps: toBig(pf).toString(),
+      maxTradeBps: toBig(mt).toString(),
+    };
+  } catch {
+    return { ...DEFAULT_PARAMS };
+  }
+}
 
 /** Normalize an address/felt to lowercase hex for comparison. */
 export function normalizeAddress(addr: string): string {
@@ -517,8 +798,6 @@ export async function executePublicSell(
   return { transactionHash: res.transaction_hash ?? res.transactionHash ?? res.hash };
 }
 
-export { parseTokenAmount, providerFor, hash, num }; // re-exported for tests
-
 /** Public ERC20 balance of `address` for `token` on the active network. The UMBRA
  * memecoin exposes `balance_of` (snake_case); the canonical STRK token also accepts
  * `balanceOf`. Tries both so either deployed ABI reads correctly. Returns null only when
@@ -544,3 +823,39 @@ export async function getTokenBalance(
     return null;
   }
 }
+
+/**
+ * Build the V2 `create_memecoin` calldata (flat). The u256 total_supply is split into
+ * [low, high]; the V2 fee-split + max-trade params follow the graduation target.
+ */
+export function buildCreateCalldata(opts: {
+  name: string;
+  symbol: string;
+  decimals: number;
+  metadataUri: string;
+  totalSupply: string;
+  virtualBase: string;
+  virtualToken: string;
+  graduationTarget: string;
+  feeBps: string;
+  creatorFeeBps: string;
+  protocolFeeBps: string;
+  maxTradeBps: string;
+}): string[] {
+  return CallData.compile([
+    shortString.encodeShortString(opts.name),
+    shortString.encodeShortString(opts.symbol),
+    opts.decimals,
+    shortString.encodeShortString(opts.metadataUri),
+    ...splitU256(BigInt(opts.totalSupply)),
+    BigInt(opts.virtualBase).toString(),
+    BigInt(opts.virtualToken).toString(),
+    BigInt(opts.graduationTarget).toString(),
+    Number(opts.feeBps),
+    Number(opts.creatorFeeBps),
+    Number(opts.protocolFeeBps),
+    Number(opts.maxTradeBps),
+  ]);
+}
+
+export { parseTokenAmount, providerFor, hash, num }; // re-exported for tests

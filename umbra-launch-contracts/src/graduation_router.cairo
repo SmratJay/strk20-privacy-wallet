@@ -1,16 +1,23 @@
-//! GraduationRouter — minimal graduation liquidity boundary.
+//! GraduationRouter — truthful graduation liquidity boundary for UMBRA LAUNCH V2.
 //!
-//! When a BondingCurve graduates, it moves its real base reserves and remaining token
-//! balance to the `graduation_recipient` configured on the curve (this router). The router
-//! provides:
-//!   - `on_graduation`: a public observation hook that emits the exact graduated amounts
-//!     (base + token) for the UI, and asserts the curve really is graduated.
-//!   - `forward_reserves`: governance-only, moves the received reserves to a configured
-//!     liquidity manager — the clean seam where a real Ekubo pool migration would plug in.
+//! When a BondingCurve V2 graduates (automatically at its target, or via `graduate()`), it
+//! moves its real base reserves and remaining token balance to the `graduation_recipient`
+//! configured on the curve (this router).
 //!
-//! Direct atomic Ekubo migration is intentionally NOT wired here: it requires live pool-key
-//! construction against the current Ekubo core. This abstraction keeps the privacy flow
-//! intact while leaving an auditable boundary for the migration step.
+//! The router distinguishes two on-chain truths the UI must never blur:
+//!   - CURVE GRADUATED  → `BondingCurve.is_graduated()` is true; the curve is closed and its
+//!     reserves sit in this router.
+//!   - LIQUIDITY MIGRATED → `GraduationRouter.is_migrated(curve)` is true; governance has
+//!     called `forward_reserves`, which moved the router-held reserves to the configured
+//!     `liquidity_manager` (a real DEX/Ekubo boundary).
+//!
+//! `forward_reserves` is governance-only, asserts the curve really graduated, and can only
+//! run once per curve. It is the clean, auditable seam where a direct Ekubo pool migration
+//! plugs in later — it is never faked: no "migration" is reported until reserves actually
+//! move to the liquidity manager.
+//!
+//! `on_graduation` is a public observation hook that emits the exact seeded amounts for the
+//! UI and asserts the curve is graduated. It does not move funds.
 
 use crate::interfaces::IGraduationRouter;
 use crate::interfaces::{IBondingCurveDispatcher, IBondingCurveDispatcherTrait};
@@ -25,7 +32,8 @@ pub mod GraduationRouter {
     };
     use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{
-        StoragePointerReadAccess, StoragePointerWriteAccess,
+        StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess, Map,
     };
     use core::num::traits::Zero;
 
@@ -33,6 +41,8 @@ pub mod GraduationRouter {
     struct Storage {
         governance: ContractAddress,
         liquidity_manager: ContractAddress,
+        /// Per-curve migration truth (only graduated curves may be migrated, once).
+        migrated: Map<ContractAddress, bool>,
     }
 
     #[event]
@@ -41,6 +51,7 @@ pub mod GraduationRouter {
         LiquidityManagerSet: LiquidityManagerSet,
         ReservesForwarded: ReservesForwarded,
         GraduationSeeded: GraduationSeeded,
+        LiquidityMigrated: LiquidityMigrated,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -62,6 +73,12 @@ pub mod GraduationRouter {
         pub base_asset: ContractAddress,
         pub token_amount: u256,
         pub base_amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct LiquidityMigrated {
+        pub curve: ContractAddress,
+        pub manager: ContractAddress,
     }
 
     #[constructor]
@@ -87,9 +104,10 @@ pub mod GraduationRouter {
             assert(caller == self.governance.read(), 'UNAUTHORIZED_GOVERNANCE');
             let manager = self.liquidity_manager.read();
             assert(manager.is_non_zero(), 'NO_LIQUIDITY_MANAGER');
-            // Explicit curve check: only graduated curves may forward reserves through here.
+            // Only a graduated curve may forward reserves, and only once.
             let curve_disp = IBondingCurveDispatcher { contract_address: curve };
             assert(curve_disp.is_graduated(), 'CURVE_NOT_GRADUATED');
+            assert(!self.migrated.read(curve), 'ALREADY_MIGRATED');
 
             let self_addr = get_contract_address();
             let token_disp = IMemecoinDispatcher { contract_address: token };
@@ -103,7 +121,9 @@ pub mod GraduationRouter {
             if !base_balance.is_zero() {
                 assert(base_disp.transfer(manager, base_balance), 'BASE_FORWARD_FAILED');
             }
+            self.migrated.write(curve, true);
             self.emit(ReservesForwarded { curve, token_amount: token_balance, base_amount: base_balance });
+            self.emit(LiquidityMigrated { curve, manager });
         }
 
         fn on_graduation(
@@ -121,6 +141,10 @@ pub mod GraduationRouter {
             self.emit(GraduationSeeded {
                 curve, token, base_asset, token_amount: token_balance, base_amount: base_balance,
             });
+        }
+
+        fn is_migrated(self: @ContractState, curve: ContractAddress) -> bool {
+            self.migrated.read(curve)
         }
 
         fn get_governance(self: @ContractState) -> ContractAddress {

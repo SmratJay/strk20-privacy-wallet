@@ -1,21 +1,34 @@
 /**
  * @file src/config/launch.ts
- * @description UMBRA LAUNCH configuration: networks, base asset, factory + demo registry.
+ * @description ORRANGE LAUNCHPAD V2 configuration — Starknet Sepolia only.
  *
- * Mainnet-first. Contract addresses are injected via env so the app reads real on-chain
- * state once contracts are deployed; until then the seeded registry drives the UI with
- * live reads disabled (never fabricated balances).
+ * V2 removes the V1 demo registry and mainnet config: the app reads only the live on-chain
+ * TokenFactory V2. There is no seeded/mocked market. Contract addresses are injected via env
+ * so a real deployment can be wired without code changes.
+ *
+ * Curve V2 economics (locked via scripts/launch_sim.mjs):
+ *   - supply 1,000,000,000 tokens (18 dp)
+ *   - virtual base 30 STRK, virtual token reserve = supply
+ *   - graduation at 120 STRK of real base reserve (auto-graduates on the crossing trade)
+ *   - total fee 1%: creator 0.25% + protocol 0.25% + 0.5% retained as liquidity
+ *   - max single buy = 10% of the virtual token reserve (anti-whale)
  */
 
 export interface LaunchCurveParams {
-  /** Virtual base reserve (smallest unit). Defaults to 15 STRK. */
+  /** Virtual base reserve (smallest unit). */
   virtualBase: string;
-  /** Virtual token reserve (smallest unit). Defaults to 1_073_000_000e18. */
+  /** Virtual token reserve (smallest unit). */
   virtualToken: string;
-  /** Real base accumulated to graduate (smallest unit). Defaults to 50 STRK. */
+  /** Real base accumulated to graduate (smallest unit). */
   graduationTarget: string;
-  /** Fee basis points. Defaults to 100 (1%). */
+  /** Total fee basis points (1% = 100). */
   feeBps: string;
+  /** Creator share of the fee, in bps of the base amount. */
+  creatorFeeBps: string;
+  /** Protocol share of the fee, in bps of the base amount. */
+  protocolFeeBps: string;
+  /** Max single buy as a fraction (bps) of the virtual token reserve. */
+  maxTradeBps: string;
 }
 
 export interface LaunchSocials {
@@ -31,9 +44,9 @@ export interface LaunchTokenEntry {
   emoji: string;
   /** ERC20 memecoin address. */
   token: string;
-  /** BondingCurve address. */
+  /** BondingCurve V2 address. */
   curve: string;
-  /** PrivateCurveExecutor address. */
+  /** PrivateCurveExecutor V2 address. */
   executor: string;
   /** Total supply (smallest unit). */
   totalSupply: string;
@@ -44,44 +57,42 @@ export interface LaunchTokenEntry {
 }
 
 export interface LaunchNetworkConfig {
-  chainId: 'SN_MAIN' | 'SN_SEPOLIA';
+  chainId: 'SN_SEPOLIA';
   /** STRK20 privacy pool address for the network. */
   poolAddress: string;
   /** Base asset for memecoins (STRK). */
   baseAsset: string;
   baseAssetDecimals: number;
-  /** TokenFactory address (empty until deployed). */
+  /** TokenFactory V2 address (empty until deployed). */
   factory: string;
-  /** GraduationRouter address (empty until deployed). */
+  /** GraduationRouter V2 address (empty until deployed). */
   router: string;
   /**
-   * Block to start BondingCurve Buy/Sell event scans from for cumulative volume.
-   * Should be set to a block before the TokenFactory deployment on the network so every
-   * factory-launched curve's full trade history is covered. 0 disables volume reads.
+   * Block to start BondingCurve Buy/Sell event scans from for cumulative volume, price
+   * history and the trades feed. Set to a block before the V2 TokenFactory deployment so
+   * every factory-launched curve's full trade history is covered. 0 disables event reads.
    */
   eventScanStartBlock: number;
-  /** Seeded demo registry used when the factory is not deployed/configured. */
-  registry: LaunchTokenEntry[];
 }
 
-export const STRK_MAINNET =
-  '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 export const STRK_SEPOLIA =
   '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 
-export const MAINNET_UMBRA_POOL =
-  '0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a';
 export const SEPOLIA_UMBRA_POOL =
   '0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91';
 
-const DEFAULT_PARAMS: LaunchCurveParams = {
-  virtualBase: '15000000000000000000', // 15 STRK
-  virtualToken: '1073000000000000000000000000', // 1,073,000,000 tokens
-  graduationTarget: '50000000000000000000', // 50 STRK
-  feeBps: '100', // 1%
+/** V2 curve parameters (locked via scripts/launch_sim.mjs — see header). */
+export const DEFAULT_PARAMS: LaunchCurveParams = {
+  virtualBase: '30000000000000000000', // 30 STRK
+  virtualToken: '1000000000000000000000000000', // 1,000,000,000 tokens (18 dp)
+  graduationTarget: '120000000000000000000', // 120 STRK
+  feeBps: '100', // 1% total
+  creatorFeeBps: '25', // 0.25% -> creator
+  protocolFeeBps: '25', // 0.25% -> protocol treasury
+  maxTradeBps: '1000', // 10% of virtual token reserve per buy
 };
 
-const DEFAULT_TOTAL_SUPPLY = '1073000000000000000000000000';
+export const DEFAULT_TOTAL_SUPPLY = '1000000000000000000000000000';
 
 /**
  * On-chain metadata reference stored in TokenFactory.metadata_uri. It is a short felt that
@@ -99,77 +110,42 @@ export const CREATE_DEFAULTS = {
   virtualToken: DEFAULT_PARAMS.virtualToken,
   graduationTarget: DEFAULT_PARAMS.graduationTarget,
   feeBps: DEFAULT_PARAMS.feeBps,
+  creatorFeeBps: DEFAULT_PARAMS.creatorFeeBps,
+  protocolFeeBps: DEFAULT_PARAMS.protocolFeeBps,
+  maxTradeBps: DEFAULT_PARAMS.maxTradeBps,
 };
 
 /** Addresses are read from env so a real deployment can be wired without code changes. */
-function envFactory(): { factory: string; router: string } {
-  return {
-    factory: process.env.NEXT_PUBLIC_UMBRA_FACTORY || '',
-    router: process.env.NEXT_PUBLIC_UMBRA_ROUTER || '',
-  };
-}
-
 function envFactorySepolia(): { factory: string; router: string } {
   return {
-    factory:
-      process.env.NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY || process.env.NEXT_PUBLIC_UMBRA_FACTORY || '',
+    factory: process.env.NEXT_PUBLIC_UMBRA_SEPOLIA_FACTORY || '',
     router: process.env.NEXT_PUBLIC_UMBRA_ROUTER || '',
   };
 }
 
-/**
- * Build the seeded demo registry. Env overrides let an actual deployed curve/executor drive
- * live reads; empty addresses keep the UI in a clear "pending deployment" state.
- */
-function seedRegistry(base: string, prefix: string): LaunchTokenEntry[] {
-  const mk = (
-    id: string,
-    symbol: string,
-    name: string,
-    emoji: string,
-    suffix: string,
-  ): LaunchTokenEntry => ({
-    id,
-    symbol,
-    name,
-    emoji,
-    token: process.env[`${prefix}${suffix}_TOKEN`] || '',
-    curve: process.env[`${prefix}${suffix}_CURVE`] || '',
-    executor: process.env[`${prefix}${suffix}_EXECUTOR`] || '',
-    totalSupply: DEFAULT_TOTAL_SUPPLY,
-    params: DEFAULT_PARAMS,
-    metadataUri: `umbra://${id.toLowerCase()}`,
-  });
-  return [mk('hamstr', 'HAMSTR', 'Hampton the Hamster', '🐹', 'HAMSTR'), mk('orange', 'ORANGE', 'Orange the Cat', '🍊', 'ORANGE')];
-}
+const SEPOLIA_CONFIG: LaunchNetworkConfig = {
+  chainId: 'SN_SEPOLIA',
+  poolAddress: SEPOLIA_UMBRA_POOL,
+  baseAsset: STRK_SEPOLIA,
+  baseAssetDecimals: 18,
+  factory: envFactorySepolia().factory,
+  router: envFactorySepolia().router,
+  // Set right before the V2 TokenFactory deployment on Sepolia so every factory-launched
+  // curve's Buy/Sell events are scanned for volume/price/trades.
+  eventScanStartBlock: 0,
+};
 
+/**
+ * Launch is Sepolia-only in V2. A mainnet lookup returns the same Sepolia config (pages
+ * gate on the wallet network anyway); there is no mainnet launch market.
+ */
 export const LAUNCH_NETWORKS: Record<'mainnet' | 'sepolia', LaunchNetworkConfig> = {
-  mainnet: {
-    chainId: 'SN_MAIN',
-    poolAddress: MAINNET_UMBRA_POOL,
-    baseAsset: STRK_MAINNET,
-    baseAssetDecimals: 18,
-    factory: envFactory().factory,
-    router: envFactory().router,
-    eventScanStartBlock: 0, // no factory on mainnet yet — volume reads disabled
-    registry: seedRegistry(STRK_MAINNET, 'NEXT_PUBLIC_UMBRA_'),
-  },
-  sepolia: {
-    chainId: 'SN_SEPOLIA',
-    poolAddress: SEPOLIA_UMBRA_POOL,
-    baseAsset: STRK_SEPOLIA,
-    baseAssetDecimals: 18,
-    factory: envFactorySepolia().factory,
-    router: envFactorySepolia().router,
-    // A few blocks before the Sepolia TokenFactory deployment (block 14247451) so every
-    // factory-launched curve's Buy/Sell events are scanned for cumulative volume.
-    eventScanStartBlock: 14247000,
-    registry: seedRegistry(STRK_SEPOLIA, 'NEXT_PUBLIC_UMBRA_'),
-  },
+  sepolia: SEPOLIA_CONFIG,
+  mainnet: { ...SEPOLIA_CONFIG, factory: '', router: '' },
 };
 
 export function getLaunchNetwork(networkId: 'mainnet' | 'sepolia'): LaunchNetworkConfig {
-  return LAUNCH_NETWORKS[networkId] ?? LAUNCH_NETWORKS.mainnet;
+  return LAUNCH_NETWORKS[networkId] ?? LAUNCH_NETWORKS.sepolia;
 }
 
 /** True when a token entry has real on-chain addresses to read from. */

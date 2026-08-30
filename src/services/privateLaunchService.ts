@@ -17,6 +17,8 @@
  * need to compute note ids.
  */
 
+import { strk20WalletApiService } from '@/services/strk20WalletApiService';
+
 export const CURVE_OP = {
   BUY: 0,
   SELL: 1,
@@ -216,4 +218,50 @@ export function resolveWalletProvider(wallet: any): { request: (c: any) => Promi
     if (c && typeof (c as any).request === 'function') return c as any;
   }
   return null;
+}
+
+export interface ShieldLaneOpts {
+  /** Connected wallet (Ready lane) or merged effective wallet. */
+  wallet: any;
+  /** Privy context (Privy lane). */
+  privy: any;
+  /** True when the Privy STRK20 lane is live (authenticated + account + viewing key). */
+  privyConnected: boolean;
+  /** Token to shield (the launched memecoin or STRK). */
+  token: string;
+  /** Amount in the smallest unit. */
+  amountBase: bigint;
+  /** Optional recipient for unshield (defaults to the wallet address). */
+  recipient?: string;
+}
+
+/**
+ * Shield (make private) an arbitrary token — the launched memecoin or the STRK base — via
+ * whichever STRK20 lane is connected. The token stays the SAME standard ERC20; shielding
+ * moves it into a STRK20 note held by the pool. No wrapped token is ever created.
+ */
+export async function shieldLaunchToken(opts: ShieldLaneOpts): Promise<{ transactionHash: string }> {
+  if (opts.privyConnected) {
+    const res = await opts.privy.shield(opts.token, opts.amountBase);
+    return { transactionHash: res.transactionHash };
+  }
+  const res = await strk20WalletApiService.shield(opts.wallet, opts.token, opts.amountBase);
+  return { transactionHash: res.transactionHash };
+}
+
+/**
+ * Unshield (make public) a shielded balance back to the user's public wallet. The output is
+ * the same standard ERC20 — private balances are STRK20 notes of the real token, never a
+ * separate token.
+ */
+export async function unshieldLaunchToken(
+  opts: ShieldLaneOpts,
+): Promise<{ transactionHash: string }> {
+  const recipient = opts.recipient ?? opts.wallet.address ?? '';
+  if (opts.privyConnected) {
+    const res = await opts.privy.unshield(opts.token, opts.amountBase, recipient);
+    return { transactionHash: res.transactionHash };
+  }
+  const res = await strk20WalletApiService.unshield(opts.wallet, opts.token, opts.amountBase, recipient);
+  return { transactionHash: res.transactionHash };
 }

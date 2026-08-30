@@ -16,10 +16,13 @@ import {
 } from '@/services/launchService';
 
 const PARAMS: LaunchCurveParams = {
-  virtualBase: '15000000000000000000',
-  virtualToken: '1073000000000000000000000000',
-  graduationTarget: '50000000000000000000',
+  virtualBase: '30000000000000000000',
+  virtualToken: '1000000000000000000000000000',
+  graduationTarget: '120000000000000000000',
   feeBps: '100',
+  creatorFeeBps: '25',
+  protocolFeeBps: '25',
+  maxTradeBps: '1000',
 };
 
 function entry(id: string, symbol: string, tokenAddr: string): LaunchTokenEntry {
@@ -31,7 +34,7 @@ function entry(id: string, symbol: string, tokenAddr: string): LaunchTokenEntry 
     token: tokenAddr,
     curve: `0xcur${id}`,
     executor: `0xexe${id}`,
-    totalSupply: '1073000000000000000000000000',
+    totalSupply: '1000000000000000000000000000',
     params: PARAMS,
   };
 }
@@ -41,18 +44,22 @@ function snapshot(entry: LaunchTokenEntry, over: Partial<any> = {}): TokenSnapsh
     entry,
     metadata: { name: entry.name, symbol: entry.symbol, decimals: 18, totalSupply: 1n },
     curve: {
-      virtualBase: 15n * 10n ** 18n,
-      virtualToken: 1073000000000000000000000000n,
+      virtualBase: 30n * 10n ** 18n,
+      virtualToken: 1000000000000000000000000000n,
       baseReserve: 10n * 10n ** 18n,
       tokenReserve: 5n * 10n ** 23n,
-      graduationTarget: 50n * 10n ** 18n,
+      graduationTarget: 120n * 10n ** 18n,
       graduated: false,
       feeBps: 100n,
-      priceBase: 25n * 10n ** 18n,
-      priceToken: 1073000000000000000000000000n - 5n * 10n ** 23n,
+      creatorFeeBps: 25n,
+      protocolFeeBps: 25n,
+      maxTradeBps: 1000n,
+      priceBase: 40n * 10n ** 18n,
+      priceToken: 1000000000000000000000000000n - 5n * 10n ** 23n,
     },
     metrics: { price: 0.1, priceUsd: 0.0001, marketCap: 100, liquidity: 10, volume: 10, graduationPct: 20, graduated: false, holders: null },
     live: true,
+    migrated: false,
     ...over,
   };
 }

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * UMBRA LAUNCH smoke test — reads a deployed token's REAL on-chain state and performs a
- * tiny public buy, then prints a quote. Use on Sepolia first, then mainnet.
+ * ORRANGE LAUNCHPAD V2 smoke test — reads a deployed token's REAL on-chain state and
+ * optionally performs a tiny public buy.
  *
- *   node scripts/launch_smoke.mjs [--sepolia]
+ *   node scripts/launch_smoke.mjs [--buy]
  *
  * Never fabricates: all values come from the chain. Requires a funded deployer account.
  */
@@ -14,26 +14,23 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const isSepolia = process.argv.includes('--sepolia');
-const NETWORK = isSepolia ? 'sepolia' : 'mainnet';
 
 const manifest = JSON.parse(
-  fs.readFileSync(path.join(ROOT, 'deployments/umbra-launch.json'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'deployments/umbra-launch-v2.json'), 'utf8'),
 );
-if (manifest.network !== NETWORK) {
-  console.error(`Manifest is for ${manifest.network}, not ${NETWORK}.`);
+if (manifest.network !== 'sepolia') {
+  console.error(`Manifest is for ${manifest.network}, not sepolia.`);
   process.exit(1);
 }
 
-const RPC = isSepolia
-  ? process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia'
-  : process.env.NEXT_PUBLIC_STARKNET_RPC || 'https://free-rpc.nethermind.io/mainnet-juno';
+const RPC =
+  process.env.NEXT_PUBLIC_STARKNET_RPC_URL || 'https://api.cartridge.gg/x/starknet/sepolia';
 
 async function main() {
   const provider = new RpcProvider({ nodeUrl: RPC });
-  const { token, curve, executor } = manifest.tokens.HAMSTR;
+  const { token, curve, executor } = manifest.tokens.HAMSTR || {};
 
-  console.log(`UMBRA smoke → ${NETWORK.toUpperCase()}`);
+  console.log(`LAUNCHPAD V2 smoke → SEPOLIA`);
   console.log(`token    ${token}`);
   console.log(`curve    ${curve}`);
   console.log(`executor ${executor}`);
@@ -45,15 +42,20 @@ async function main() {
   const [br, tr] = await call(curve, 'get_real_reserves');
   const gt = await call(curve, 'get_graduation_target');
   const graduated = await call(curve, 'is_graduated');
+  const [cf] = await call(curve, 'get_creator_fee_bps');
+  const [pf] = await call(curve, 'get_protocol_fee_bps');
+  const [mt] = await call(curve, 'get_max_trade_bps');
   const [pb, pt] = await call(curve, 'get_price');
   const supply = await call(token, 'total_supply');
+  const [mig] = await call(manifest.contracts.GraduationRouter.address, 'is_migrated', [curve]);
 
   console.log('\n--- curve state (on-chain) ---');
   console.log(`virtual reserves      base=${vb} token=${vt}`);
   console.log(`real reserves         base=${br} token=${tr}`);
   console.log(`graduation target     ${gt} (graduated=${BigInt(graduated)})`);
+  console.log(`fee split             creator=${cf} protocol=${pf} maxTrade=${mt}`);
+  console.log(`migrated              ${BigInt(mig)}`);
   console.log(`price (base/token)    ${pb}/${pt}`);
-  // total_supply is a u256 — the RPC returns it either as an array or a {low,high} object.
   const supplyArr = Array.isArray(supply) ? supply : [supply.low, supply.high ?? 0n];
   const totalSupply = BigInt(supplyArr[0]) + (BigInt(supplyArr[1] ?? 0n) << 128n);
   console.log(`total supply          ${totalSupply}`);
@@ -63,7 +65,6 @@ async function main() {
   const quote = await call(curve, 'quote_buy', [amount.toString()]);
   console.log(`\nquote_buy(1 STRK)     ${BigInt(quote)} tokens`);
 
-  // Perform a tiny real public buy (requireSIGN: use the deployer account).
   if (process.argv.includes('--buy')) {
     const deployer = JSON.parse(fs.readFileSync(path.join(ROOT, 'deployments/deployer_account.json'), 'utf8'));
     const account = new Account({ provider, address: deployer.accountAddress, signer: deployer.privateKey });
@@ -72,7 +73,6 @@ async function main() {
       l1_gas: { max_amount: 100000n, max_price_per_unit: 400000000000000n },
       l1_data_gas: { max_amount: 10000000n, max_price_per_unit: 20000000000000n },
     };
-    // approve amount is a u256 → split [low, high] in calldata.
     const LOW_MASK = (1n << 128n) - 1n;
     const res = await account.execute(
       [

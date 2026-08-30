@@ -1,9 +1,9 @@
-//! TokenFactory — deploys a memecoin + its canonical BondingCurve + its private executor.
+//! TokenFactory — deploys a memecoin + its canonical BondingCurve V2 + its private executor.
 //!
 //! Uses the standard Starknet class-deployment approach: the factory holds the declared
 //! class hashes and deploys fresh instances per token. Deploy order inside one transaction:
 //!   1. Memecoin (fixed supply minted to the factory)
-//!   2. BondingCurve (deployer = creator, graduation_recipient = router)
+//!   2. BondingCurve V2 (deployer = creator, protocol treasury + graduation router wired)
 //!   3. factory moves the full supply to the curve
 //!   4. PrivateCurveExecutor (bound to the pool, curve, base asset and token)
 //!
@@ -27,6 +27,9 @@ pub trait ITokenFactory<TContractState> {
         virtual_token_reserve: u128,
         graduation_target: u128,
         fee_bps: u128,
+        creator_fee_bps: u128,
+        protocol_fee_bps: u128,
+        max_trade_bps: u128,
     ) -> (ContractAddress, ContractAddress, ContractAddress);
     fn get_token_count(self: @TContractState) -> u128;
     fn get_token(self: @TContractState, id: u128) -> ContractAddress;
@@ -37,6 +40,7 @@ pub trait ITokenFactory<TContractState> {
     fn get_router(self: @TContractState) -> ContractAddress;
     fn get_base_asset(self: @TContractState) -> ContractAddress;
     fn get_privacy_pool(self: @TContractState) -> ContractAddress;
+    fn get_protocol_treasury(self: @TContractState) -> ContractAddress;
 }
 
 #[starknet::contract]
@@ -59,6 +63,7 @@ pub mod TokenFactory {
         base_asset: ContractAddress,
         privacy_pool: ContractAddress,
         router: ContractAddress,
+        protocol_treasury: ContractAddress,
         memecoin_class_hash: starknet::class_hash::ClassHash,
         curve_class_hash: starknet::class_hash::ClassHash,
         executor_class_hash: starknet::class_hash::ClassHash,
@@ -101,6 +106,9 @@ pub mod TokenFactory {
         pub virtual_token_reserve: u128,
         pub graduation_target: u128,
         pub fee_bps: u128,
+        pub creator_fee_bps: u128,
+        pub protocol_fee_bps: u128,
+        pub max_trade_bps: u128,
     }
 
     #[constructor]
@@ -110,6 +118,7 @@ pub mod TokenFactory {
         base_asset: ContractAddress,
         privacy_pool: ContractAddress,
         router: ContractAddress,
+        protocol_treasury: ContractAddress,
         memecoin_class_hash: starknet::class_hash::ClassHash,
         curve_class_hash: starknet::class_hash::ClassHash,
         executor_class_hash: starknet::class_hash::ClassHash,
@@ -118,10 +127,12 @@ pub mod TokenFactory {
         assert(base_asset.is_non_zero(), 'ZERO_BASE_ASSET');
         assert(privacy_pool.is_non_zero(), 'ZERO_POOL');
         assert(router.is_non_zero(), 'ZERO_ROUTER');
+        assert(protocol_treasury.is_non_zero(), 'ZERO_TREASURY');
         self.governance.write(governance);
         self.base_asset.write(base_asset);
         self.privacy_pool.write(privacy_pool);
         self.router.write(router);
+        self.protocol_treasury.write(protocol_treasury);
         self.memecoin_class_hash.write(memecoin_class_hash);
         self.curve_class_hash.write(curve_class_hash);
         self.executor_class_hash.write(executor_class_hash);
@@ -141,6 +152,9 @@ pub mod TokenFactory {
             virtual_token_reserve: u128,
             graduation_target: u128,
             fee_bps: u128,
+            creator_fee_bps: u128,
+            protocol_fee_bps: u128,
+            max_trade_bps: u128,
         ) -> (ContractAddress, ContractAddress, ContractAddress) {
             assert(name.is_non_zero(), 'ZERO_NAME');
             assert(symbol.is_non_zero(), 'ZERO_SYMBOL');
@@ -149,6 +163,9 @@ pub mod TokenFactory {
             assert(virtual_token_reserve > 0, 'ZERO_VIRTUAL_TOKEN');
             assert(graduation_target > 0, 'ZERO_GRAD_TARGET');
             assert(fee_bps <= 10_000, 'FEE_TOO_HIGH');
+            assert(creator_fee_bps + protocol_fee_bps < 10_000, 'FEES_EXCEED_100PCT');
+            assert(creator_fee_bps + protocol_fee_bps <= fee_bps, 'FEE_SPLIT_EXCEEDS_TOTAL');
+            assert(max_trade_bps <= 10_000, 'MAX_TRADE_TOO_HIGH');
 
             let id = self.token_count.read();
             let salt: felt252 = id.into();
@@ -166,7 +183,7 @@ pub mod TokenFactory {
                 self.memecoin_class_hash.read(), salt, token_calldata.span(), false,
             ).unwrap_syscall();
 
-            // 2. Deploy the curve (deployer = creator, graduation_recipient = router).
+            // 2. Deploy the curve V2 (deployer = creator, treasury + router wired).
             let mut curve_calldata: Array<felt252> = array![];
             self.base_asset.read().serialize(ref curve_calldata);
             token.serialize(ref curve_calldata);
@@ -174,7 +191,11 @@ pub mod TokenFactory {
             virtual_token_reserve.serialize(ref curve_calldata);
             graduation_target.serialize(ref curve_calldata);
             fee_bps.serialize(ref curve_calldata);
+            creator_fee_bps.serialize(ref curve_calldata);
+            protocol_fee_bps.serialize(ref curve_calldata);
+            max_trade_bps.serialize(ref curve_calldata);
             creator.serialize(ref curve_calldata);
+            self.protocol_treasury.read().serialize(ref curve_calldata);
             self.router.read().serialize(ref curve_calldata);
             let (curve, _) = deploy_syscall(
                 self.curve_class_hash.read(), salt, curve_calldata.span(), false,
@@ -206,8 +227,17 @@ pub mod TokenFactory {
                 id, creator, token, curve, executor, name, symbol, total_supply, metadata_uri,
             });
             self.emit(CurveCreated {
-                id, curve, base_asset: self.base_asset.read(), token,
-                virtual_base_reserve, virtual_token_reserve, graduation_target, fee_bps,
+                id,
+                curve,
+                base_asset: self.base_asset.read(),
+                token,
+                virtual_base_reserve,
+                virtual_token_reserve,
+                graduation_target,
+                fee_bps,
+                creator_fee_bps,
+                protocol_fee_bps,
+                max_trade_bps,
             });
 
             (token, curve, executor)
@@ -247,6 +277,10 @@ pub mod TokenFactory {
 
         fn get_privacy_pool(self: @ContractState) -> ContractAddress {
             self.privacy_pool.read()
+        }
+
+        fn get_protocol_treasury(self: @ContractState) -> ContractAddress {
+            self.protocol_treasury.read()
         }
     }
 }

@@ -1,4 +1,4 @@
-//! PrivateCurveExecutor — the STRK20 invoke anonymizer for a BondingCurve.
+//! PrivateCurveExecutor — the STRK20 invoke anonymizer for a BondingCurve V2.
 //!
 //! Mirrors the official `EkuboSwapAnonymizer` contract shape exactly: it is called by the
 //! STRK20 privacy pool via the `privacy_invoke` selector (INVOKE_SELECTOR), spends the
@@ -14,6 +14,11 @@
 //!   - only ever routes through the configured curve
 //!   - never picks a recipient: the output always flows to the pool, which fills the open
 //!     note the proof bound to the user's own address
+//!
+//! V2 private-execution awareness: the executor tracks cumulative private volume and a
+//! private-trade counter (public state, no identity) so the UI can show how much of a
+//! curve's activity ran through the shielded lane. A private trade moves the exact same
+//! canonical curve reserves/price/graduation mechanics as a public trade.
 //!
 //! The curve sees THIS contract as the trader — never the end user's wallet.
 
@@ -42,6 +47,10 @@ pub mod PrivateCurveExecutor {
         curve: ContractAddress,
         base_asset: ContractAddress,
         token: ContractAddress,
+        /// Cumulative private-trade count through this executor.
+        private_trade_count: u128,
+        /// Cumulative private volume in base units (buys add input base, sells add output base).
+        private_volume_base: u128,
     }
 
     #[event]
@@ -57,6 +66,8 @@ pub mod PrivateCurveExecutor {
         pub base_amount: u128,
         pub token_out: u128,
         pub note_id: felt252,
+        /// Cumulative private volume (base) AFTER this trade.
+        pub volume_base_after: u128,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -65,6 +76,8 @@ pub mod PrivateCurveExecutor {
         pub token_amount: u128,
         pub base_out: u128,
         pub note_id: felt252,
+        /// Cumulative private volume (base) AFTER this trade.
+        pub volume_base_after: u128,
     }
 
     #[constructor]
@@ -83,6 +96,8 @@ pub mod PrivateCurveExecutor {
         self.curve.write(curve);
         self.base_asset.write(base_asset);
         self.token.write(token);
+        self.private_trade_count.write(0);
+        self.private_volume_base.write(0);
     }
 
     #[abi(embed_v0)]
@@ -121,10 +136,17 @@ pub mod PrivateCurveExecutor {
                 assert(ok, 'BUY_OUTPUT_APPROVE_FAILED');
 
                 deposit = OpenNoteDeposit { note_id, token, amount: token_out };
+                self.private_trade_count.write(self.private_trade_count.read() + 1);
+                let volume_after = self.private_volume_base.read() + amount;
+                self.private_volume_base.write(volume_after);
                 self
                     .emit(
                         PrivateBuyExecuted {
-                            curve: self.curve.read(), base_amount: amount, token_out, note_id,
+                            curve: self.curve.read(),
+                            base_amount: amount,
+                            token_out,
+                            note_id,
+                            volume_base_after: volume_after,
                         },
                     );
             } else if operation == curve_operation::SELL {
@@ -140,10 +162,17 @@ pub mod PrivateCurveExecutor {
                 assert(ok, 'SELL_OUTPUT_APPROVE_FAILED');
 
                 deposit = OpenNoteDeposit { note_id, token: base_asset, amount: base_out };
+                self.private_trade_count.write(self.private_trade_count.read() + 1);
+                let volume_after = self.private_volume_base.read() + base_out;
+                self.private_volume_base.write(volume_after);
                 self
                     .emit(
                         PrivateSellExecuted {
-                            curve: self.curve.read(), token_amount: amount, base_out, note_id,
+                            curve: self.curve.read(),
+                            token_amount: amount,
+                            base_out,
+                            note_id,
+                            volume_base_after: volume_after,
                         },
                     );
             } else {
@@ -167,6 +196,14 @@ pub mod PrivateCurveExecutor {
 
         fn get_token(self: @ContractState) -> ContractAddress {
             self.token.read()
+        }
+
+        fn get_private_trade_count(self: @ContractState) -> u128 {
+            self.private_trade_count.read()
+        }
+
+        fn get_private_volume_base(self: @ContractState) -> u128 {
+            self.private_volume_base.read()
         }
     }
 }

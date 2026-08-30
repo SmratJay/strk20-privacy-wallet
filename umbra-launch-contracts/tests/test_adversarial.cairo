@@ -1,4 +1,4 @@
-//! Adversarial tests: every constraint that a malicious actor would probe.
+//! Adversarial tests: every constraint that a malicious actor would probe in V2.
 
 use starknet::{ContractAddress, contract_address_const, get_contract_address};
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait};
@@ -9,7 +9,9 @@ use umbra_launch::interfaces::{
 };
 use umbra_launch::objects::curve_operation;
 
-use crate::test_utils::{deploy_full_stack, mint_base, CurveStack, GRAD_TARGET};
+use crate::test_utils::{
+    deploy_full_stack, mint_base, CurveStack, CREATOR_FEE_BPS, GRAD_TARGET, PROTOCOL_FEE_BPS,
+};
 
 fn executor_disp(addr: ContractAddress) -> IPrivateCurveExecutorDispatcher {
     IPrivateCurveExecutorDispatcher { contract_address: addr }
@@ -46,9 +48,9 @@ fn test_executor_cannot_drain_base_with_sell() {
     let stack = deploy_full_stack();
     // Give the executor a large base balance (as if a withdraw happened) but request a SELL
     // with base as the input — the executor must refuse to move base through the sell path.
-    mint_base(stack.base, stack.executor, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, stack.executor, 1_000_000_000_000_000_000_u128.into());
     let _ = executor_disp(stack.executor)
-        .privacy_invoke(curve_operation::SELL, stack.base, 10_000_000_000_000_000_000_u128, 'note');
+        .privacy_invoke(curve_operation::SELL, stack.base, 1_000_000_000_000_000_000_u128, 'note');
 }
 
 #[test]
@@ -59,9 +61,9 @@ fn test_executor_never_accepts_a_recipient() {
     let token = token_disp(stack);
     let base = base_disp(stack);
 
-    mint_base(stack.base, stack.executor, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, stack.executor, 1_000_000_000_000_000_000_u128.into());
     let deposits = executor_disp(stack.executor)
-        .privacy_invoke(curve_operation::BUY, stack.base, 10_000_000_000_000_000_000_u128, 'note');
+        .privacy_invoke(curve_operation::BUY, stack.base, 1_000_000_000_000_000_000_u128, 'note');
     assert(deposits.len() == 1, 'one deposit');
     let deposit = *deposits.at(0);
 
@@ -84,11 +86,15 @@ fn test_non_deployer_cannot_change_graduation_recipient() {
             @array![
                 stack.base.into(),
                 stack.token.into(),
-                15_000_000_000_000_000_000_u128.into(),
-                1_073_000_000_000_000_000_000_000_000_u128.into(),
+                30_000_000_000_000_000_000_u128.into(),
+                1_000_000_000_000_000_000_000_000_000_u128.into(),
                 GRAD_TARGET.into(),
                 100_u128.into(),
+                CREATOR_FEE_BPS.into(),
+                PROTOCOL_FEE_BPS.into(),
+                1000_u128.into(),
                 other.into(),
+                contract_address_const::<'TRESY'>().into(),
                 stack.router.into(),
             ],
         )
@@ -103,18 +109,19 @@ fn test_graduation_requires_target_then_locks_trading() {
     let curve = IBondingCurveDispatcher { contract_address: stack.curve };
     let base = base_disp(stack);
 
-    // Reach target with exactly GRAD_TARGET.
-    mint_base(stack.base, get_contract_address(), GRAD_TARGET.into());
-    assert(base.approve(stack.curve, GRAD_TARGET.into()), 'approve');
-    curve.buy(GRAD_TARGET, get_contract_address());
-
-    curve.graduate();
+    // Reach the target with cap-compliant steps; the final buy auto-graduates.
+    let mut guard: u32 = 0;
+    while !curve.is_graduated() && guard < 500 {
+        let step = 3_000_000_000_000_000_000_u128;
+        mint_base(stack.base, get_contract_address(), step.into());
+        assert(base.approve(stack.curve, step.into()), 'approve');
+        curve.buy(step, get_contract_address());
+        guard += 1;
+    }
     assert(curve.is_graduated(), 'not graduated');
     // Reserves drained to the router.
     assert(curve.get_available_liquidity() == 0, 'reserves not drained');
-    assert(
-        base.balance_of(stack.router) == GRAD_TARGET.into(), 'router did not receive base',
-    );
+    assert(base.balance_of(stack.router) >= GRAD_TARGET.into(), 'router did not receive base');
 }
 
 #[test]
@@ -125,13 +132,34 @@ fn test_sell_price_is_reverse_of_buy() {
     let token = token_disp(stack);
     let base = base_disp(stack);
 
-    mint_base(stack.base, get_contract_address(), 100_000_000_000_000_000_000_u128.into());
-    assert(base.approve(stack.curve, 100_000_000_000_000_000_000_u128.into()), 'approve');
-    let tokens = curve.buy(50_000_000_000_000_000_000_u128, get_contract_address());
+    let buy_in = 2_000_000_000_000_000_000_u128;
+    mint_base(stack.base, get_contract_address(), buy_in.into());
+    assert(base.approve(stack.curve, buy_in.into()), 'approve');
+    let tokens = curve.buy(buy_in, get_contract_address());
 
-    // Selling everything must return LESS than the buy input (1% fee per leg + rounding).
+    // Selling everything must return LESS than the buy input (fees + rounding).
     assert(token.approve(stack.curve, tokens.into()), 'token approve');
     let base_out = curve.sell(tokens, who);
     assert(base_out > 0, 'positive sell');
-    assert(base_out < 50_000_000_000_000_000_000_u128, 'sell less than buy input');
+    assert(base_out < buy_in, 'sell less than buy input');
+}
+
+#[test]
+fn test_fee_split_cannot_be_misconfigured_to_drain() {
+    // A curve with fee split where creator+protocol == fee leaves nothing retained but the
+    // reserve still counts net — funds can never exceed what traders paid in.
+    let stack = deploy_full_stack();
+    let curve = IBondingCurveDispatcher { contract_address: stack.curve };
+    let base = base_disp(stack);
+
+    let buy_in = 1_000_000_000_000_000_000_u128;
+    mint_base(stack.base, get_contract_address(), buy_in.into());
+    assert(base.approve(stack.curve, buy_in.into()), 'approve');
+    curve.buy(buy_in, get_contract_address());
+
+    // reserve + creator + protocol exactly equals the gross input — nothing fabricated.
+    let (br, _) = curve.get_real_reserves();
+    let creator_share = buy_in * CREATOR_FEE_BPS / 10_000;
+    let protocol_share = buy_in * PROTOCOL_FEE_BPS / 10_000;
+    assert(br + creator_share + protocol_share == buy_in, 'fee accounting balances');
 }

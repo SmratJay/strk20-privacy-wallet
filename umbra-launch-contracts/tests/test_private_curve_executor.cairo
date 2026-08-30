@@ -7,7 +7,7 @@ use umbra_launch::interfaces::{
 use umbra_launch::objects::{curve_operation, OpenNoteDeposit};
 
 use crate::test_utils::{
-    deploy_executor, deploy_full_stack, mint_base, CurveStack,
+    deploy_executor, deploy_full_stack, mint_base, CurveStack, CREATOR_FEE_BPS, PROTOCOL_FEE_BPS,
 };
 
 const NOTE_ID: felt252 = 'open-note-0';
@@ -22,6 +22,11 @@ fn base_disp(stack: CurveStack) -> IERC20Dispatcher {
 
 fn token_disp(stack: CurveStack) -> IMemecoinDispatcher {
     IMemecoinDispatcher { contract_address: stack.token }
+}
+
+/// Net base that actually enters the curve reserve for a gross input (fee split).
+fn net_base(base_in: u128) -> u128 {
+    base_in - base_in * (CREATOR_FEE_BPS + PROTOCOL_FEE_BPS) / 10_000
 }
 
 /// Acts as the privacy pool: withdraws `amount` of `token` to the executor, then invokes
@@ -50,7 +55,7 @@ fn test_private_buy_path() {
     let token = token_disp(stack);
     let curve = IBondingCurveDispatcher { contract_address: stack.curve };
 
-    let amount = 10_000_000_000_000_000_000_u128; // 10 base units
+    let amount = 1_000_000_000_000_000_000_u128; // 1 base unit (cap-compliant)
     let deposit = pool_withdraw_and_invoke(stack, curve_operation::BUY, stack.base, amount);
 
     // The deposit tells the pool to fill an open HAMSTR note with the buy output.
@@ -68,9 +73,13 @@ fn test_private_buy_path() {
         token.balance_of(get_contract_address()) == deposit.amount.into(), 'open note filled',
     );
 
-    // Market state moved exactly like a public buy of the same size.
-    assert(curve.get_available_liquidity() == amount, 'base reserve moved');
+    // Market state moved exactly like a public buy of the same size (net of fee split).
+    assert(curve.get_available_liquidity() == net_base(amount), 'base reserve moved');
     assert(token.balance_of(stack.executor) == 0, 'executor output drained');
+
+    // Private-execution awareness state updated without identity.
+    assert(executor_disp(stack.executor).get_private_trade_count() == 1, 'count');
+    assert(executor_disp(stack.executor).get_private_volume_base() == amount, 'volume');
 }
 
 #[test]
@@ -80,9 +89,10 @@ fn test_private_sell_path() {
     let token = token_disp(stack);
     let curve = IBondingCurveDispatcher { contract_address: stack.curve };
     // Set up: a public buy so the pool (test contract) holds HAMSTR.
-    mint_base(stack.base, get_contract_address(), 100_000_000_000_000_000_000_u128.into());
-    assert(base.approve(stack.curve, 100_000_000_000_000_000_000_u128.into()), 'approve');
-    let tokens_bought = curve.buy(100_000_000_000_000_000_000_u128, get_contract_address());
+    let buy_in = 2_000_000_000_000_000_000_u128; // 2 STRK — cap-compliant
+    mint_base(stack.base, get_contract_address(), buy_in.into());
+    assert(base.approve(stack.curve, buy_in.into()), 'approve');
+    let tokens_bought = curve.buy(buy_in, get_contract_address());
     assert(token.transfer(get_contract_address(), tokens_bought.into()), 'pool gets tokens');
 
     let deposit = pool_withdraw_and_invoke(stack, curve_operation::SELL, stack.token, tokens_bought);
@@ -103,9 +113,15 @@ fn test_private_sell_path() {
         'STRK note filled',
     );
 
-    // Tokens burned: seller no longer holds them, supply reduced.
+    // Tokens sold: seller no longer holds them.
     assert(token.balance_of(stack.executor) == 0, 'executor drained');
     assert(token.balance_of(get_contract_address()) == 0, 'pool drained');
+
+    // Private-execution awareness state: sell volume counts the base output.
+    assert(executor_disp(stack.executor).get_private_trade_count() == 1, 'count');
+    assert(
+        executor_disp(stack.executor).get_private_volume_base() == deposit.amount, 'volume',
+    );
 }
 
 #[test]
@@ -115,9 +131,9 @@ fn test_arbitrary_caller_rejected() {
     // Deploy an executor bound to a DIFFERENT pool (not the test contract).
     let other_pool = contract_address_const::<'POOO'>();
     let rogue_executor_addr = deploy_executor(other_pool, stack.curve, stack.base, stack.token);
-    mint_base(stack.base, rogue_executor_addr, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, rogue_executor_addr, 1_000_000_000_000_000_000_u128.into());
     let _ = executor_disp(rogue_executor_addr)
-        .privacy_invoke(curve_operation::BUY, stack.base, 10_000_000_000_000_000_000_u128, NOTE_ID);
+        .privacy_invoke(curve_operation::BUY, stack.base, 1_000_000_000_000_000_000_u128, NOTE_ID);
 }
 
 #[test]
@@ -133,18 +149,18 @@ fn test_buy_with_wrong_input_token_rejected() {
 #[should_panic(expected: ('SELL_INPUT_NOT_TOKEN',))]
 fn test_sell_with_wrong_input_token_rejected() {
     let stack = deploy_full_stack();
-    mint_base(stack.base, stack.executor, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, stack.executor, 1_000_000_000_000_000_000_u128.into());
     let _ = executor_disp(stack.executor)
-        .privacy_invoke(curve_operation::SELL, stack.base, 10_000_000_000_000_000_000_u128, NOTE_ID);
+        .privacy_invoke(curve_operation::SELL, stack.base, 1_000_000_000_000_000_000_u128, NOTE_ID);
 }
 
 #[test]
 #[should_panic(expected: ('INVALID_OPERATION',))]
 fn test_invalid_operation_rejected() {
     let stack = deploy_full_stack();
-    mint_base(stack.base, stack.executor, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, stack.executor, 1_000_000_000_000_000_000_u128.into());
     let _ = executor_disp(stack.executor)
-        .privacy_invoke(7, stack.base, 10_000_000_000_000_000_000_u128, NOTE_ID);
+        .privacy_invoke(7, stack.base, 1_000_000_000_000_000_000_u128, NOTE_ID);
 }
 
 #[test]
@@ -159,9 +175,9 @@ fn test_zero_amount_rejected() {
 #[should_panic(expected: ('ZERO_NOTE_ID',))]
 fn test_zero_note_id_rejected() {
     let stack = deploy_full_stack();
-    mint_base(stack.base, stack.executor, 10_000_000_000_000_000_000_u128.into());
+    mint_base(stack.base, stack.executor, 1_000_000_000_000_000_000_u128.into());
     let _ = executor_disp(stack.executor)
-        .privacy_invoke(curve_operation::BUY, stack.base, 10_000_000_000_000_000_000_u128, 0);
+        .privacy_invoke(curve_operation::BUY, stack.base, 1_000_000_000_000_000_000_u128, 0);
 }
 
 #[test]
@@ -169,7 +185,7 @@ fn test_private_buy_equals_public_buy_price() {
     // Private execution must move the SAME curve state as a public buy — one market.
     let stack_a = deploy_full_stack();
     let stack_b = deploy_full_stack();
-    let amount = 5_000_000_000_000_000_000_u128;
+    let amount = 1_000_000_000_000_000_000_u128;
 
     // Private buy on stack_a.
     let _ = pool_withdraw_and_invoke(stack_a, curve_operation::BUY, stack_a.base, amount);

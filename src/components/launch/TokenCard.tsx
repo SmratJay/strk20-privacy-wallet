@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { TrendingUp } from 'lucide-react';
+import { TrendingUp, Shield } from 'lucide-react';
 import { LaunchTokenEntry } from '@/config/launch';
 import { LaunchMetadataRecord } from '@/services/launchMetadata';
 import { TokenSnapshot } from '@/services/launchService';
@@ -26,10 +26,10 @@ interface Props {
   metadata?: LaunchMetadataRecord | null;
 }
 
-/** Pump.fun-style token card. Links straight to /launch/<token-address> so the token page
- * always reads the real on-chain token/curve addresses. */
+/** V2 pump.fun-style token card. Links straight to /launch/<token-address> so the token
+ * page always reads the real on-chain token/curve addresses. */
 export default function TokenCard({ snapshot, metadata }: Props) {
-  const { entry, metrics, live } = snapshot;
+  const { entry, metrics, live, migrated } = snapshot;
   const pct = metrics?.graduationPct ?? 0;
   const graduated = metrics?.graduated ?? false;
   const image = metadata?.image || '';
@@ -61,9 +61,9 @@ export default function TokenCard({ snapshot, metadata }: Props) {
                   GRADUATED
                 </span>
               )}
-              {!live && (
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  PENDING DEPLOY
+              {graduated && migrated === true && (
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                  MIGRATED
                 </span>
               )}
             </div>
@@ -77,7 +77,7 @@ export default function TokenCard({ snapshot, metadata }: Props) {
       </div>
 
       {live && metrics ? (
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+        <div className="mt-4 grid grid-cols-4 gap-2 text-center">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">MC</div>
             <div className="text-[13px] font-semibold text-zinc-100">{formatUsd(metrics.marketCap)}</div>
@@ -85,6 +85,10 @@ export default function TokenCard({ snapshot, metadata }: Props) {
           <div>
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Liquidity</div>
             <div className="text-[13px] font-semibold text-zinc-100">{formatUsd(metrics.liquidity)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Volume</div>
+            <div className="text-[13px] font-semibold text-zinc-100">{formatUsd(metrics.volume)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Price</div>
@@ -101,11 +105,22 @@ export default function TokenCard({ snapshot, metadata }: Props) {
       <div className="mt-4">
         <div className="flex items-center justify-between text-[10px] text-zinc-500">
           <span>Graduation</span>
-          <span>{live ? `${pct.toFixed(0)}%` : '—'}</span>
+          <span className="flex items-center gap-1">
+            {live ? `${pct.toFixed(0)}%` : '—'}
+            {metrics?.graduated && metrics?.volume > 0 && (
+              <Shield className="w-3 h-3 text-violet-400/70" />
+            )}
+          </span>
         </div>
         <div className="mt-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all ${graduated ? 'bg-emerald-400' : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'}`}
+            className={`h-full rounded-full transition-all ${
+              graduated
+                ? migrated === true
+                  ? 'bg-sky-400'
+                  : 'bg-emerald-400'
+                : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'
+            }`}
             style={{ width: `${Math.min(100, pct)}%` }}
           />
         </div>

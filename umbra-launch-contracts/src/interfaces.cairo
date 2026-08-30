@@ -1,4 +1,4 @@
-//! Public interfaces for UMBRA LAUNCH contracts.
+//! Public interfaces for UMBRA LAUNCH V2 contracts.
 
 use starknet::ContractAddress;
 
@@ -39,7 +39,8 @@ pub trait IMemecoin<TContractState> {
     fn burn(ref self: TContractState, amount: u256);
 }
 
-/// The canonical bonding curve: one deterministic virtual-reserve constant-product market.
+/// The canonical bonding curve V2: one deterministic virtual-reserve constant-product market
+/// with creator/protocol fee split, max-trade cap and auto-graduation.
 #[starknet::interface]
 pub trait IBondingCurve<TContractState> {
     fn buy(ref self: TContractState, base_amount: u128, recipient: ContractAddress) -> u128;
@@ -51,6 +52,7 @@ pub trait IBondingCurve<TContractState> {
     fn get_token(self: @TContractState) -> ContractAddress;
     fn get_base_asset(self: @TContractState) -> ContractAddress;
     fn get_deployer(self: @TContractState) -> ContractAddress;
+    fn get_protocol_treasury(self: @TContractState) -> ContractAddress;
     fn get_virtual_reserves(self: @TContractState) -> (u128, u128);
     fn get_real_reserves(self: @TContractState) -> (u128, u128);
     fn get_tokens_sold(self: @TContractState) -> u128;
@@ -59,9 +61,12 @@ pub trait IBondingCurve<TContractState> {
     fn get_price(self: @TContractState) -> (u128, u128);
     fn get_available_liquidity(self: @TContractState) -> u128;
     fn get_fee_bps(self: @TContractState) -> u128;
+    fn get_creator_fee_bps(self: @TContractState) -> u128;
+    fn get_protocol_fee_bps(self: @TContractState) -> u128;
+    fn get_max_trade_bps(self: @TContractState) -> u128;
 }
 
-/// Factory that deploys a memecoin + its canonical curve + its private executor.
+/// Factory that deploys a memecoin + its canonical curve V2 + its private executor.
 #[starknet::interface]
 pub trait ITokenFactory<TContractState> {
     fn create_memecoin(
@@ -75,6 +80,9 @@ pub trait ITokenFactory<TContractState> {
         virtual_token_reserve: u128,
         graduation_target: u128,
         fee_bps: u128,
+        creator_fee_bps: u128,
+        protocol_fee_bps: u128,
+        max_trade_bps: u128,
     ) -> (ContractAddress, ContractAddress, ContractAddress);
     fn get_token_count(self: @TContractState) -> u128;
     fn get_token(self: @TContractState, id: u128) -> ContractAddress;
@@ -85,6 +93,7 @@ pub trait ITokenFactory<TContractState> {
     fn get_router(self: @TContractState) -> ContractAddress;
     fn get_base_asset(self: @TContractState) -> ContractAddress;
     fn get_privacy_pool(self: @TContractState) -> ContractAddress;
+    fn get_protocol_treasury(self: @TContractState) -> ContractAddress;
 }
 
 /// The STRK20 invoke anonymizer for the bonding curve (mirrors EkuboSwapAnonymizer).
@@ -101,18 +110,21 @@ pub trait IPrivateCurveExecutor<TContractState> {
     fn get_curve(self: @TContractState) -> ContractAddress;
     fn get_base_asset(self: @TContractState) -> ContractAddress;
     fn get_token(self: @TContractState) -> ContractAddress;
+    fn get_private_trade_count(self: @TContractState) -> u128;
+    fn get_private_volume_base(self: @TContractState) -> u128;
 }
 
-/// Minimal graduation liquidity router.
+/// Graduation liquidity router with truthful per-curve migrated state.
 #[starknet::interface]
 pub trait IGraduationRouter<TContractState> {
     fn set_liquidity_manager(ref self: TContractState, manager: ContractAddress);
     fn forward_reserves(
         ref self: TContractState, curve: ContractAddress, token: ContractAddress, base_asset: ContractAddress,
     );
-fn on_graduation(
+    fn on_graduation(
         ref self: TContractState, curve: ContractAddress, token: ContractAddress, base_asset: ContractAddress,
     );
+    fn is_migrated(self: @TContractState, curve: ContractAddress) -> bool;
     fn get_governance(self: @TContractState) -> ContractAddress;
     fn get_liquidity_manager(self: @TContractState) -> ContractAddress;
 }
