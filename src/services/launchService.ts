@@ -463,6 +463,25 @@ export async function readMigratedState(
 }
 
 /**
+ * STRK20 pool protocol fee per `apply_actions` call (in base units) — the pool pulls this
+ * from the caller in STRK on EVERY shield/unshield/private-trade tx, IN ADDITION to the
+ * deposit/withdraw amount. The UI must account for it or a shield at the user's full public
+ * balance reverts with "Insufficient ERC20 balance". Null when unreadable.
+ */
+export async function readStrk20PoolFee(networkId: NetworkId): Promise<bigint | null> {
+  const net = getLaunchNetwork(networkId);
+  if (!net.poolAddress) return null;
+  try {
+    const provider = providerFor(networkId);
+    const res = await callView(provider, net.poolAddress, 'get_fee_amount');
+    return toBig(res);
+  } catch (e) {
+    console.warn('[launch] readStrk20PoolFee failed', e);
+    return null;
+  }
+}
+
+/**
  * Reconstruct the curve price series from its real Buy/Sell events. Every V2 event carries
  * the post-trade reserve state (base_after/token_after), so the price at each trade is exact
  * — no float reconstruction, no assumptions. Returns the most recent `limit` points

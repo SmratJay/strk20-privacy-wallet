@@ -36,8 +36,9 @@ import {
   PricePoint,
   readRecentTrades,
   TradeEvent,
-  readPrivateStats,
+readPrivateStats,
   readMigratedState,
+  readStrk20PoolFee,
   maxTradeTokenOut,
   providerFor,
 } from '@/services/launchService';
@@ -120,6 +121,20 @@ export default function LaunchTokenPage() {
   const [privacyBusy, setPrivacyBusy] = useState(false);
   const [privacyError, setPrivacyError] = useState<string | null>(null);
   const [privacyTx, setPrivacyTx] = useState<string | null>(null);
+  // STRK20 pool protocol fee (STRK) charged on EVERY apply_actions tx, pulled in addition to
+  // the deposit/withdraw amount. Shielding at the full public balance reverts without it.
+  const [poolFee, setPoolFee] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const fee = await readStrk20PoolFee(launchNetworkId);
+      if (!cancelled) setPoolFee(fee);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [launchNetworkId]);
 
   const refreshPrivateStrk = useCallback(async () => {
     if (privyConnected) {
@@ -333,7 +348,16 @@ export default function LaunchTokenPage() {
 
   const maxTradeCap = snapshot?.curve ? maxTradeTokenOut(snapshot.curve) : 0n;
   const maxBalanceForSide = (): bigint => {
-    if (side === 'BUY') return mode === 'PRIVATE' ? privateStrk : (publicStrk ?? 0n);
+    // The STRK20 pool charges its STRK protocol fee on every apply_actions tx, so a PRIVATE
+    // buy that spends the user's entire private STRK (or nearly all of it) would revert. Leave
+    // the fee headroom when it is known.
+    const fee = poolFee ?? 0n;
+    if (side === 'BUY') {
+      if (mode === 'PRIVATE') {
+        return fee > 0n && privateStrk > fee ? privateStrk - fee : privateStrk;
+      }
+      return publicStrk ?? 0n;
+    }
     return mode === 'PRIVATE' ? (privateTokenBalance ?? 0n) : (publicTokenBalance ?? 0n);
   };
 
@@ -420,6 +444,35 @@ export default function LaunchTokenPage() {
       setPrivacyError('Enter an amount greater than zero.');
       return;
     }
+    // The STRK20 pool pulls the deposit amount PLUS its STRK protocol fee in the same tx.
+    // Validate the public balances up front so the tx does not revert on L2.
+    const fee = poolFee ?? 0n;
+    const tokenPublic = publicTokenBalance ?? 0n;
+    const strkPublic = publicStrk ?? 0n;
+    if (action === 'SHIELD') {
+      if (privacyAsset === 'STRK') {
+        const required = parsed + fee;
+        if (strkPublic < required) {
+          setPrivacyError(
+            `Shielding needs the amount + a ${formatTokenAmount(fee, baseDecimals, 2)} STRK pool fee (${formatTokenAmount(required, baseDecimals, 2)} total). Your public STRK balance is ${formatTokenAmount(strkPublic, baseDecimals, 4)}.`,
+          );
+          return;
+        }
+      } else {
+        if (tokenPublic < parsed) {
+          setPrivacyError(
+            `Your public ${tokenSymbol} balance is ${formatTokenAmount(tokenPublic, decimals, 4)} — not enough to shield ${formatTokenAmount(parsed, decimals, 4)}.`,
+          );
+          return;
+        }
+        if (strkPublic < fee) {
+          setPrivacyError(
+            `Shielding a token also needs ${formatTokenAmount(fee, baseDecimals, 2)} STRK for the pool fee. Your public STRK balance is ${formatTokenAmount(strkPublic, baseDecimals, 4)}.`,
+          );
+          return;
+        }
+      }
+    }
     const token = privacyAsset === 'TOKEN' ? entry.token : base;
     setPrivacyBusy(true);
     try {
@@ -445,6 +498,23 @@ export default function LaunchTokenPage() {
     } finally {
       setPrivacyBusy(false);
     }
+  };
+
+  // Max shieldable for the selected asset, accounting for the 2-STRK pool fee on STRK.
+  const maxShieldable = (): { value: bigint; known: boolean; note?: string } => {
+    if (!poolFee) return { value: 0n, known: false };
+    if (privacyAsset === 'STRK') {
+      const strk = publicStrk ?? 0n;
+      const cap = strk > poolFee ? strk - poolFee : 0n;
+      return { value: cap, known: publicStrkStatus === 'OK', note: 'reserves the 2 STRK pool fee' };
+    }
+    const tok = publicTokenBalance ?? 0n;
+    const strkOk = (publicStrk ?? 0n) >= poolFee;
+    return {
+      value: tok,
+      known: publicTokenBalance !== null && publicStrkStatus === 'OK',
+      note: strkOk ? undefined : 'also needs ~2 STRK public for the pool fee',
+    };
   };
 
   const metrics = snapshot?.metrics;
@@ -905,6 +975,25 @@ export default function LaunchTokenPage() {
                         </button>
                       ))}
                     </div>
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                      <span>
+                        Public {privacyAsset === 'TOKEN' ? entry.symbol : 'STRK'}:{' '}
+                        <span className="font-mono text-zinc-300">
+                          {privacyAsset === 'TOKEN'
+                            ? publicTokenBalance !== null
+                              ? formatTokenAmount(publicTokenBalance, decimals, 4)
+                              : '—'
+                            : publicStrkStatus === 'OK'
+                              ? formatTokenAmount(publicStrk ?? 0n, baseDecimals, 4)
+                              : '—'}
+                        </span>
+                      </span>
+                      {poolFee !== null && (
+                        <span className="text-zinc-600">
+                          pool fee ~{formatTokenAmount(poolFee, baseDecimals, 2)} STRK / tx
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -914,6 +1003,15 @@ export default function LaunchTokenPage() {
                         placeholder={`0.0 ${privacyAsset === 'TOKEN' ? entry.symbol : 'STRK'}`}
                         className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 py-2.5 text-[14px] text-zinc-100 outline-none focus:border-violet-500/50 placeholder:text-zinc-700"
                       />
+                      <button
+                        onClick={() => {
+                          const m = maxShieldable();
+                          if (m.known) setPrivacyAmount(formatTokenAmount(m.value, privacyAsset === 'TOKEN' ? decimals : baseDecimals, 6));
+                        }}
+                        className="text-[11px] text-violet-300 hover:text-violet-200 shrink-0"
+                      >
+                        Max
+                      </button>
                       <button
                         onClick={() => void runPrivacyAction('SHIELD')}
                         disabled={privacyBusy || !connected}
@@ -929,6 +1027,17 @@ export default function LaunchTokenPage() {
                         <ShieldOff className="w-4 h-4" /> Unshield
                       </button>
                     </div>
+                    {(() => {
+                      const m = maxShieldable();
+                      if (!m.known || !poolFee) return null;
+                      return (
+                        <p className="text-[11px] text-zinc-600">
+                          Max shieldable: {formatTokenAmount(m.value, privacyAsset === 'TOKEN' ? decimals : baseDecimals, 4)}{' '}
+                          {privacyAsset === 'TOKEN' ? entry.symbol : 'STRK'}
+                          {m.note ? ` (${m.note})` : ''}.
+                        </p>
+                      );
+                    })()}
                     {privacyBusy && (
                       <div className="flex items-center gap-2 text-[12px] text-zinc-500">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting STRK20 proof…
