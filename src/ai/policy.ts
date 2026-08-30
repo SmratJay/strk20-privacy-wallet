@@ -109,8 +109,8 @@ export interface EvaluateOptions {
 export interface ExecutionPolicyInput {
   /** The user's primary public account address. */
   userAddress?: string;
-  /** The STRK20 Shadow Account / treasury identity address. */
-  shadowAccountAddress?: string;
+  /** The STRK20 private treasury identity address (the AI treasury's note-owner). */
+  privateTreasuryAddress?: string;
   /** Server-configured extra approved destinations (canonicalized here). */
   allowedDestinations?: string[];
   /** Server-configured allowed action assets (canonicalized here). */
@@ -126,9 +126,9 @@ export type BuildPolicyResult =
 /**
  * Build the SERVER-authoritative execution policy.
  *
- * Destinations are ONLY: the user's primary account, the Shadow Account, and any
- * server-configured allowlist. Every address is canonicalized. An empty destination set
- * DENIES all execution (the policy engine enforces it) — the LLM can never add one.
+ * Destinations are ONLY: the user's primary account, the STRK20 private treasury identity,
+ * and any server-configured allowlist. Every address is canonicalized. An empty destination
+ * set DENIES all execution (the policy engine enforces it) — the LLM can never add one.
  */
 export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyResult {
   const base = input.base ?? DEFAULT_TREASURY_POLICY;
@@ -143,7 +143,7 @@ export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyRe
   const allowedDestinations: string[] = [];
   const destCandidates = [
     input.userAddress,
-    input.shadowAccountAddress,
+    input.privateTreasuryAddress,
     ...(input.allowedDestinations ?? []),
   ];
   for (const d of destCandidates) {

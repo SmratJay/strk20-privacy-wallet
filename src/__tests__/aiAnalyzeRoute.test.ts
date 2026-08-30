@@ -26,7 +26,7 @@ function body(
       { token: STRK, balance: '500000000000000000000' },
       { token: USDC, balance: '2000000000' },
     ],
-    context: { userAddress: USER, shadowAccountAddress: STRK },
+    context: { userAddress: USER, privateTreasuryAddress: STRK },
     ...over,
   };
 }

@@ -12,7 +12,7 @@ import { computeReadyAccountAddress } from '@/privacy/privy/ready';
  * Hamster AI analyze endpoint (M2).
  *
  *   POST /api/ai/analyze
- *   { prompt, balances: [{ token, balance }], context: { userAddress, shadowAccountAddress } }
+ *   { prompt, balances: [{ token, balance }], context: { userAddress, privateTreasuryAddress } }
  *   Authorization: Bearer <privy-session-jwt>  (optional; preferred when present)
  *
  * Security boundaries:
@@ -20,13 +20,17 @@ import { computeReadyAccountAddress } from '@/privacy/privy/ready';
  *     stale/static volatile price cannot authorize execution.
  *   - Only tokens present in the existing `SEPOLIA_TOKENS` configuration are accepted; an
  *     unknown token address is rejected (400) — no invented metadata for unknown assets.
- *   - Destinations are ONLY the user's primary account, the STRK20 Shadow Account, and any
- *     server-configured allowlist. When a valid Privy session is supplied, those addresses
- *     are derived server-side from the verified user's Starknet wallet (the Shadow Account is
- *     `computeReadyAccountAddress(publicKey)`), and client-supplied addresses are ignored.
- *     Without a session they are accepted only as NON-authoritative, client-claimed inputs
+ *   - Destinations are ONLY the user's primary account, the STRK20 private treasury
+ *     identity, and any server-configured allowlist. When a valid Privy session is supplied,
+ *     those addresses are derived server-side from the verified user's Starknet wallet (the
+ *     treasury identity is `computeReadyAccountAddress(publicKey)` — the exact address the
+ *     existing STRK20 integration uses as its `user`, owning private notes and sourcing
+ *     private transfers), and client-supplied addresses are ignored. Without a session they
+ *     are accepted only as NON-authoritative, client-claimed inputs
  *     (`addressVerification: 'client-claimed'`) — the final wallet confirmation/execution
  *     gate independently re-checks state and requires the user's signature.
+ *   - The SDK's separate "Shadow Account" (`shadow_account_anonymizer`) is NOT used by this
+ *     integration; the treasury identity above is distinct from it.
  *   - Balances are wallet-provided analysis input, not server-verified on-chain truth.
  *   - Proposals carry generatedAt/expiresAt; execution must re-fetch state and re-run policy.
  *
@@ -94,7 +98,7 @@ function rateLimited(ip: string): boolean {
  */
 async function resolveVerifiedAddresses(
   token: string | null,
-): Promise<{ userAddress: string; shadowAccountAddress: string } | null> {
+): Promise<{ userAddress: string; privateTreasuryAddress: string } | null> {
   if (!token) return null;
   try {
     const { getPrivyServerClient } = await import('@/privacy/privy/server');
@@ -107,13 +111,14 @@ async function resolveVerifiedAddresses(
     const address = String(wallet?.address ?? '');
     const publicKey = String(wallet?.public_key ?? wallet?.publicKey ?? '');
     if (!address || !publicKey) return null;
-    let shadow: string;
+    let treasury: string;
     try {
-      shadow = computeReadyAccountAddress(publicKey);
+      // The STRK20 user identity (owns private notes + sources private transfers).
+      treasury = computeReadyAccountAddress(publicKey);
     } catch {
       return null;
     }
-    return { userAddress: address, shadowAccountAddress: shadow };
+    return { userAddress: address, privateTreasuryAddress: treasury };
   } catch {
     return null;
   }
@@ -175,10 +180,11 @@ export async function POST(req: NextRequest) {
   const verified = await resolveVerifiedAddresses(bearerToken(req));
   const context = isRecord(body.context) ? body.context : {};
   const clientUser = typeof context.userAddress === 'string' ? context.userAddress : '';
-  const clientShadow = typeof context.shadowAccountAddress === 'string' ? context.shadowAccountAddress : '';
+  const clientTreasury =
+    typeof context.privateTreasuryAddress === 'string' ? context.privateTreasuryAddress : '';
   const verification: 'privy' | 'client-claimed' = verified ? 'privy' : 'client-claimed';
   const userAddress = verified?.userAddress ?? clientUser;
-  const shadowAccountAddress = verified?.shadowAccountAddress ?? clientShadow;
+  const privateTreasuryAddress = verified?.privateTreasuryAddress ?? clientTreasury;
 
   // 1. Fresh prices, server-side (no stale-price reuse; static volatile prices are advisory).
   const symbols = new Set<string>();
@@ -204,10 +210,10 @@ export async function POST(req: NextRequest) {
   }
   const summary = buildPortfolioSummary(rows, prices);
 
-  // 2. Server-authoritative policy: verified/user + shadow + configured allowlists only.
+  // 2. Server-authoritative policy: verified/user + treasury + configured allowlists only.
   const built = buildExecutionPolicy({
     userAddress,
-    shadowAccountAddress,
+    privateTreasuryAddress,
     allowedAssets: parseAllowlist(process.env.AI_ALLOWED_ASSETS),
     allowedDestinations: parseAllowlist(process.env.AI_ALLOWED_DESTINATIONS),
     base: DEFAULT_TREASURY_POLICY,
@@ -257,7 +263,7 @@ export async function POST(req: NextRequest) {
     proposal,
     verdict: verdictDto,
     policy: sanitizedPolicyView(policy),
-    addresses: { userAddress, shadowAccountAddress, verification },
+    addresses: { userAddress, privateTreasuryAddress, verification },
     trust: {
       balances: 'wallet-provided-analysis-input',
       note: 'Execution independently re-checks current STRK20 state client-side and requires the user’s wallet confirmation before signing.',

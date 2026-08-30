@@ -48,6 +48,19 @@ export function buildReadyConstructorCalldata(publicKey: string): string[] {
  *
  * NOTE: this derived address is the real on-chain account. It is NOT equal to
  * Privy's `wallet.address` (verified live: they differ). Use this everywhere.
+ *
+ * STRK20 relationship (see src/__tests__/aiShadowAccount.test.ts for the proof):
+ *   - This address IS the STRK20 **user identity**: the existing integration
+ *     (`PrivyStrk20Adapter.getTransfers` → `createPrivateTransfers({ account:
+ *     { address: user.address, … } })`) makes it the SDK `user`, which owns private
+ *     notes (`discoverNotes(user, viewingKey, …)`), registers the viewing key, and is the
+ *     SOURCE account of every private transfer. It is the AI treasury's private identity.
+ *   - It is DISTINCT from the STRK20 SDK's "Shadow Account": the SDK's
+ *     `shadow_account_anonymizer` sub-account is a separate on-chain anonymizer concept
+ *     keyed by `compute_identity_key(user, viewingKey, anonymizerAddress)` + a dapp name,
+ *     exposed via `ShadowAccountsBuilder.invoke`. This repository does NOT use that
+ *     anonymizer (the adapter never passes `shadowAccountAnonymizerAddress`), so the
+ *     Ready-derived address is the private treasury identity, not the SDK Shadow Account.
  */
 export function computeReadyAccountAddress(
   publicKey: string,
