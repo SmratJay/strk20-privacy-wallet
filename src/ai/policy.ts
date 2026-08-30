@@ -370,3 +370,95 @@ export function evaluateProposal(
   const allowed = checks.every((c) => c.passed);
   return { allowed, checks, amountBaseUnits: baseUnits, amountUsd, reportOnly: false };
 }
+/**
+ * What-If scenario simulation — ADVISORY ONLY. Never executes.
+ *
+ * Reuses the EXACT deterministic math of the policy engine (bigint cents, positionCents,
+ * evaluateProposal) to show the before/after economic effect of a hypothetical transfer on
+ * current portfolio data. No wallet, prover, discovery, or on-chain call. When any non-
+ * stablecoin price is a static fallback, `estimated` is true so the UI labels the scenario
+ * advisory (never an on-chain result).
+ */
+export interface ScenarioSimulation {
+  ok: boolean;
+  error?: string;
+  asset: string;
+  symbol: string;
+  amountHuman: string;
+  amountBaseUnits: bigint;
+  before: { totalUsd: number; concentrationPct: number; liquidityUsd: number };
+  after: { totalUsd: number; concentrationPct: number; liquidityUsd: number };
+  /** The deterministic verdict for the hypothetical action (reuses evaluateProposal). */
+  verdict: PolicyVerdict;
+  /** True when any non-stablecoin price is a fallback/stale input — label as estimated. */
+  estimated: boolean;
+}
+
+export function simulateAction(
+  summary: PortfolioSummary,
+  policy: TreasuryPolicy,
+  opts: { asset: string; amount: string; now?: number },
+): ScenarioSimulation {
+  const pos = positionFor(summary, opts.asset);
+  if (!pos) {
+    return { ok: false, error: 'Asset is not in the treasury.', asset: opts.asset, symbol: '?', amountHuman: opts.amount, amountBaseUnits: 0n, before: { totalUsd: 0, concentrationPct: 0, liquidityUsd: 0 }, after: { totalUsd: 0, concentrationPct: 0, liquidityUsd: 0 }, verdict: { allowed: false, checks: [], amountBaseUnits: 0n, amountUsd: 0, reportOnly: false }, estimated: false };
+  }
+  const parsed = parseAmountExact(opts.amount, pos.decimals);
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error, asset: opts.asset, symbol: pos.symbol, amountHuman: opts.amount, amountBaseUnits: 0n, before: { totalUsd: 0, concentrationPct: 0, liquidityUsd: 0 }, after: { totalUsd: 0, concentrationPct: 0, liquidityUsd: 0 }, verdict: { allowed: false, checks: [], amountBaseUnits: 0n, amountUsd: 0, reportOnly: false }, estimated: false };
+  }
+  const amountBase = parsed.value;
+
+  // Reuse the SAME deterministic checks via a synthetic private_transfer proposal. The
+  // recipient is the first approved destination (the destination/self-transfer checks are
+  // execution gates; the scenario focuses on the economic checks, all still evaluated).
+  const proposal: ActionProposal = {
+    intent: 'scenario',
+    reason: 'What-if scenario simulation',
+    action: {
+      type: 'private_transfer',
+      asset: opts.asset,
+      amount: opts.amount,
+      recipient: policy.allowedDestinations[0] ?? '',
+    },
+    requiresUserConfirmation: true,
+  };
+  const verdict = evaluateProposal(proposal, summary, policy, { now: opts.now });
+
+  // Economic before/after — bigint cents, identical to the policy engine's own math.
+  const totalCents = summary.positions.reduce((s, p) => s + positionCents(p), 0n);
+  const amountCents = ceilDiv(amountBase * priceCentsOf(pos), 10n ** BigInt(pos.decimals));
+  const totalAfterCents = totalCents > amountCents ? totalCents - amountCents : 0n;
+  const actionCanonical = canonicalizeAddress(opts.asset);
+  let concentrationAfter = 0;
+  for (const p of summary.positions) {
+    const pCents = positionCents(p);
+    const pCanonical = canonicalizeAddress(p.token);
+    const isAction = pCanonical.ok && actionCanonical.ok && pCanonical.value === actionCanonical.value;
+    const afterCents = isAction ? (pCents > amountCents ? pCents - amountCents : 0n) : pCents;
+    const pct = totalAfterCents > 0n ? Number((afterCents * 10000n) / totalAfterCents) / 100 : 0;
+    concentrationAfter = Math.max(concentrationAfter, pct);
+  }
+  const liquidityAfterCents = usdCents(summary.liquidityUsd) - (pos.liquid ? amountCents : 0n);
+  const estimated = summary.positions.some((p) => p.priceSource === 'static' && !STABLECOIN_SYMBOLS.has(p.symbol));
+
+  return {
+    ok: true,
+    asset: opts.asset,
+    symbol: pos.symbol,
+    amountHuman: opts.amount,
+    amountBaseUnits: amountBase,
+    before: {
+      totalUsd: summary.totalUsd,
+      concentrationPct: summary.topAsset?.pct ?? 0,
+      liquidityUsd: summary.liquidityUsd,
+    },
+    after: {
+      totalUsd: Number(totalAfterCents) / 100,
+      concentrationPct: concentrationAfter,
+      liquidityUsd: Number(liquidityAfterCents) / 100,
+    },
+    verdict,
+    estimated,
+  };
+}
