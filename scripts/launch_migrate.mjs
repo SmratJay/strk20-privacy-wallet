@@ -60,10 +60,14 @@ async function main() {
   }
 
   console.log(`setting liquidity manager -> ${MANAGER}`);
-  await account.execute(
+  const setTx = await account.execute(
     { contractAddress: router, entrypoint: 'set_liquidity_manager', calldata: [MANAGER] },
     { resourceBounds: bounds },
   );
+  // Wait for confirmation so the account nonce advances before the next tx (the node
+  // returns the old nonce while the previous tx is unconfirmed).
+  await provider.waitForTransaction(setTx.transaction_hash);
+  console.log(`manager set tx: ${setTx.transaction_hash}`);
 
   console.log('forwarding reserves...');
   const tx = await account.execute(

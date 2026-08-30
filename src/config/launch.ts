@@ -130,9 +130,9 @@ const SEPOLIA_CONFIG: LaunchNetworkConfig = {
   baseAssetDecimals: 18,
   factory: envFactorySepolia().factory,
   router: envFactorySepolia().router,
-  // Set right before the V2 TokenFactory deployment on Sepolia so every factory-launched
-  // curve's Buy/Sell events are scanned for volume/price/trades.
-  eventScanStartBlock: 0,
+  // Set just before the V2 TokenFactory deployment on Sepolia (factory block 14275969) so
+  // every factory-launched curve's Buy/Sell events are scanned for volume/price/trades.
+  eventScanStartBlock: 14275950,
 };
 
 /**

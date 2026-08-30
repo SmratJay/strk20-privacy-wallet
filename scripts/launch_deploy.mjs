@@ -266,6 +266,11 @@ async function main() {
     baseAsset: BASE_ASSET,
     poolAddress: POOL,
     protocolTreasury: TREASURY,
+    // Set to the block just before the TokenFactory deploy so every curve's Buy/Sell events
+    // are scanned for volume/price/trades. Bump after redeploying the factory.
+    eventScanStartBlock: process.env.NEXT_PUBLIC_UMBRA_EVENT_SCAN_START
+      ? Number(process.env.NEXT_PUBLIC_UMBRA_EVENT_SCAN_START)
+      : 14275950,
     curve: {
       virtualBase: VIRTUAL_BASE,
       virtualToken: VIRTUAL_TOKEN,
