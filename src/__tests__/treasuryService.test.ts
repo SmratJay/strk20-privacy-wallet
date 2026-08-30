@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { executeProposal, resolvePrivateTreasuryAddress, ExecutionResult } from '@/services/treasuryService';
+import { executeProposal, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
 import { ActionProposal } from '@/ai/schema';
 import { TreasuryPolicy, DEFAULT_TREASURY_POLICY } from '@/ai/policy';
 import { PrivateBalanceRow } from '@/ai/portfolio';
@@ -69,6 +69,39 @@ function baseInput(over: Partial<Parameters<typeof executeProposal>[0]> = {}): P
 async function result(input: ReturnType<typeof baseInput>): Promise<ExecutionResult> {
   return executeProposal(input);
 }
+
+describe('buildAnalyzeRequest — bigint balances serialize at the HTTP boundary', () => {
+  it('serializes bigint balances to decimal strings so JSON.stringify never throws', () => {
+    const req = buildAnalyzeRequest({
+      prompt: 'Make my treasury safer',
+      balances: [
+        { token: STRK, balance: 123456789012345678901234567890n },
+        { token: USDC, balance: 9876543210n },
+      ],
+      userAddress: '0xuser',
+      privateTreasuryAddress: '0xtreasury',
+    });
+    // balances are decimal strings, never raw bigints
+    expect(req.balances).toEqual([
+      { token: STRK, balance: '123456789012345678901234567890' },
+      { token: USDC, balance: '9876543210' },
+    ]);
+    // the entire request body is JSON-safe (this is the exact body the UI sends)
+    expect(() => JSON.stringify(req)).not.toThrow();
+    expect(JSON.parse(JSON.stringify(req)).balances[0].balance).toBe('123456789012345678901234567890');
+  });
+
+  it('trims the prompt but leaves addresses intact', () => {
+    const req = buildAnalyzeRequest({
+      prompt: '  Make my treasury safer  ',
+      balances: [{ token: STRK, balance: 1n }],
+      userAddress: '0xuser',
+      privateTreasuryAddress: '0xtreasury',
+    });
+    expect(req.prompt).toBe('Make my treasury safer');
+    expect(req.context).toEqual({ userAddress: '0xuser', privateTreasuryAddress: '0xtreasury' });
+  });
+});
 
 describe('executeProposal — expiry boundary', () => {
   it('is NOT expired 1ms before expiresAt', async () => {

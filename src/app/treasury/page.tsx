@@ -25,7 +25,7 @@ import { ActionProposal } from '@/ai/schema';
 import { PortfolioSummary, PrivateBalanceRow, buildPortfolioSummary } from '@/ai/portfolio';
 import { PolicyVerdict, TreasuryPolicy } from '@/ai/policy';
 import { AssetPrice, resolvePortfolioPrices } from '@/ai/prices';
-import { executeProposal, tokenSymbols, resolvePrivateTreasuryAddress, ExecutionResult } from '@/services/treasuryService';
+import { executeProposal, tokenSymbols, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { shortenAddress, formatTokenAmount } from '@/utils/formatters';
 
@@ -176,11 +176,14 @@ export default function TreasuryPage() {
       const res = await fetch('/api/ai/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          balances: rows,
-          context: { userAddress: wallet.address ?? '', privateTreasuryAddress },
-        }),
+        body: JSON.stringify(
+          buildAnalyzeRequest({
+            prompt,
+            balances: rows,
+            userAddress: wallet.address ?? '',
+            privateTreasuryAddress,
+          }),
+        ),
       });
       const json = (await res.json()) as AnalyzeResponse & { error?: string };
       if (!res.ok) {

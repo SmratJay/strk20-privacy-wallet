@@ -130,6 +130,39 @@ export function resolvePrivateTreasuryAddress(opts: {
 }
 
 /**
+ * JSON-safe request body for `/api/ai/analyze`.
+ *
+ * Internal balances are `bigint`; at the HTTP boundary they are serialized as decimal
+ * strings (`balance.toString()`). The server converts back with `BigInt(balance)`. This
+ * keeps internal financial arithmetic exact while preventing `JSON.stringify` from throwing
+ * on a BigInt.
+ */
+export interface AnalyzeRequestBody {
+  prompt: string;
+  balances: { token: string; balance: string }[];
+  context: { userAddress: string; privateTreasuryAddress: string };
+}
+
+export function buildAnalyzeRequest(input: {
+  prompt: string;
+  balances: PrivateBalanceRow[];
+  userAddress: string;
+  privateTreasuryAddress: string;
+}): AnalyzeRequestBody {
+  return {
+    prompt: input.prompt.trim(),
+    balances: input.balances.map((row) => ({
+      token: row.token,
+      balance: row.balance.toString(),
+    })),
+    context: {
+      userAddress: input.userAddress,
+      privateTreasuryAddress: input.privateTreasuryAddress,
+    },
+  };
+}
+
+/**
  * Execute a proposal ONLY if it is unexpired, state is unchanged, the amount reconstructs
  * exactly, and the deterministic policy passes against CURRENT state with FRESH prices.
  * Returns a discriminated result; the UI maps failures to human-readable guidance.
