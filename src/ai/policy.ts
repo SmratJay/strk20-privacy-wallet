@@ -66,6 +66,9 @@ export interface PolicyVerdict {
 /** Stablecoins pinned at $1 (static price is authoritative for them). */
 const STABLECOIN_SYMBOLS = new Set(['USDC', 'USDT']);
 
+/** Volatile (STRK/ETH) live prices older than this are stale and cannot authorize execution. */
+export const MAX_PRICE_AGE_MS = 60_000;
+
 function positionFor(summary: PortfolioSummary, token: string): PortfolioAssetPosition | undefined {
   const canonical = canonicalizeAddress(token);
   if (!canonical.ok) return undefined;
@@ -85,6 +88,24 @@ function ceilDiv(a: bigint, b: bigint): bigint {
   return a % b === 0n ? a / b : a / b + 1n;
 }
 
+/** Price in whole cents for a position's unit (min 1; 0 when the price is unusable). */
+function priceCentsOf(p: PortfolioAssetPosition): bigint {
+  if (!Number.isFinite(p.priceUsd) || p.priceUsd <= 0) return 0n;
+  return BigInt(Math.max(1, Math.ceil(p.priceUsd * 100)));
+}
+
+/** Exact USD cents for a position, derived from its base balance (never float usdValue). */
+function positionCents(p: PortfolioAssetPosition): bigint {
+  const priceCents = priceCentsOf(p);
+  if (priceCents === 0n) return 0n;
+  return ceilDiv(BigInt(p.balanceBase) * priceCents, 10n ** BigInt(p.decimals));
+}
+
+export interface EvaluateOptions {
+  /** Wall-clock for price-freshness checks. Defaults to Date.now(); pass for determinism. */
+  now?: number;
+}
+
 /**
  * Evaluate a proposal against the treasury policy + current portfolio.
  * Deterministic and pure — callable from the API route AND re-runnable client-side before
@@ -94,8 +115,10 @@ export function evaluateProposal(
   proposal: ActionProposal,
   summary: PortfolioSummary,
   policy: TreasuryPolicy = DEFAULT_TREASURY_POLICY,
+  opts: EvaluateOptions = {},
 ): PolicyVerdict {
   const checks: PolicyCheck[] = [];
+  const now = opts.now ?? Date.now();
 
   // Advisory reports never execute and always pass.
   if (proposal.action.type === 'report') {
@@ -163,7 +186,7 @@ export function evaluateProposal(
     });
   }
 
-  // 5. price-valid-for-execution — live price required for volatile assets.
+  // 5. price-valid-for-execution — a FRESH live price is required for volatile assets.
   let priceOk = false;
   let priceDetail = 'No usable price.';
   if (pos) {
@@ -172,14 +195,24 @@ export function evaluateProposal(
     } else if (STABLECOIN_SYMBOLS.has(pos.symbol)) {
       priceOk = true;
       priceDetail = `${pos.symbol} is a stablecoin pinned at $1.`;
-    } else if (pos.priceSource === 'avnu') {
-      priceOk = true;
-      priceDetail = `${pos.symbol} has a live market price (source: avnu).`;
+    } else if (pos.priceSource !== 'avnu') {
+      priceDetail = `${pos.symbol} price is ${pos.priceSource} (fallback). A fresh live price is required to authorize execution.`;
     } else {
-      priceDetail = `${pos.symbol} price is ${pos.priceSource} (fallback). A live price is required to authorize execution.`;
+      const fetchedAt = pos.priceFetchedAt;
+      if (fetchedAt === undefined) {
+        priceDetail = `${pos.symbol} price has no timestamp; freshness cannot be verified.`;
+      } else {
+        const ageMs = now - fetchedAt;
+        if (ageMs < 0 || ageMs > MAX_PRICE_AGE_MS) {
+          priceDetail = `${pos.symbol} price is stale (${Math.max(0, Math.round(ageMs / 1000))}s old; max ${MAX_PRICE_AGE_MS / 1000}s).`;
+        } else {
+          priceOk = true;
+          priceDetail = `${pos.symbol} has a fresh live market price (source: avnu, ${Math.round(ageMs / 1000)}s old).`;
+        }
+      }
     }
   }
-  checks.push({ id: 'price-valid', label: 'Live price for execution', passed: priceOk, detail: priceDetail });
+  checks.push({ id: 'price-valid', label: 'Fresh live price for execution', passed: priceOk, detail: priceDetail });
 
   // Conservative USD value in cents (price rounded UP, division ceil) — exact bigint math.
   const priceCents = pos ? BigInt(Math.max(1, Math.ceil(pos.priceUsd * 100))) : 0n;
@@ -216,18 +249,28 @@ export function evaluateProposal(
     });
   }
 
-  // 8. max-position-after (the action asset decreases by the outflow; others grow in share).
-  const totalAfterUsd = Math.max(summary.totalUsd - amountUsd, 0);
+  // 8. max-position-after — EXACT integer comparison in cents/bps (no float division).
+  //    positionAfterCents * 10000 <= totalAfterCents * maxPositionBps
+  const totalCents = summary.positions.reduce((s, p) => s + positionCents(p), 0n);
+  const totalAfterCents = totalCents > amountUsdCents ? totalCents - amountUsdCents : 0n;
+  const maxPositionBps = BigInt(Math.max(0, Math.round(policy.maxPositionPct * 100)));
   let concentrationOk = true;
   let concentrationDetail = 'No position exceeds the concentration cap after the action.';
   for (const p of summary.positions) {
+    const pCents = positionCents(p);
+    if (pCents === 0n) continue; // no valued position -> cannot exceed a concentration cap
     const pCanonical = canonicalizeAddress(p.token);
-    const isActionAsset = pCanonical.ok && pCanonical.value === action.asset;
-    const valueAfter = isActionAsset ? Math.max(p.usdValue - amountUsd, 0) : p.usdValue;
-    const pctAfter = totalAfterUsd > 0 ? (valueAfter / totalAfterUsd) * 100 : p.pct;
-    if (pctAfter > policy.maxPositionPct) {
+    const actionCanonical = canonicalizeAddress(action.asset);
+    const isActionAsset =
+      pCanonical.ok && actionCanonical.ok && pCanonical.value === actionCanonical.value;
+    const afterCents = isActionAsset
+      ? (pCents > amountUsdCents ? pCents - amountUsdCents : 0n)
+      : pCents;
+    // Integer cross-multiplication: pass iff afterCents <= cap% of totalAfterCents.
+    if (afterCents * 10000n > totalAfterCents * maxPositionBps) {
+      const pctAfterBps = totalAfterCents > 0n ? (afterCents * 10000n) / totalAfterCents : 0n;
       concentrationOk = false;
-      concentrationDetail = `${p.symbol} would be ${pctAfter.toFixed(1)}% after the action (cap ${policy.maxPositionPct}%).`;
+      concentrationDetail = `${p.symbol} would be ${(Number(pctAfterBps) / 100).toFixed(2)}% after the action (cap ${policy.maxPositionPct}%).`;
       break;
     }
   }

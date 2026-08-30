@@ -8,7 +8,7 @@
  * (`getPrivateBalances` / `privy.getPrivateBalance`) which already return aggregate amounts.
  */
 import { SEPOLIA_TOKENS, TokenInfo } from '@/config/networks';
-import { isLiquidSymbol } from '@/ai/prices';
+import { isLiquidSymbol, AssetPrice } from '@/ai/prices';
 
 export interface PrivateBalanceRow {
   /** Token contract address (lowercase 0x). */
@@ -30,6 +30,8 @@ export interface PortfolioAssetPosition {
   usdValue: number;
   priceUsd: number;
   priceSource: 'avnu' | 'static';
+  /** ms epoch when the price was resolved — live prices must be fresh to authorize execution. */
+  priceFetchedAt?: number;
   /** Allocation percentage of total treasury USD. */
   pct: number;
   /** True for STRK/ETH/USDC/USDT (usable toward the liquidity policy). */
@@ -53,13 +55,12 @@ const TOKENS_BY_ADDR = new Map<string, TokenInfo>(
 
 /**
  * Build the privacy-minimized portfolio summary from aggregate private balances.
- * `priceUsdByToken` and `priceSourceByToken` come from prices.ts (the caller resolves them).
- * Pure + deterministic — no network, no notes, no viewing keys.
+ * `prices` come from prices.ts (the caller resolves them). Pure + deterministic — no
+ * network, no notes, no viewing keys.
  */
 export function buildPortfolioSummary(
   rows: PrivateBalanceRow[],
-  priceUsdByToken: Record<string, number>,
-  priceSourceByToken: Record<string, 'avnu' | 'static'> = {},
+  prices: Record<string, AssetPrice>,
   generatedAt = Date.now(),
 ): PortfolioSummary {
   const positions: PortfolioAssetPosition[] = [];
@@ -70,7 +71,10 @@ export function buildPortfolioSummary(
     const meta = TOKENS_BY_ADDR.get(token);
     const symbol = meta?.symbol ?? token.slice(0, 10);
     const decimals = meta?.decimals ?? 18;
-    const priceUsd = priceUsdByToken[token] ?? 0;
+    const price = prices[token];
+    const priceUsd = price?.priceUsd ?? 0;
+    const priceSource = price?.source ?? 'static';
+    const priceFetchedAt = price?.priceFetchedAt;
     const balanceHuman = Number(row.balance) / 10 ** decimals;
     positions.push({
       token,
@@ -81,7 +85,8 @@ export function buildPortfolioSummary(
       balanceHuman,
       usdValue: balanceHuman * priceUsd,
       priceUsd,
-      priceSource: priceSourceByToken[token] ?? 'static',
+      priceSource,
+      priceFetchedAt,
       pct: 0, // filled below
       liquid: isLiquidSymbol(symbol),
     });

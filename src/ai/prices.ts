@@ -15,6 +15,8 @@ import { getActivePoolAddress } from '@/config/tokens';
 export interface AssetPrice {
   priceUsd: number;
   source: 'avnu' | 'static';
+  /** ms epoch when the price was resolved — live prices must be fresh to authorize execution. */
+  priceFetchedAt: number;
 }
 
 /** Documented static USD reference (matches the repo's existing fallback rates). */
@@ -65,15 +67,16 @@ async function tryAvnuPriceUsd(symbol: 'STRK' | 'ETH'): Promise<number | null> {
 
 /** Resolve a USD price for a token symbol (AVNU where possible, static fallback). */
 export async function getAssetPriceUsd(symbol: string): Promise<AssetPrice> {
+  const now = Date.now();
   if (symbol === 'USDC' || symbol === 'USDT') {
-    return { priceUsd: 1, source: 'static' };
+    return { priceUsd: 1, source: 'static', priceFetchedAt: now };
   }
   if (symbol === 'STRK' || symbol === 'ETH') {
     const live = await tryAvnuPriceUsd(symbol);
-    if (live !== null) return { priceUsd: live, source: 'avnu' };
+    if (live !== null) return { priceUsd: live, source: 'avnu', priceFetchedAt: now };
   }
   const staticPrice = STATIC_PRICES_USD[symbol];
-  return { priceUsd: staticPrice ?? 0, source: 'static' };
+  return { priceUsd: staticPrice ?? 0, source: 'static', priceFetchedAt: now };
 }
 
 /** Resolve prices for every known token in the treasury in one pass. */
