@@ -107,6 +107,29 @@ function humanError(e: unknown): string {
 }
 
 /**
+ * Resolve the STRK20 private treasury identity for the UI + analyze context.
+ *
+ * For the Privy lane this is the Ready-derived account
+ * (`computeReadyAccountAddress(publicKey)`) — the address the existing STRK20 integration
+ * registers as the private-note owner and uses as the SOURCE of every private transfer. Both
+ * `privy.account.address` and the Privy context `address` carry this derived identity (the
+ * Privy wallet's own `wallet.address` is NOT the STRK20 identity). For the Ready/Wallet-API
+ * lane the connected account IS the STRK20 identity. This is NOT the SDK's separate
+ * "Shadow Account" concept.
+ */
+export function resolvePrivateTreasuryAddress(opts: {
+  privyConnected: boolean;
+  privyAccountAddress?: string | null;
+  privyAddress?: string | null;
+  walletAddress?: string | null;
+}): string {
+  if (opts.privyConnected) {
+    return (opts.privyAccountAddress ?? opts.privyAddress ?? '').trim();
+  }
+  return (opts.walletAddress ?? '').trim();
+}
+
+/**
  * Execute a proposal ONLY if it is unexpired, state is unchanged, the amount reconstructs
  * exactly, and the deterministic policy passes against CURRENT state with FRESH prices.
  * Returns a discriminated result; the UI maps failures to human-readable guidance.
@@ -114,8 +137,8 @@ function humanError(e: unknown): string {
 export async function executeProposal(input: TreasuryExecutionInput): Promise<ExecutionResult> {
   const now = input.now ?? Date.now();
 
-  // 1. Expiry.
-  if (now > input.proposalExpiresAt) {
+  // 1. Expiry — at the exact expiration instant the analysis is no longer valid.
+  if (now >= input.proposalExpiresAt) {
     return { ok: false, reason: 'EXPIRED', detail: 'This analysis has expired. Please re-run it.' };
   }
 

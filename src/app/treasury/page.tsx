@@ -25,7 +25,7 @@ import { ActionProposal } from '@/ai/schema';
 import { PortfolioSummary, PrivateBalanceRow, buildPortfolioSummary } from '@/ai/portfolio';
 import { PolicyVerdict, TreasuryPolicy } from '@/ai/policy';
 import { AssetPrice, resolvePortfolioPrices } from '@/ai/prices';
-import { executeProposal, tokenSymbols, ExecutionResult } from '@/services/treasuryService';
+import { executeProposal, tokenSymbols, resolvePrivateTreasuryAddress, ExecutionResult } from '@/services/treasuryService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { shortenAddress, formatTokenAmount } from '@/utils/formatters';
 
@@ -81,9 +81,15 @@ export default function TreasuryPage() {
 
   const connected = wallet.isConnected;
 
-  const privateTreasuryAddress = privyConnected
-    ? (privy.address ?? privy.account?.address ?? '')
-    : (wallet.address ?? '');
+  // The STRK20 private treasury identity: the Ready-derived account (the address the
+  // existing STRK20 integration uses as its `user`/private-note owner and the SOURCE of
+  // every private transfer). For the Ready lane the connected account IS the identity.
+  const privateTreasuryAddress = resolvePrivateTreasuryAddress({
+    privyConnected,
+    privyAccountAddress: privy.account?.address,
+    privyAddress: privy.address,
+    walletAddress: wallet.address,
+  });
 
   const refreshBalances = useCallback(async () => {
     if (!connected) return;

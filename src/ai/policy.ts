@@ -34,6 +34,12 @@ export interface TreasuryPolicy {
   allowedAssets: string[];
   /** Approved destinations (canonical lowercase 0x). EMPTY = deny all execution. */
   allowedDestinations: string[];
+  /**
+   * The STRK20 private treasury identity (the SOURCE account of every private transfer).
+   * Any proposal whose recipient equals this is a meaningless self-transfer and is rejected
+   * deterministically — the LLM can never route a transfer back to the source identity.
+   */
+  selfTransferAddress?: string;
 }
 
 export const DEFAULT_TREASURY_POLICY: TreasuryPolicy = {
@@ -126,8 +132,10 @@ export type BuildPolicyResult =
 /**
  * Build the SERVER-authoritative execution policy.
  *
- * Destinations are ONLY: the user's primary account, the STRK20 private treasury identity,
- * and any server-configured allowlist. Every address is canonicalized. An empty destination
+ * Destinations are ONLY: the user's primary account and any server-configured allowlist.
+ * The STRK20 private treasury identity is the SOURCE of every transfer and is therefore NOT
+ * AI-selectable; it is recorded as `selfTransferAddress` so the policy can deterministically
+ * reject a meaningless self-transfer. Every address is canonicalized. An empty destination
  * set DENIES all execution (the policy engine enforces it) — the LLM can never add one.
  */
 export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyResult {
@@ -141,16 +149,19 @@ export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyRe
   }
 
   const allowedDestinations: string[] = [];
-  const destCandidates = [
-    input.userAddress,
-    input.privateTreasuryAddress,
-    ...(input.allowedDestinations ?? []),
-  ];
+  const destCandidates = [input.userAddress, ...(input.allowedDestinations ?? [])];
   for (const d of destCandidates) {
     if (!d || d.trim() === '') continue;
     const c = canonicalizeAddress(d);
     if (!c.ok) return { ok: false, error: `invalid destination: ${d}` };
     if (!allowedDestinations.includes(c.value)) allowedDestinations.push(c.value);
+  }
+
+  let selfTransferAddress: string | undefined;
+  if (input.privateTreasuryAddress) {
+    const c = canonicalizeAddress(input.privateTreasuryAddress);
+    if (!c.ok) return { ok: false, error: `invalid private treasury address: ${input.privateTreasuryAddress}` };
+    selfTransferAddress = c.value;
   }
 
   return {
@@ -159,6 +170,7 @@ export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyRe
       ...base,
       allowedAssets,
       allowedDestinations,
+      selfTransferAddress,
     },
   };
 }
@@ -203,6 +215,23 @@ export function evaluateProposal(
     checks.push({ id: 'destination-valid', label: 'Destination approved', passed: false, detail: `${dest} is not an approved destination.` });
   } else {
     checks.push({ id: 'destination-valid', label: 'Destination approved', passed: true, detail: `${dest.slice(0, 10)}… is an approved destination.` });
+  }
+
+  // 2b. self-transfer — the source of every private transfer is the private treasury
+  //     identity; routing a transfer back to it would be a meaningless no-op. Rejected
+  //     deterministically regardless of what the LLM proposes.
+  if (policy.selfTransferAddress) {
+    const src = canonicalizeAddress(policy.selfTransferAddress);
+    const dst = canonicalizeAddress(action.recipient);
+    const isSelf = src.ok && dst.ok && src.value === dst.value;
+    checks.push({
+      id: 'self-transfer',
+      label: 'Not a self-transfer',
+      passed: !isSelf,
+      detail: isSelf
+        ? `${dst.value.slice(0, 10)}… is the treasury identity itself; this would be a no-op.`
+        : 'Recipient differs from the source treasury identity.',
+    });
   }
 
   // 3. amount — EXACT base units via the asset's decimals.

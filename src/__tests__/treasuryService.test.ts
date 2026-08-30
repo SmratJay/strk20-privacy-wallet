@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { executeProposal, ExecutionResult } from '@/services/treasuryService';
+import { executeProposal, resolvePrivateTreasuryAddress, ExecutionResult } from '@/services/treasuryService';
 import { ActionProposal } from '@/ai/schema';
 import { TreasuryPolicy, DEFAULT_TREASURY_POLICY } from '@/ai/policy';
 import { PrivateBalanceRow } from '@/ai/portfolio';
@@ -69,6 +69,66 @@ function baseInput(over: Partial<Parameters<typeof executeProposal>[0]> = {}): P
 async function result(input: ReturnType<typeof baseInput>): Promise<ExecutionResult> {
   return executeProposal(input);
 }
+
+describe('executeProposal — expiry boundary', () => {
+  it('is NOT expired 1ms before expiresAt', async () => {
+    const input = baseInput({ proposalExpiresAt: NOW + 1 });
+    const res = await result(input);
+    expect(res.ok).toBe(true);
+    expect(input.executeTransfer).toHaveBeenCalledTimes(1);
+  });
+
+  it('is EXPIRED exactly at expiresAt', async () => {
+    const input = baseInput({ proposalExpiresAt: NOW });
+    const res = await result(input);
+    expect(res).toEqual({ ok: false, reason: 'EXPIRED', detail: expect.any(String) });
+    expect(input.executeTransfer).not.toHaveBeenCalled();
+  });
+
+  it('is EXPIRED 1ms after expiresAt', async () => {
+    const input = baseInput({ proposalExpiresAt: NOW - 1 });
+    const res = await result(input);
+    expect(res).toEqual({ ok: false, reason: 'EXPIRED', detail: expect.any(String) });
+    expect(input.executeTransfer).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolvePrivateTreasuryAddress — UI treasury identity', () => {
+  it('uses the Ready-derived account address for the Privy lane', () => {
+    const treasury = '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+    expect(
+      resolvePrivateTreasuryAddress({ privyConnected: true, privyAccountAddress: treasury, privyAddress: '0xprivywallet' }),
+    ).toBe(treasury);
+  });
+
+  it('falls back to the Privy context address when the account is not yet resolved', () => {
+    expect(
+      resolvePrivateTreasuryAddress({ privyConnected: true, privyAccountAddress: null, privyAddress: '0xderived' }),
+    ).toBe('0xderived');
+  });
+
+  it('uses the connected wallet address for the Ready/Wallet-API lane', () => {
+    expect(
+      resolvePrivateTreasuryAddress({ privyConnected: false, walletAddress: '0xreadyaccount' }),
+    ).toBe('0xreadyaccount');
+  });
+
+  it('never leaks the Privy wallet address as the STRK20 identity when a derived address exists', () => {
+    const derived = '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+    const privyWallet = '0x1234567890abcdef';
+    const resolved = resolvePrivateTreasuryAddress({
+      privyConnected: true,
+      privyAccountAddress: derived,
+      privyAddress: privyWallet,
+      walletAddress: privyWallet,
+    });
+    expect(resolved).toBe(derived);
+  });
+
+  it('returns empty when nothing is available', () => {
+    expect(resolvePrivateTreasuryAddress({ privyConnected: false, walletAddress: null })).toBe('');
+  });
+});
 
 describe('executeProposal — execution gate', () => {
   it('executes successfully via the injected privateTransfer path with exact base units', async () => {

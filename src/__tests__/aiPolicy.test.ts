@@ -283,7 +283,7 @@ describe('evaluateProposal — policy cannot be weakened by the model', () => {
   });
 });
 describe('buildExecutionPolicy — server-authoritative allowlists', () => {
-  it('approves only the user + shadow account + configured destinations (canonicalized)', () => {
+  it('approves user + configured destinations (canonicalized) and records the treasury as self', () => {
     const r = buildExecutionPolicy({
       userAddress: `0X${DEST.slice(2).toUpperCase()}`,
       privateTreasuryAddress: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
@@ -291,8 +291,9 @@ describe('buildExecutionPolicy — server-authoritative allowlists', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // deduplicated + canonicalized
-      expect(r.policy.allowedDestinations).toEqual([DEST, STRK_CANON]);
+      // the treasury identity is the SOURCE — never an AI-selectable destination
+      expect(r.policy.allowedDestinations).toEqual([DEST]);
+      expect(r.policy.selfTransferAddress).toBe(STRK_CANON);
     }
   });
 
@@ -316,5 +317,26 @@ describe('buildExecutionPolicy — server-authoritative allowlists', () => {
     const r = buildExecutionPolicy({ allowedAssets: [`0X${STRK.slice(2).toUpperCase()}`] });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.policy.allowedAssets).toEqual([STRK_CANON]);
+  });
+});
+
+describe('evaluateProposal — self-transfer rejection', () => {
+  it('rejects a transfer whose recipient is the source treasury identity', () => {
+    const p = { ...DEFAULT_TREASURY_POLICY, allowedDestinations: [DEST, STRK_CANON], selfTransferAddress: STRK_CANON };
+    const v = evaluateProposal(transfer(STRK, '1', STRK_CANON), summary(), p, { now: NOW + 5000 });
+    expect(check(v, 'self-transfer')?.passed).toBe(false);
+    expect(v.allowed).toBe(false);
+  });
+
+  it('allows a transfer to an approved destination that differs from the treasury identity', () => {
+    const p = { ...DEFAULT_TREASURY_POLICY, allowedDestinations: [DEST], selfTransferAddress: STRK_CANON };
+    const v = evaluateProposal(transfer(STRK, '1', DEST), summary(), p, { now: NOW + 5000 });
+    expect(check(v, 'self-transfer')?.passed).toBe(true);
+  });
+
+  it('is skipped when no self-transfer address is configured', () => {
+    const p = { ...DEFAULT_TREASURY_POLICY, allowedDestinations: [DEST] };
+    const v = evaluateProposal(transfer(STRK, '1', DEST), summary(), p, { now: NOW + 5000 });
+    expect(check(v, 'self-transfer')).toBeUndefined();
   });
 });
