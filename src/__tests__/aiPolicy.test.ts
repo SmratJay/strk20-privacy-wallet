@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateProposal, DEFAULT_TREASURY_POLICY, TreasuryPolicy, PolicyVerdict, MAX_PRICE_AGE_MS } from '@/ai/policy';
+import { evaluateProposal, DEFAULT_TREASURY_POLICY, TreasuryPolicy, PolicyVerdict, MAX_PRICE_AGE_MS, buildExecutionPolicy } from '@/ai/policy';
 import { PortfolioSummary, PortfolioAssetPosition } from '@/ai/portfolio';
 import { ActionProposal } from '@/ai/schema';
 
@@ -280,5 +280,41 @@ describe('evaluateProposal — policy cannot be weakened by the model', () => {
     const b = evalProposal(withFakeConstraint, summary());
     expect(a.allowed).toBe(b.allowed);
     expect(a.checks.map((c) => [c.id, c.passed])).toEqual(b.checks.map((c) => [c.id, c.passed]));
+  });
+});
+describe('buildExecutionPolicy — server-authoritative allowlists', () => {
+  it('approves only the user + shadow account + configured destinations (canonicalized)', () => {
+    const r = buildExecutionPolicy({
+      userAddress: `0X${DEST.slice(2).toUpperCase()}`,
+      shadowAccountAddress: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
+      allowedDestinations: [DEST],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // deduplicated + canonicalized
+      expect(r.policy.allowedDestinations).toEqual([DEST, STRK_CANON]);
+    }
+  });
+
+  it('rejects an invalid configured destination instead of silently dropping it', () => {
+    const r = buildExecutionPolicy({ userAddress: DEST, allowedDestinations: ['0xzz'] });
+    expect(r.ok).toBe(false);
+  });
+
+  it('allows an empty destination set (execution is denied by the policy engine)', () => {
+    const r = buildExecutionPolicy({});
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.policy.allowedDestinations).toEqual([]);
+    // and the engine denies execution on an empty set
+    const s = summary();
+    const v = evaluateProposal(transfer(STRK, '1'), s, r.ok ? r.policy : DEFAULT_TREASURY_POLICY, { now: NOW + 5000 });
+    expect(v.allowed).toBe(false);
+    expect(check(v, 'destination-valid')?.passed).toBe(false);
+  });
+
+  it('canonicalizes configured allowed assets', () => {
+    const r = buildExecutionPolicy({ allowedAssets: [`0X${STRK.slice(2).toUpperCase()}`] });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.policy.allowedAssets).toEqual([STRK_CANON]);
   });
 });

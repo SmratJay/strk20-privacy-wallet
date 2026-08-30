@@ -106,6 +106,63 @@ export interface EvaluateOptions {
   now?: number;
 }
 
+export interface ExecutionPolicyInput {
+  /** The user's primary public account address. */
+  userAddress?: string;
+  /** The STRK20 Shadow Account / treasury identity address. */
+  shadowAccountAddress?: string;
+  /** Server-configured extra approved destinations (canonicalized here). */
+  allowedDestinations?: string[];
+  /** Server-configured allowed action assets (canonicalized here). */
+  allowedAssets?: string[];
+  /** Base policy to inherit liquidity/concentration/tx limits from. */
+  base?: TreasuryPolicy;
+}
+
+export type BuildPolicyResult =
+  | { ok: true; policy: TreasuryPolicy }
+  | { ok: false; error: string };
+
+/**
+ * Build the SERVER-authoritative execution policy.
+ *
+ * Destinations are ONLY: the user's primary account, the Shadow Account, and any
+ * server-configured allowlist. Every address is canonicalized. An empty destination set
+ * DENIES all execution (the policy engine enforces it) — the LLM can never add one.
+ */
+export function buildExecutionPolicy(input: ExecutionPolicyInput): BuildPolicyResult {
+  const base = input.base ?? DEFAULT_TREASURY_POLICY;
+
+  const allowedAssets: string[] = [];
+  for (const a of input.allowedAssets ?? []) {
+    const c = canonicalizeAddress(a);
+    if (!c.ok) return { ok: false, error: `invalid allowed asset: ${a}` };
+    if (!allowedAssets.includes(c.value)) allowedAssets.push(c.value);
+  }
+
+  const allowedDestinations: string[] = [];
+  const destCandidates = [
+    input.userAddress,
+    input.shadowAccountAddress,
+    ...(input.allowedDestinations ?? []),
+  ];
+  for (const d of destCandidates) {
+    if (!d || d.trim() === '') continue;
+    const c = canonicalizeAddress(d);
+    if (!c.ok) return { ok: false, error: `invalid destination: ${d}` };
+    if (!allowedDestinations.includes(c.value)) allowedDestinations.push(c.value);
+  }
+
+  return {
+    ok: true,
+    policy: {
+      ...base,
+      allowedAssets,
+      allowedDestinations,
+    },
+  };
+}
+
 /**
  * Evaluate a proposal against the treasury policy + current portfolio.
  * Deterministic and pure — callable from the API route AND re-runnable client-side before
