@@ -7,23 +7,20 @@
  * the app uses (portfolio, policy, simulateAction). No tool exposes wallet/signing primitives,
  * viewing keys, notes, or arbitrary calldata to the model. Tools NEVER execute anything.
  *
- * The registry is strongly typed: unsupported tool names and malformed args are rejected without
- * any execution.
+ * Tool-surface boundary:
+ *   - Model-callable tools are reasoning/read/prepare tools only (10 of them).
+ *   - Execution-lifecycle operations (refresh, execution status, verify) are NOT in this registry —
+ *     they belong to the ExecutionRouter / UI, not the reasoning surface.
+ *   - `prepare_action` produces a validated ExecutionIntent for the router; it never executes.
  */
 import { ActionProposal } from '@/ai/schema';
-import {
-  simulateAction,
-  ScenarioSimulation,
-  evaluateProposal,
-  TreasuryPolicy,
-} from '@/ai/policy';
+import { simulateAction, ScenarioSimulation, evaluateProposal, TreasuryPolicy } from '@/ai/policy';
 import { PortfolioSummary, PortfolioAssetPosition } from '@/ai/portfolio';
 import { computeTreasuryHealth, TreasuryHealth } from '@/ai/health';
 import { AssetPrice } from '@/ai/prices';
 import { canonicalizeAddress } from '@/ai/address';
 import { parseAmountExact, isZeroAmount } from '@/ai/amount';
-import { generateRebalanceCandidates, RebalanceCandidate, selectBestAction } from '@/ai/plan';
-import { verifyExecution, ExecutionVerification } from '@/ai/verification';
+import { generateRebalanceCandidates, concentrationBreakEvenUsd, RebalanceCandidate } from '@/ai/plan';
 import { ShadowAccountCapability } from '@/ai/shadow';
 
 export interface RecentActivityRow {
@@ -39,13 +36,6 @@ export interface AgentIdentity {
   verification: 'privy' | 'client-claimed';
 }
 
-export interface AgentExecutionState {
-  status: 'idle' | 'running' | 'success' | 'failure';
-  transactionHash?: string;
-  reason?: string;
-  expected?: ScenarioSimulation;
-}
-
 /** Everything a tool can read. Built server-side from real state; never from the model. */
 export interface AgentToolContext {
   summary: PortfolioSummary;
@@ -55,30 +45,19 @@ export interface AgentToolContext {
   identity: AgentIdentity;
   recentActivity: RecentActivityRow[];
   shadowCapability: ShadowAccountCapability;
-  executionState?: AgentExecutionState;
-  /** Optional live refresh (client injects it; the server has no wallet access). */
-  refreshPortfolio?: () => Promise<PortfolioSummary>;
 }
 
 export type ToolId =
   | 'get_portfolio'
-  | 'get_treasury_health'
+  | 'get_health'
   | 'get_policy'
-  | 'get_prices'
-  | 'get_private_identity'
-  | 'get_approved_destinations'
-  | 'get_recent_activity'
-  | 'simulate_transfer'
-  | 'simulate_rebalance'
+  | 'get_context'
+  | 'get_activity'
+  | 'inspect_risk'
+  | 'generate_options'
+  | 'simulate_action'
   | 'compare_scenarios'
-  | 'inspect_concentration'
-  | 'inspect_liquidity'
-  | 'inspect_diversification'
-  | 'prepare_private_transfer'
-  | 'prepare_shadow_execution'
-  | 'get_execution_status'
-  | 'refresh_portfolio'
-  | 'compare_expected_vs_actual';
+  | 'prepare_action';
 
 export interface ToolCallIntent {
   type: 'tool_call';
@@ -119,7 +98,7 @@ function validateNoArgs(raw: unknown): { ok: true; args: Record<string, unknown>
   return { ok: true, args: raw };
 }
 
-function validateAssetAmount(raw: unknown, ctx?: AgentToolContext): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+function validateAssetAmount(raw: unknown): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: 'args must be an object' };
   const asset = raw.asset;
   const amount = raw.amount;
@@ -128,6 +107,12 @@ function validateAssetAmount(raw: unknown, ctx?: AgentToolContext): { ok: true; 
     return { ok: false, error: 'args.amount must be a positive plain decimal string' };
   }
   return { ok: true, args: { asset: asset.trim(), amount: amount.trim() } };
+}
+
+function validateAssetOnly(raw: unknown): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+  if (!isRecord(raw)) return { ok: false, error: 'args must be an object' };
+  if (raw.asset !== undefined && typeof raw.asset !== 'string') return { ok: false, error: 'args.asset must be a string' };
+  return { ok: true, args: { asset: typeof raw.asset === 'string' ? raw.asset : '' } };
 }
 
 // ─── Tool implementations ─────────────────────────────────────────────────
@@ -147,16 +132,17 @@ function toolGetPortfolio(ctx: AgentToolContext): ToolResult {
         usdValue: round2(p.usdValue),
         pct: round1(p.pct),
         liquid: p.liquid,
+        priceUsd: p.priceUsd,
         priceSource: p.priceSource,
       })),
     },
   };
 }
 
-function toolGetTreasuryHealth(ctx: AgentToolContext): ToolResult {
+function toolGetHealth(ctx: AgentToolContext): ToolResult {
   return {
     ok: true,
-    tool: 'get_treasury_health',
+    tool: 'get_health',
     output: {
       healthScore: round1(ctx.health.healthScore),
       concentrationPct: round1(ctx.health.concentrationPct),
@@ -187,48 +173,59 @@ function toolGetPolicy(ctx: AgentToolContext): ToolResult {
   };
 }
 
-function toolGetPrices(ctx: AgentToolContext): ToolResult {
+function toolGetContext(ctx: AgentToolContext): ToolResult {
   return {
     ok: true,
-    tool: 'get_prices',
-    output: ctx.summary.positions.map((p) => ({
-      symbol: p.symbol,
-      priceUsd: p.priceUsd,
-      source: p.priceSource,
-      priceFetchedAt: p.priceFetchedAt ?? null,
-    })),
-  };
-}
-
-function toolGetPrivateIdentity(ctx: AgentToolContext): ToolResult {
-  return {
-    ok: true,
-    tool: 'get_private_identity',
+    tool: 'get_context',
     output: {
       privateTreasuryAddress: ctx.identity.privateTreasuryAddress,
       userAddress: ctx.identity.userAddress,
       verification: ctx.identity.verification,
+      approvedDestinations: ctx.policy.allowedDestinations,
       shadowAccountsEnabled: ctx.shadowCapability.enabled,
+      shadowReason: ctx.shadowCapability.reason,
     },
   };
 }
 
-function toolGetApprovedDestinations(ctx: AgentToolContext): ToolResult {
+function toolGetActivity(ctx: AgentToolContext): ToolResult {
   return {
     ok: true,
-    tool: 'get_approved_destinations',
-    output: {
-      approved: ctx.policy.allowedDestinations,
-      userAddress: ctx.identity.userAddress,
-    },
-  };
-}
-
-function toolGetRecentActivity(ctx: AgentToolContext): ToolResult {
-  return {
-    ok: true,
-    tool: 'get_recent_activity',
+    tool: 'get_activity',
     output: { activity: ctx.recentActivity },
+  };
+}
+
+function toolInspectRisk(ctx: AgentToolContext): ToolResult {
+  const topPos = [...ctx.summary.positions].sort((a, b) => b.usdValue - a.usdValue)[0];
+  const top = ctx.summary.topAsset;
+  const cap = ctx.policy.maxPositionPct;
+  const aboveCap = cap < 100 && ctx.health.concentrationPct > cap;
+  const headroom = Math.max(0, ctx.health.liquidityUsd - ctx.policy.minLiquidityUsd);
+  const shortfall = Math.max(0, ctx.policy.minLiquidityUsd - ctx.health.liquidityUsd);
+  let dominantRisk: 'concentration' | 'liquidity' | 'diversification' | 'none' = 'none';
+  if (aboveCap) dominantRisk = 'concentration';
+  else if (!ctx.health.aboveLiquidityTarget) dominantRisk = 'liquidity';
+  else if (ctx.health.diversification === 'low') dominantRisk = 'diversification';
+  const breakEven = topPos ? concentrationBreakEvenUsd(ctx.summary, ctx.policy, topPos.token) : null;
+  return {
+    ok: true,
+    tool: 'inspect_risk',
+    output: {
+      dominantRisk,
+      topAsset: top?.symbol ?? null,
+      concentrationPct: round1(ctx.health.concentrationPct),
+      concentrationCap: cap >= 100 ? 'off' : cap,
+      aboveCap,
+      breakEvenUsd: breakEven === null ? null : round2(breakEven),
+      assetCount: ctx.health.assetCount,
+      diversification: ctx.health.diversification,
+      liquidityUsd: round2(ctx.health.liquidityUsd),
+      liquidityFloor: ctx.policy.minLiquidityUsd,
+      aboveFloor: ctx.health.aboveLiquidityTarget,
+      liquidityHeadroomUsd: round2(headroom),
+      liquidityShortfallUsd: round2(shortfall),
+    },
   };
 }
 
@@ -236,24 +233,23 @@ function simulate(ctx: AgentToolContext, asset: string, amount: string): Scenari
   return simulateAction(ctx.summary, ctx.policy, { asset, amount });
 }
 
-function toolSimulateTransfer(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
+function toolSimulateAction(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
   const asset = String(args.asset);
   const amount = String(args.amount);
   const pos = positionFor(ctx, asset);
-  if (!pos) return { ok: false, tool: 'simulate_transfer', error: `${asset} is not a treasury position.` };
+  if (!pos) return { ok: false, tool: 'simulate_action', error: `${asset} is not a treasury position.` };
   const sim = simulate(ctx, asset, amount);
-  if (!sim.ok) return { ok: false, tool: 'simulate_transfer', error: sim.error ?? 'simulation failed' };
-  return { ok: true, tool: 'simulate_transfer', output: scenarioOutput(pos.symbol, sim) };
+  if (!sim.ok) return { ok: false, tool: 'simulate_action', error: sim.error ?? 'simulation failed' };
+  return { ok: true, tool: 'simulate_action', output: scenarioOutput(pos.symbol, sim) };
 }
 
-function toolSimulateRebalance(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
+function toolGenerateOptions(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
   const asset = String(args.asset ?? '');
-  const target = positionFor(ctx, asset);
-  if (!target && asset !== '') return { ok: false, tool: 'simulate_rebalance', error: `${asset} is not a treasury position.` };
+  if (asset !== '' && !positionFor(ctx, asset)) return { ok: false, tool: 'generate_options', error: `${asset} is not a treasury position.` };
   const candidates = generateRebalanceCandidates(ctx.summary, ctx.policy, { asset: asset || undefined });
   return {
     ok: true,
-    tool: 'simulate_rebalance',
+    tool: 'generate_options',
     output: candidates.map((c) => ({
       id: c.id,
       label: c.label,
@@ -292,68 +288,26 @@ function toolCompareScenarios(ctx: AgentToolContext, args: Record<string, unknow
   return { ok: true, tool: 'compare_scenarios', output: { scenarios: out } };
 }
 
-function toolInspectConcentration(ctx: AgentToolContext): ToolResult {
-  const top = ctx.summary.topAsset;
-  const cap = ctx.policy.maxPositionPct;
-  return {
-    ok: true,
-    tool: 'inspect_concentration',
-    output: {
-      topAsset: top?.symbol ?? null,
-      concentrationPct: round1(ctx.health.concentrationPct),
-      cap: cap >= 100 ? 'off' : cap,
-      aboveCap: cap < 100 && ctx.health.concentrationPct > cap,
-      assetCount: ctx.summary.positions.length,
-    },
-  };
-}
-
-function toolInspectLiquidity(ctx: AgentToolContext): ToolResult {
-  return {
-    ok: true,
-    tool: 'inspect_liquidity',
-    output: {
-      liquidityUsd: round2(ctx.health.liquidityUsd),
-      floor: ctx.policy.minLiquidityUsd,
-      aboveFloor: ctx.health.aboveLiquidityTarget,
-      headroomUsd: round2(Math.max(0, ctx.health.liquidityUsd - ctx.policy.minLiquidityUsd)),
-      shortfallUsd: round2(Math.max(0, ctx.policy.minLiquidityUsd - ctx.health.liquidityUsd)),
-    },
-  };
-}
-
-function toolInspectDiversification(ctx: AgentToolContext): ToolResult {
-  return {
-    ok: true,
-    tool: 'inspect_diversification',
-    output: {
-      assetCount: ctx.health.assetCount,
-      diversification: ctx.health.diversification,
-      topAssetPct: round1(ctx.health.concentrationPct),
-    },
-  };
-}
-
-function toolPreparePrivateTransfer(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
+function toolPrepareAction(ctx: AgentToolContext, args: Record<string, unknown>): ToolResult {
   const asset = String(args.asset);
   const amount = String(args.amount);
   const requestedRecipient = typeof args.recipient === 'string' && args.recipient.trim() !== '' ? args.recipient.trim() : null;
   const pos = positionFor(ctx, asset);
-  if (!pos) return { ok: false, tool: 'prepare_private_transfer', error: `${asset} is not a treasury position.` };
+  if (!pos) return { ok: false, tool: 'prepare_action', error: `${asset} is not a treasury position.` };
 
   let recipient: string | null = null;
   if (requestedRecipient) {
     const target = canonicalToken(requestedRecipient);
     const approved = ctx.policy.allowedDestinations.some((d) => canonicalToken(d) === target);
     if (!approved) {
-      return { ok: false, tool: 'prepare_private_transfer', error: 'recipient is not an approved destination.' };
+      return { ok: false, tool: 'prepare_action', error: 'recipient is not an approved destination.' };
     }
     recipient = requestedRecipient;
   } else {
     recipient = ctx.policy.allowedDestinations[0] ?? null;
   }
   if (!recipient) {
-    return { ok: false, tool: 'prepare_private_transfer', error: 'no approved destination is configured; execution is unavailable.' };
+    return { ok: false, tool: 'prepare_action', error: 'no approved destination is configured; execution is unavailable.' };
   }
 
   const proposal: ActionProposal = {
@@ -366,7 +320,7 @@ function toolPreparePrivateTransfer(ctx: AgentToolContext, args: Record<string, 
   const sim = simulate(ctx, asset, amount);
   return {
     ok: true,
-    tool: 'prepare_private_transfer',
+    tool: 'prepare_action',
     output: {
       prepared: {
         type: 'private_transfer',
@@ -376,6 +330,7 @@ function toolPreparePrivateTransfer(ctx: AgentToolContext, args: Record<string, 
         amountBaseUnits: verdict.amountBaseUnits.toString(),
         amountUsd: round2(verdict.amountUsd),
       },
+      executionPath: 'standard',
       simulation: sim.ok ? scenarioOutput(pos.symbol, sim) : { error: sim.error },
       verdict: {
         allowed: verdict.allowed,
@@ -387,96 +342,26 @@ function toolPreparePrivateTransfer(ctx: AgentToolContext, args: Record<string, 
   };
 }
 
-function toolPrepareShadowExecution(ctx: AgentToolContext, _args: Record<string, unknown>): ToolResult {
-  const cap = ctx.shadowCapability;
-  if (!cap.enabled) {
-    return {
-      ok: false,
-      tool: 'prepare_shadow_execution',
-      error: `shadow account capability is disabled: ${cap.reason}. The standard private-transfer path remains available.`,
-    };
-  }
-  return {
-    ok: true,
-    tool: 'prepare_shadow_execution',
-    output: {
-      supported: true,
-      note: 'shadow account execution is prepared client-side after user confirmation; the server never receives the viewing key.',
-      anonymizerAddress: cap.anonymizerAddress,
-      dappName: cap.dappName,
-    },
-  };
-}
-
-function toolGetExecutionStatus(ctx: AgentToolContext): ToolResult {
-  return {
-    ok: true,
-    tool: 'get_execution_status',
-    output: ctx.executionState ?? { status: 'idle' },
-  };
-}
-
-async function toolRefreshPortfolio(ctx: AgentToolContext): Promise<ToolResult> {
-  const portfolioOutput = (toolGetPortfolio(ctx) as { ok: true; output: unknown }).output;
-  if (!ctx.refreshPortfolio) {
-    return { ok: true, tool: 'refresh_portfolio', output: { refreshed: false, summary: portfolioOutput } };
-  }
-  const summary = await ctx.refreshPortfolio();
-  const health = computeTreasuryHealth(summary, ctx.policy);
-  return {
-    ok: true,
-    tool: 'refresh_portfolio',
-    output: { refreshed: true, summary: (toolGetPortfolio({ ...ctx, summary, health } as AgentToolContext) as { ok: true; output: unknown }).output },
-  };
-}
-
-function toolCompareExpectedVsActual(ctx: AgentToolContext): ToolResult {
-  const expected = ctx.executionState?.expected;
-  if (!expected) {
-    return { ok: false, tool: 'compare_expected_vs_actual', error: 'no expected outcome from a prior execution to compare.' };
-  }
-  const verification: ExecutionVerification = verifyExecution(expected.after, ctx.summary);
-  return {
-    ok: true,
-    tool: 'compare_expected_vs_actual',
-    output: {
-      before: expected.before,
-      expected: expected.after,
-      actual: verification.actual,
-      matches: verification.matches,
-      tolerancePct: verification.tolerancePct,
-    },
-  };
-}
-
-// ─── Registry ──────────────────────────────────────────────────────────────
+// ─── Registry (model-callable surface only) ─────────────────────────────────
 
 export const AGENT_TOOLS: Record<ToolId, AgentTool> = {
-  get_portfolio: { name: 'get_portfolio', description: 'Read the private treasury portfolio (positions, USD values, allocations).', validateArgs: validateNoArgs, run: toolGetPortfolio },
-  get_treasury_health: { name: 'get_treasury_health', description: 'Read advisory health: concentration, liquidity, diversification.', validateArgs: validateNoArgs, run: toolGetTreasuryHealth },
+  get_portfolio: { name: 'get_portfolio', description: 'Read the private treasury portfolio (positions, USD values, allocations, prices).', validateArgs: validateNoArgs, run: toolGetPortfolio },
+  get_health: { name: 'get_health', description: 'Read advisory health: concentration, liquidity, diversification.', validateArgs: validateNoArgs, run: toolGetHealth },
   get_policy: { name: 'get_policy', description: 'Read the active deterministic guardrail and approved destinations.', validateArgs: validateNoArgs, run: toolGetPolicy },
-  get_prices: { name: 'get_prices', description: 'Read per-position USD prices and their freshness.', validateArgs: validateNoArgs, run: toolGetPrices },
-  get_private_identity: { name: 'get_private_identity', description: 'Read the STRK20 private identity and shadow-account capability.', validateArgs: validateNoArgs, run: toolGetPrivateIdentity },
-  get_approved_destinations: { name: 'get_approved_destinations', description: 'Read the approved private destinations for execution.', validateArgs: validateNoArgs, run: toolGetApprovedDestinations },
-  get_recent_activity: { name: 'get_recent_activity', description: 'Read recent treasury activity.', validateArgs: validateNoArgs, run: toolGetRecentActivity },
-  simulate_transfer: { name: 'simulate_transfer', description: 'Simulate moving an amount of an asset to the approved reserve (never executes).', validateArgs: validateAssetAmount, run: toolSimulateTransfer },
-  simulate_rebalance: { name: 'simulate_rebalance', description: 'Generate deterministic rebalance candidates for an over-concentrated asset.', validateArgs: (raw) => (isRecord(raw) && (raw.asset === undefined || typeof raw.asset === 'string') ? { ok: true, args: { asset: typeof raw.asset === 'string' ? raw.asset : '' } } : { ok: false, error: 'args.asset must be a string' }), run: toolSimulateRebalance },
+  get_context: { name: 'get_context', description: 'Read the STRK20 private identity, approved destinations, and shadow-account capability.', validateArgs: validateNoArgs, run: toolGetContext },
+  get_activity: { name: 'get_activity', description: 'Read recent treasury activity.', validateArgs: validateNoArgs, run: toolGetActivity },
+  inspect_risk: { name: 'inspect_risk', description: 'Identify the dominant treasury risk (concentration / liquidity / diversification).', validateArgs: validateNoArgs, run: toolInspectRisk },
+  generate_options: { name: 'generate_options', description: 'Generate deterministic, policy-ranked rebalance options for an asset (optional asset).', validateArgs: validateAssetOnly, run: toolGenerateOptions },
+  simulate_action: { name: 'simulate_action', description: 'Simulate moving an amount of an asset to the approved reserve (never executes).', validateArgs: validateAssetAmount, run: toolSimulateAction },
   compare_scenarios: { name: 'compare_scenarios', description: 'Compare 1..6 { asset, amount } candidate moves and their policy status.', validateArgs: (raw) => (isRecord(raw) ? { ok: true, args: raw } : { ok: false, error: 'args must be an object' }), run: toolCompareScenarios },
-  inspect_concentration: { name: 'inspect_concentration', description: 'Inspect concentration vs the guardrail cap.', validateArgs: validateNoArgs, run: toolInspectConcentration },
-  inspect_liquidity: { name: 'inspect_liquidity', description: 'Inspect liquidity vs the guardrail floor.', validateArgs: validateNoArgs, run: toolInspectLiquidity },
-  inspect_diversification: { name: 'inspect_diversification', description: 'Inspect diversification by asset count.', validateArgs: validateNoArgs, run: toolInspectDiversification },
-  prepare_private_transfer: { name: 'prepare_private_transfer', description: 'Prepare a private-transfer action (validates + evaluates policy; never executes).', validateArgs: (raw) => { const r = validateAssetAmount(raw); if (!r.ok) return r; return isRecord(raw) ? { ok: true, args: raw } : r; }, run: toolPreparePrivateTransfer },
-  prepare_shadow_execution: { name: 'prepare_shadow_execution', description: 'Check whether shadow-account execution is available (feature-gated).', validateArgs: validateNoArgs, run: toolPrepareShadowExecution },
-  get_execution_status: { name: 'get_execution_status', description: 'Read the current execution status.', validateArgs: validateNoArgs, run: toolGetExecutionStatus },
-  refresh_portfolio: { name: 'refresh_portfolio', description: 'Refresh the portfolio from fresh state.', validateArgs: validateNoArgs, run: toolRefreshPortfolio },
-  compare_expected_vs_actual: { name: 'compare_expected_vs_actual', description: 'Compare a prior execution expectation against the current portfolio.', validateArgs: validateNoArgs, run: toolCompareExpectedVsActual },
+  prepare_action: { name: 'prepare_action', description: 'Prepare a private-transfer action for review (validates + evaluates policy; never executes).', validateArgs: (raw) => { const r = validateAssetAmount(raw); if (!r.ok) return r; return isRecord(raw) ? { ok: true, args: raw } : r; }, run: toolPrepareAction },
 };
 
 export const AGENT_TOOL_NAMES: ToolId[] = Object.keys(AGENT_TOOLS) as ToolId[];
 
 /**
- * Execute a tool call from the model. Unsupported tools and malformed args are rejected
- * without executing anything. Returns a discriminated result to feed back to the model.
+ * Execute a tool call from the model. Unsupported tools (including execution-lifecycle tools and
+ * any low-level primitives) and malformed args are rejected without executing anything.
  */
 export function executeTool(ctx: AgentToolContext, intent: ToolCallIntent): Promise<ToolResult> {
   const tool = AGENT_TOOLS[intent.tool as ToolId];
@@ -489,11 +374,6 @@ export function executeTool(ctx: AgentToolContext, intent: ToolCallIntent): Prom
   }
   const result = tool.run(ctx, validated.args);
   return Promise.resolve(result);
-}
-
-/** Best compliant rebalance candidate (deterministic). */
-export function bestRebalanceAction(ctx: AgentToolContext): RebalanceCandidate | null {
-  return selectBestAction(generateRebalanceCandidates(ctx.summary, ctx.policy));
 }
 
 // ─── Output helpers ─────────────────────────────────────────────────────────

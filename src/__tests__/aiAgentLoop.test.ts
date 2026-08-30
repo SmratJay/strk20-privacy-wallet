@@ -67,7 +67,7 @@ describe('runAgentLoop — bounded planning loop', () => {
   it('executes tool calls deterministically and stops at the plan', async () => {
     const provider = scriptedProvider([
       { type: 'tool_call', tool: 'get_portfolio', args: {} },
-      { type: 'tool_call', tool: 'simulate_transfer', args: { asset: STRK, amount: '740' } },
+      { type: 'tool_call', tool: 'simulate_action', args: { asset: STRK, amount: '740' } },
       PLAN_RAW,
     ]);
     const { plan, trace, stepsUsed } = await runAgentLoop(provider, ctx(), 'Make my treasury safer.');
@@ -75,7 +75,7 @@ describe('runAgentLoop — bounded planning loop', () => {
     expect(trace).toHaveLength(3);
     expect(trace[0].tool).toBe('get_portfolio');
     expect(trace[0].ok).toBe(true);
-    expect(trace[1].tool).toBe('simulate_transfer');
+    expect(trace[1].tool).toBe('simulate_action');
     expect(trace[1].ok).toBe(true);
     expect(plan.selectedScenarioId).toBe('s1');
     expect(plan.policyStatus).toBe('PASS');
@@ -115,10 +115,11 @@ describe('runAgentLoop — bounded planning loop', () => {
 
   it('lists only the supported tools in the system prompt', () => {
     const prompt = buildAgentSystemPrompt(ctx());
-    for (const forbidden of ['send_calldata', 'sign', 'call_contract']) {
+    for (const forbidden of ['send_calldata', 'sign', 'call_contract', 'refresh_portfolio', 'get_execution_status']) {
       expect(prompt).not.toContain(forbidden);
     }
-    expect(prompt).toContain('simulate_transfer');
+    expect(prompt).toContain('simulate_action');
     expect(prompt).toContain('get_portfolio');
+    expect(prompt).toContain('prepare_action');
   });
 });

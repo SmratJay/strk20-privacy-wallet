@@ -35,6 +35,34 @@ export interface AgentScenario {
 
 export type PlanPolicyStatus = 'PASS' | 'FAIL' | 'ADVISORY';
 
+/** The effective guardrail captured when the plan was produced (audit/integrity state). */
+export interface GuardrailSnapshot {
+  minLiquidityUsd: number;
+  maxPositionPct: number;
+  maxTxUsd: number;
+}
+
+/**
+ * The execution portion of an AgentPlan. Server-compiled, deterministic, canonical. The model
+ * may only suggest the asset + amount; every derived field (base units, recipient, snapshot,
+ * expected simulation, execution path) is filled by the compiler and never trusted from the model.
+ *
+ * `executionPath` is `standard` for every executable plan in this build. Shadow exists only as a
+ * capability/readiness field elsewhere; the router rejects `shadow` as not implemented.
+ */
+export interface ExecutionIntent {
+  executionPath: 'standard' | 'shadow';
+  asset: string;
+  amountHuman: string;
+  /** EXACT base units as a decimal string (server-computed via parseAmountExact). */
+  amountBaseUnits: string;
+  /** Authoritative approved destination (first approved / user account). */
+  recipient: string;
+  guardrailSnapshot: GuardrailSnapshot;
+  /** The selected scenario's real simulation — used for display AND post-execution verification. */
+  expectedSimulation: ScenarioSimulation;
+}
+
 export interface AgentPlan {
   type: 'plan';
   goal: string;
@@ -48,6 +76,8 @@ export interface AgentPlan {
   /** Always true when a state-changing action is selected; the server forces this. */
   requiresUserConfirmation: boolean;
   reason: string;
+  /** Canonical executable intent (null for advisory plans). */
+  executionIntent: ExecutionIntent | null;
 }
 
 /** Model-facing shape: candidate actions + narrative; numbers are filled by the server. */
@@ -223,6 +253,29 @@ function buildScenario(
   };
 }
 
+/**
+ * Build the canonical ExecutionIntent for a selected scenario. Every derived field is computed
+ * here deterministically — the model never supplies base units, recipient, policy values,
+ * expected numbers, or the execution path.
+ */
+function buildExecutionIntent(ctx: PlanContext, scenario: AgentScenario): ExecutionIntent {
+  const position = positionFor(ctx.summary, scenario.action.asset);
+  const parsed = parseAmountExact(scenario.action.amount, position?.decimals ?? 18);
+  return {
+    executionPath: 'standard',
+    asset: scenario.action.asset,
+    amountHuman: scenario.action.amount,
+    amountBaseUnits: (parsed.ok ? parsed.value : 0n).toString(),
+    recipient: scenario.action.recipient,
+    guardrailSnapshot: {
+      minLiquidityUsd: ctx.policy.minLiquidityUsd,
+      maxPositionPct: ctx.policy.maxPositionPct,
+      maxTxUsd: ctx.policy.maxTxUsd,
+    },
+    expectedSimulation: scenario.simulation,
+  };
+}
+
 function deterministicNarrative(ctx: PlanContext): { observations: string[]; risks: string[] } {
   const diagnosis = buildDiagnosis(ctx.health, ctx.summary);
   const risks: string[] = [];
@@ -289,6 +342,7 @@ function compileLegacyProposal(raw: Record<string, unknown>, ctx: PlanContext): 
       policyStatus: 'ADVISORY',
       requiresUserConfirmation: false,
       reason: proposal.reason,
+      executionIntent: null,
     };
     return { ok: true, plan };
   }
@@ -307,6 +361,7 @@ function compileLegacyProposal(raw: Record<string, unknown>, ctx: PlanContext): 
     policyStatus: scenario.policyCompliant ? 'PASS' : 'FAIL',
     requiresUserConfirmation: true,
     reason: proposal.reason,
+    executionIntent: buildExecutionIntent(ctx, scenario),
   };
   return { ok: true, plan };
 }
@@ -380,6 +435,7 @@ function compileRawPlan(raw: unknown, ctx: PlanContext): CompilePlanResult {
     policyStatus,
     requiresUserConfirmation,
     reason,
+    executionIntent: selected ? buildExecutionIntent(ctx, selected) : null,
   };
   return { ok: true, plan };
 }
@@ -415,6 +471,27 @@ export function validateAgentPlan(raw: unknown): { ok: true; value: AgentPlan } 
   if (typeof r.requiresUserConfirmation !== 'boolean') return { ok: false, error: 'requiresUserConfirmation must be boolean' };
   if (r.requiresUserConfirmation !== (selected !== null)) return { ok: false, error: 'requiresUserConfirmation must be true iff an action is selected' };
   if (typeof r.reason !== 'string' || r.reason.trim() === '') return { ok: false, error: 'plan.reason missing' };
+
+  // Execution intent: present iff an action is selected, and consistent with the selected scenario.
+  const intent = r.executionIntent;
+  if (selected === null) {
+    if (intent !== null && intent !== undefined) return { ok: false, error: 'executionIntent must be null when no action is selected' };
+  } else {
+    if (intent === null || typeof intent !== 'object') return { ok: false, error: 'executionIntent required when an action is selected' };
+    const it = intent as Record<string, unknown>;
+    if (it.executionPath !== 'standard' && it.executionPath !== 'shadow') return { ok: false, error: 'invalid executionPath' };
+    const selectedAction = (r.scenarios.find((s) => (s as Record<string, unknown>).id === selected) as Record<string, unknown>).action as Record<string, unknown>;
+    if (it.asset !== selectedAction.asset) return { ok: false, error: 'executionIntent.asset must match the selected scenario' };
+    if (it.amountHuman !== selectedAction.amount) return { ok: false, error: 'executionIntent.amountHuman must match the selected scenario' };
+    if (it.recipient !== selectedAction.recipient) return { ok: false, error: 'executionIntent.recipient must match the selected scenario' };
+    if (typeof it.amountBaseUnits !== 'string' || !/^\d+$/.test(it.amountBaseUnits)) return { ok: false, error: 'executionIntent.amountBaseUnits must be a decimal string' };
+    const snap = it.guardrailSnapshot as Record<string, unknown> | null | undefined;
+    if (!snap || typeof snap !== 'object') return { ok: false, error: 'executionIntent.guardrailSnapshot required' };
+    for (const key of ['minLiquidityUsd', 'maxPositionPct', 'maxTxUsd'] as const) {
+      if (typeof snap[key] !== 'number') return { ok: false, error: `executionIntent.guardrailSnapshot.${key} required` };
+    }
+    if (typeof it.expectedSimulation !== 'object' || it.expectedSimulation === null) return { ok: false, error: 'executionIntent.expectedSimulation required' };
+  }
   return { ok: true, value: r as unknown as AgentPlan };
 }
 
@@ -430,19 +507,20 @@ export function selectedScenarioOf(plan: AgentPlan): AgentScenario | null {
  * throws. Numbers the UI displays (concentration, liquidity) are untouched.
  */
 export function planToJsonSafe(plan: AgentPlan): AgentPlan {
+  const safeSimulation = (sim: ScenarioSimulation) => ({
+    ...sim,
+    amountBaseUnits: sim.amountBaseUnits.toString(),
+    verdict: {
+      ...sim.verdict,
+      amountBaseUnits: sim.verdict.amountBaseUnits.toString(),
+    },
+  });
   return {
     ...plan,
-    scenarios: plan.scenarios.map((sc) => ({
-      ...sc,
-      simulation: {
-        ...sc.simulation,
-        amountBaseUnits: sc.simulation.amountBaseUnits.toString(),
-        verdict: {
-          ...sc.simulation.verdict,
-          amountBaseUnits: sc.simulation.verdict.amountBaseUnits.toString(),
-        },
-      },
-    })),
+    scenarios: plan.scenarios.map((sc) => ({ ...sc, simulation: safeSimulation(sc.simulation) })),
+    executionIntent: plan.executionIntent
+      ? { ...plan.executionIntent, expectedSimulation: safeSimulation(plan.executionIntent.expectedSimulation) }
+      : null,
   } as unknown as AgentPlan;
 }
 

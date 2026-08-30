@@ -211,3 +211,65 @@ describe('validateAgentPlan — schema guard', () => {
     if (compiled.ok) expect(validateAgentPlan(compiled.plan).ok).toBe(true);
   });
 });
+
+describe('ExecutionIntent — the plan becomes the executable artifact', () => {
+  it('compiles exact base units, recipient, and guardrail snapshot deterministically', () => {
+    const raw = { type: 'plan', goal: 'g', scenarios: [{ id: 's1', label: 'x', action: { type: 'private_transfer', asset: STRK, amount: '740' } }], selectedScenarioId: 's1' };
+    const compiled = compileAgentPlan(raw, ctx());
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      const intent = compiled.plan.executionIntent;
+      expect(intent).not.toBeNull();
+      if (intent) {
+        expect(intent.executionPath).toBe('standard');
+        expect(intent.asset).toBe(STRK);
+        expect(intent.amountHuman).toBe('740');
+        expect(intent.amountBaseUnits).toBe((740n * 10n ** 18n).toString());
+        expect(intent.recipient).toBe(DEST); // first approved destination (authoritative)
+        expect(intent.guardrailSnapshot).toEqual({ minLiquidityUsd: 1000, maxPositionPct: 60, maxTxUsd: 5000 });
+        // The expected simulation is the real deterministic one (the same used for verification).
+        expect(intent.expectedSimulation.after.concentrationPct).toBeLessThan(60);
+      }
+    }
+  });
+
+  it('ignores any model-supplied intent — the server recomputes everything', () => {
+    const raw = {
+      type: 'plan',
+      goal: 'g',
+      scenarios: [{ id: 's1', label: 'x', action: { type: 'private_transfer', asset: STRK, amount: '740' } }],
+      selectedScenarioId: 's1',
+      executionIntent: {
+        executionPath: 'shadow',
+        asset: '0xdead',
+        amountHuman: '99999',
+        amountBaseUnits: '1',
+        recipient: '0xattacker',
+        guardrailSnapshot: { minLiquidityUsd: 0, maxPositionPct: 100, maxTxUsd: 100000000 },
+        expectedSimulation: { fake: true },
+      },
+    };
+    const compiled = compileAgentPlan(raw, ctx());
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      const intent = compiled.plan.executionIntent!;
+      // The model's injected intent is dropped; the server-compiled one is authoritative.
+      expect(intent.executionPath).toBe('standard');
+      expect(intent.asset).toBe(STRK);
+      expect(intent.amountHuman).toBe('740');
+      expect(intent.recipient).toBe(DEST);
+      expect(intent.guardrailSnapshot.minLiquidityUsd).toBe(1000);
+      expect(intent.expectedSimulation).not.toHaveProperty('fake');
+    }
+  });
+
+  it('is null for advisory plans', () => {
+    const raw = { type: 'plan', goal: 'g', scenarios: [], selectedScenarioId: null };
+    const compiled = compileAgentPlan(raw, ctx());
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.plan.executionIntent).toBeNull();
+      expect(validateAgentPlan(compiled.plan).ok).toBe(true);
+    }
+  });
+});

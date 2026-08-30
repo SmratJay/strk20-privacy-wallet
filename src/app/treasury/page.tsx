@@ -46,10 +46,10 @@ import {
   Actionability,
 } from '@/ai/health';
 import { AssetPrice, resolvePortfolioPrices } from '@/ai/prices';
-import { AgentPlan, selectedScenarioOf } from '@/ai/plan';
+import { AgentPlan } from '@/ai/plan';
 import { ShadowAccountCapability } from '@/ai/shadow';
 import { verifyExecution, ExecutionVerification, OutcomePoint } from '@/ai/verification';
-import { executeProposal, tokenSymbols, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
+import { executeIntent, tokenSymbols, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { shortenAddress, formatTokenAmount } from '@/utils/formatters';
 
@@ -249,17 +249,9 @@ export default function TreasuryPage() {
         return;
       }
       setAnalyzeState({ status: 'done', analysis: json });
-      // Seed the What-If with the agent's selected scenario (REAL deterministic simulation).
-      const selected = selectedScenarioOf(json.plan);
-      if (selected) {
-        setScenario(selected.simulation);
-      } else if (json.proposal.action.type === 'private_transfer') {
-        setScenario(
-          simulateAction(json.summary, json.policy, {
-            asset: json.proposal.action.asset,
-            amount: json.proposal.action.amount,
-          }),
-        );
+      // Seed the What-If with the plan's canonical expected simulation (single source of truth).
+      if (json.plan.executionIntent) {
+        setScenario(json.plan.executionIntent.expectedSimulation);
       }
     } catch (e) {
       setAnalyzeState({
@@ -271,13 +263,15 @@ export default function TreasuryPage() {
 
   const confirm = async () => {
     if (analyzeState.status !== 'done' || executeState.status === 'running') return;
-    const { proposal, proposalExpiresAt, policy } = analyzeState.analysis;
+    const { plan, policy, proposalExpiresAt } = analyzeState.analysis;
+    const intent = plan.executionIntent;
+    if (!intent) return; // advisory plan — nothing to execute
     setExecuteState({ status: 'running' });
     try {
       // 1. Re-fetch CURRENT wallet/STRK20 state.
       const currentBalances = await fetchRows();
 
-      // 2. Execute ONLY through the existing STRK20 privateTransfer path.
+      // 2. Execute ONLY through the ExecutionRouter using the plan's canonical intent.
       const executeTransfer = async (opts: { amountBase: bigint; token: string; recipient: string }) => {
         if (privyConnected) {
           const res = await privy.transfer(opts.token, opts.amountBase, opts.recipient);
@@ -286,9 +280,9 @@ export default function TreasuryPage() {
         return strk20WalletApiService.privateTransfer(wallet, opts.token, opts.amountBase, opts.recipient);
       };
 
-      const result = await executeProposal({
-        proposal,
-        proposalExpiresAt,
+      const result = await executeIntent({
+        intent,
+        expiresAt: proposalExpiresAt,
         policy,
         analysisBalances: analysisBalancesRef.current,
         currentBalances,
@@ -313,8 +307,8 @@ export default function TreasuryPage() {
       }
 
       // 3. Record treasury activity + refresh balances.
-      const tokenSymbol = SEPOLIA_TOKENS.find((t) => canonicalToken(t.address) === canonicalToken(proposal.action.asset))?.symbol ?? 'TOKEN';
-      const decimals = SEPOLIA_TOKENS.find((t) => canonicalToken(t.address) === canonicalToken(proposal.action.asset))?.decimals ?? 18;
+      const tokenSymbol = assetSymbol(intent.asset);
+      const decimals = assetDecimals(intent.asset);
       recordTransaction({
         id: `treasury-${Date.now()}`,
         type: 'PRIVATE_TRANSFER',
@@ -322,16 +316,15 @@ export default function TreasuryPage() {
         timestamp: Date.now(),
         tokenSymbol,
         amount: formatTokenAmount(result.amountBaseUnits, decimals, 6),
-        recipient: proposal.action.recipient,
+        recipient: intent.recipient,
         status: 'CONFIRMED',
         isPrivate: true,
         privacyDetails: 'AI Treasury Rebalance',
       });
       setExecuteState({ status: 'success', result });
       await refreshAfterMutation();
-      // Refresh balances and verify the expected (simulated) outcome vs the actual result.
-      const expectedAfter = selectedScenarioOf(analyzeState.analysis.plan)?.simulation.after ?? null;
-      await refreshAndVerify(expectedAfter);
+      // 4. Verify against the SAME plan's expected simulation (returned by the router).
+      await refreshAndVerify(result.expectedSimulation.after);
     } catch (e) {
       setExecuteState({
         status: 'failure',
@@ -370,8 +363,9 @@ export default function TreasuryPage() {
     (targetUsd: number): ScenarioSimulation | null => {
       if (analyzeState.status !== 'done') return null;
       const { analysis } = analyzeState;
-      if (analysis.proposal.action.type !== 'private_transfer') return null;
-      const asset = analysis.proposal.action.asset;
+      const intent = analysis.plan.executionIntent;
+      if (!intent) return null;
+      const asset = intent.asset;
       const pos = analysis.summary.positions.find((p) => canonicalToken(p.token) === canonicalToken(asset));
       if (!pos || pos.priceUsd <= 0) return null;
       const amount = Math.min(targetUsd / pos.priceUsd, pos.balanceHuman);
@@ -397,7 +391,10 @@ export default function TreasuryPage() {
 
   const analysis = analyzeState.status === 'done' ? analyzeState.analysis : null;
   const verdict = analysis?.verdict ?? null;
-  const action = analysis?.proposal.action ?? null;
+  const intent = analysis?.plan.executionIntent ?? null;
+  const action = intent
+    ? { type: 'private_transfer' as const, asset: intent.asset, amount: intent.amountHuman, recipient: intent.recipient }
+    : null;
   const analysisExpired = expiresIn !== null && expiresIn <= 0;
 
   const guardrailPolicy = useMemo<TreasuryPolicy>(() => {
@@ -414,11 +411,13 @@ export default function TreasuryPage() {
   const actionability: Actionability | null = analysis ? classifyActionability(analysis.proposal, analysis.verdict) : null;
   const failedChecks = verdict ? blockedPolicyChecks(verdict) : [];
 
-  const recommendedSim: ScenarioSimulation | null = analysis ? (selectedScenarioOf(analysis.plan)?.simulation ?? null) : null;
+  // The canonical expected outcome lives on the plan's ExecutionIntent — the same object used for
+  // display, execution, and post-execution verification. There is no separate reconstruction.
+  const recommendedSim: ScenarioSimulation | null = intent?.expectedSimulation ?? null;
   const displaySim = scenario ?? recommendedSim;
 
   const noDestination = !!analysis && analysis.policy.allowedDestinations.length === 0;
-  const executionReady = actionability === 'EXECUTABLE' && !analysisExpired && !noDestination;
+  const executionReady = actionability === 'EXECUTABLE' && !analysisExpired && !noDestination && !!intent;
 
   const insight = analysis?.proposal.insight;
 
@@ -875,8 +874,7 @@ export default function TreasuryPage() {
                   <CheckCircle2 className="w-4 h-4" /> Private transfer submitted
                 </div>
                 <div className="text-[13px]" style={{ color: 'var(--app-text-secondary)' }}>
-                  {formatTokenAmount(executeState.result.amountBaseUnits, assetDecimals(analysis.proposal.action.asset), 6)}{' '}
-                  {assetSymbol(analysis.proposal.action.asset)} · confirmed by your wallet.
+                  {intent ? `${formatTokenAmount(executeState.result.amountBaseUnits, assetDecimals(intent.asset), 6)} ${assetSymbol(intent.asset)} · confirmed by your wallet.` : 'Confirmed by your wallet.'}
                 </div>
                 {executeState.result.transactionHash && (
                   <a
@@ -995,6 +993,8 @@ export default function TreasuryPage() {
         return 'Policy rejected against current state';
       case 'AMOUNT_INVALID':
         return 'Invalid amount';
+      case 'SHADOW_UNAVAILABLE':
+        return 'Shadow Account execution is not available';
       default:
         return 'Execution failed';
     }
@@ -1065,18 +1065,14 @@ function AnalysisInsight({
   requestConflict: boolean;
   requestedLiquidityUsd: number | null;
 }) {
-  const { proposal, plan } = analysis;
-  const insight = proposal.insight;
-  const action = proposal.action;
+  const { plan } = analysis;
+  const intent = plan.executionIntent;
   const selected = plan.selectedScenarioId ? plan.scenarios.find((s) => s.id === plan.selectedScenarioId) ?? null : null;
-  const symbol =
-    action.type === 'private_transfer'
-      ? SEPOLIA_TOKENS.find((t) => t.address.toLowerCase() === action.asset.toLowerCase())?.symbol ?? 'TOKEN'
-      : '';
-  const headline = insight?.diagnosis ?? plan.observations[0] ?? diagnosis?.concentrationLine ?? 'Your treasury needs attention.';
-  const recommendation = selected
-    ? `Move ${selected.action.amount} ${assetSymbolFor(selected.action.asset)} to your approved private reserve.`
-    : (insight?.recommendation ?? 'No action is required right now.');
+  const symbol = intent ? assetSymbolFor(intent.asset) : '';
+  const headline = plan.observations[0] ?? diagnosis?.concentrationLine ?? 'Your treasury needs attention.';
+  const recommendation = intent
+    ? `Move ${intent.amountHuman} ${assetSymbolFor(intent.asset)} to your approved private reserve.`
+    : 'No action is required right now.';
   const outcome =
     plan.expectedOutcome ||
     (actionability === 'EXECUTABLE' ? 'Liquidity stays above your guardrail.' : 'The plan is not executable as proposed.');
@@ -1173,7 +1169,7 @@ function AnalysisInsight({
       </div>
 
       {/* What-If: BEFORE → AFTER */}
-      {action.type === 'private_transfer' && displaySim?.ok && (
+      {intent && displaySim?.ok && (
         <div>
           <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--app-text-muted)' }}>
             <span>What happens if I do it</span>

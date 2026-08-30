@@ -63,7 +63,7 @@ export function buildAgentSystemPrompt(ctx: AgentToolContext): string {
     '',
     'RULES:',
     '- Use ONLY assets present in the portfolio and ONLY approved destinations (read them with tools).',
-    '- Simulate before deciding: call simulate_transfer / simulate_rebalance / compare_scenarios with candidate amounts.',
+    '- Simulate before deciding: call simulate_action / generate_options / compare_scenarios with candidate amounts.',
     '- Stop with a plan as soon as you can decide. Max 4 tool calls.',
     '- If no compliant action exists, emit a plan with scenarios: [] and selectedScenarioId: null.',
     '- Never invent balances, prices, scenario outcomes, or tool names. Never emit prose outside JSON.',
@@ -71,24 +71,16 @@ export function buildAgentSystemPrompt(ctx: AgentToolContext): string {
 }
 
 const TOOL_LIST: { name: string; desc: string }[] = [
-  { name: 'get_portfolio', desc: 'read the private treasury portfolio' },
-  { name: 'get_treasury_health', desc: 'read advisory health (concentration, liquidity, diversification)' },
+  { name: 'get_portfolio', desc: 'read the private treasury portfolio (positions, USD values, allocations, prices)' },
+  { name: 'get_health', desc: 'read advisory health (concentration, liquidity, diversification)' },
   { name: 'get_policy', desc: 'read the active guardrail and approved destinations' },
-  { name: 'get_prices', desc: 'read per-position USD prices' },
-  { name: 'get_private_identity', desc: 'read the STRK20 private identity + shadow-account capability' },
-  { name: 'get_approved_destinations', desc: 'read approved private destinations' },
-  { name: 'get_recent_activity', desc: 'read recent treasury activity' },
-  { name: 'simulate_transfer', desc: 'simulate moving an amount of an asset (args: asset, amount)' },
-  { name: 'simulate_rebalance', desc: 'generate deterministic rebalance candidates for an asset' },
+  { name: 'get_context', desc: 'read the STRK20 private identity, approved destinations, and shadow-account capability' },
+  { name: 'get_activity', desc: 'read recent treasury activity' },
+  { name: 'inspect_risk', desc: 'identify the dominant treasury risk (concentration / liquidity / diversification)' },
+  { name: 'generate_options', desc: 'generate deterministic, policy-ranked rebalance options for an asset (optional asset)' },
+  { name: 'simulate_action', desc: 'simulate moving an amount of an asset (args: asset, amount)' },
   { name: 'compare_scenarios', desc: 'compare 1..6 candidate moves (args: scenarios)' },
-  { name: 'inspect_concentration', desc: 'concentration vs the guardrail cap' },
-  { name: 'inspect_liquidity', desc: 'liquidity vs the guardrail floor' },
-  { name: 'inspect_diversification', desc: 'diversification by asset count' },
-  { name: 'prepare_private_transfer', desc: 'prepare a private-transfer action for review (never executes)' },
-  { name: 'prepare_shadow_execution', desc: 'check shadow-account execution availability (feature-gated)' },
-  { name: 'get_execution_status', desc: 'read the current execution status' },
-  { name: 'refresh_portfolio', desc: 'refresh the portfolio from fresh state' },
-  { name: 'compare_expected_vs_actual', desc: 'compare a prior expectation against the current portfolio' },
+  { name: 'prepare_action', desc: 'prepare a private-transfer action for review (never executes)' },
 ];
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -212,6 +204,7 @@ export function buildFallbackPlan(ctx: PlanContext): AgentPlan {
     policyStatus: 'ADVISORY',
     requiresUserConfirmation: false,
     reason: 'Deterministic fallback after the agent could not produce a plan.',
+    executionIntent: null,
   };
   return plan;
 }

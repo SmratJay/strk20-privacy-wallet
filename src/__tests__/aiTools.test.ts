@@ -65,22 +65,30 @@ describe('agent tools — registry', () => {
     if (!r.ok) expect(r.error).toMatch(/unsupported tool/);
   });
 
-  it('rejects a low-level tool that must never reach the model', async () => {
+  it('rejects low-level tools that must never reach the model', async () => {
     for (const bad of ['sign', 'call_contract', 'execute_arbitrary']) {
       const r = await tool(bad);
       expect(r.ok, bad).toBe(false);
     }
   });
 
-  it('rejects malformed args for simulate_transfer', async () => {
+  it('execution-lifecycle tools are NOT model-callable', async () => {
+    for (const bad of ['refresh_portfolio', 'get_execution_status', 'compare_expected_vs_actual']) {
+      const r = await tool(bad);
+      expect(r.ok, bad).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/unsupported tool/);
+    }
+  });
+
+  it('rejects malformed args for simulate_action', async () => {
     for (const args of [{ asset: STRK, amount: '0' }, { asset: STRK, amount: '1e5' }, { asset: STRK, amount: '-5' }, { asset: STRK }, { amount: '10' }, {}]) {
-      const r = await tool('simulate_transfer', args);
+      const r = await tool('simulate_action', args);
       expect(r.ok, JSON.stringify(args)).toBe(false);
     }
   });
 
-  it('simulate_transfer returns the real deterministic scenario', async () => {
-    const r = await tool('simulate_transfer', { asset: STRK, amount: '740' });
+  it('simulate_action returns the real deterministic scenario', async () => {
+    const r = await tool('simulate_action', { asset: STRK, amount: '740' });
     expect(r.ok).toBe(true);
     if (r.ok) {
       const out = r.output as { before: { concentrationPct: number }; after: { concentrationPct: number }; policy: { allowed: boolean } };
@@ -89,33 +97,54 @@ describe('agent tools — registry', () => {
     }
   });
 
-  it('prepare_private_transfer rejects an unapproved recipient', async () => {
-    const r = await tool('prepare_private_transfer', { asset: STRK, amount: '100', recipient: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' });
+  it('generate_options returns deterministic policy-ranked candidates', async () => {
+    const r = await tool('generate_options', { asset: STRK });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const out = r.output as { policyCompliant: boolean; concentrationAfter: number }[];
+      expect(out.length).toBeGreaterThanOrEqual(2);
+      expect(out.some((c) => c.policyCompliant)).toBe(true);
+    }
+  });
+
+  it('inspect_risk reports the dominant risk and break-even', async () => {
+    const r = await tool('inspect_risk');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const out = r.output as { dominantRisk: string; aboveCap: boolean; breakEvenUsd: number | null; liquidityFloor: number };
+      expect(out.dominantRisk).toBe('concentration');
+      expect(out.aboveCap).toBe(true);
+      expect(out.breakEvenUsd).toBeCloseTo(3500, 0);
+      expect(out.liquidityFloor).toBe(1000);
+    }
+  });
+
+  it('get_context reports identity, destinations, and shadow capability (disabled)', async () => {
+    const r = await tool('get_context');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const out = r.output as { approvedDestinations: string[]; shadowAccountsEnabled: boolean; privateTreasuryAddress: string };
+      expect(out.approvedDestinations).toEqual([DEST]);
+      expect(out.shadowAccountsEnabled).toBe(false);
+      expect(out.privateTreasuryAddress).toBe(STRK);
+    }
+  });
+
+  it('prepare_action rejects an unapproved recipient', async () => {
+    const r = await tool('prepare_action', { asset: STRK, amount: '100', recipient: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/not an approved destination/);
   });
 
-  it('prepare_private_transfer falls back to the first approved destination and never executes', async () => {
-    const r = await tool('prepare_private_transfer', { asset: STRK, amount: '100' });
+  it('prepare_action falls back to the first approved destination, uses the standard path, and never executes', async () => {
+    const r = await tool('prepare_action', { asset: STRK, amount: '100' });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      const out = r.output as { prepared: { recipient: string; amountBaseUnits: string }; note: string };
+      const out = r.output as { prepared: { recipient: string; amountBaseUnits: string }; executionPath: string; note: string };
       expect(out.prepared.recipient).toBe(DEST);
       expect(out.prepared.amountBaseUnits).toBe('100000000000000000000');
+      expect(out.executionPath).toBe('standard');
       expect(out.note).toMatch(/never executes|prepared only/);
     }
-  });
-
-  it('prepare_shadow_execution is feature-gated off when no anonymizer is configured', async () => {
-    const r = await tool('prepare_shadow_execution');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/disabled/);
-  });
-
-  it('inspect_concentration / inspect_liquidity report real numbers', async () => {
-    const c = await tool('inspect_concentration');
-    expect(c.ok && (c.output as { concentrationPct: number }).concentrationPct).toBeCloseTo(74, 0);
-    const l = await tool('inspect_liquidity');
-    expect(l.ok && (l.output as { aboveFloor: boolean }).aboveFloor).toBe(true);
   });
 });

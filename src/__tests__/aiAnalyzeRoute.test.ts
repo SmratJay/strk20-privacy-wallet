@@ -171,6 +171,22 @@ describe('/api/ai/analyze', () => {
     expect(json.policy.maxPositionPct).toBe(100);
   });
 
+  it('returns a canonical ExecutionIntent on the plan (single executable artifact)', async () => {
+    mockProposal(PROPOSAL);
+    const res = await POST(request({ policy: { preset: 'conservative' } }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const intent = json.plan.executionIntent;
+    expect(intent).not.toBeNull();
+    expect(intent.executionPath).toBe('standard');
+    expect(BigInt(intent.asset)).toBe(BigInt(STRK));
+    expect(intent.amountHuman).toBe('10');
+    expect(intent.amountBaseUnits).toBe('10000000000000000000');
+    expect(intent.recipient).toBe(USER); // authoritative approved destination
+    expect(intent.guardrailSnapshot).toEqual({ minLiquidityUsd: 100, maxPositionPct: 60, maxTxUsd: 100 });
+    expect(typeof intent.expectedSimulation.after.concentrationPct).toBe('number');
+  });
+
   it('rejects an out-of-bounds custom policy with 400 (server validates bounds)', async () => {
     const res = await POST(
       request({ policy: { preset: 'custom', custom: { minLiquidityUsd: -5, maxPositionPct: 80, maxTxUsd: 150 } } }),
