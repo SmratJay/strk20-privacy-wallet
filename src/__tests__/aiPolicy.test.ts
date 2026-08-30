@@ -45,7 +45,9 @@ function summary(over: Partial<PortfolioSummary> = {}): PortfolioSummary {
 }
 
 function policy(over: Partial<TreasuryPolicy> = {}): TreasuryPolicy {
-  return { ...DEFAULT_TREASURY_POLICY, allowedDestinations: [DEST], ...over };
+  // Numeric limits are pinned to the original defaults so these boundary tests are
+  // independent of the small-wallet-friendly DEFAULT_TREASURY_POLICY.
+  return { ...DEFAULT_TREASURY_POLICY, minLiquidityUsd: 1000, maxPositionPct: 60, maxTxUsd: 5000, allowedDestinations: [DEST], ...over };
 }
 
 function transfer(asset: string, amount: string, recipient = DEST): ActionProposal {

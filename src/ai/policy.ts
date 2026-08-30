@@ -42,10 +42,148 @@ export interface TreasuryPolicy {
   selfTransferAddress?: string;
 }
 
+/**
+ * USER-SELECTED treasury guardrails. The AI can NEVER change these — they are chosen by the
+ * user (preset or explicit custom values) and validated server-side on every analyze request.
+ * The demo default is "flexible" so a small testnet treasury (~$100) is usable instead of
+ * being blocked by an arbitrary $1,000 liquidity floor.
+ */
+export type TreasuryPolicyPresetId = 'conservative' | 'balanced' | 'flexible';
+
+export interface TreasuryPolicyPreset {
+  id: TreasuryPolicyPresetId;
+  label: string;
+  description: string;
+  minLiquidityUsd: number;
+  maxPositionPct: number;
+  maxTxUsd: number;
+}
+
+export const TREASURY_POLICY_PRESETS: TreasuryPolicyPreset[] = [
+  {
+    id: 'conservative',
+    label: 'Conservative',
+    description: 'Keep $100 liquid · cap a single position at 60%',
+    minLiquidityUsd: 100,
+    maxPositionPct: 60,
+    maxTxUsd: 100,
+  },
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    description: 'Keep $50 liquid · cap a single position at 80%',
+    minLiquidityUsd: 50,
+    maxPositionPct: 80,
+    maxTxUsd: 150,
+  },
+  {
+    id: 'flexible',
+    label: 'Flexible',
+    description: 'Keep $25 liquid · no concentration cap',
+    minLiquidityUsd: 25,
+    maxPositionPct: 100,
+    maxTxUsd: 250,
+  },
+];
+
+export const DEFAULT_POLICY_PRESET_ID: TreasuryPolicyPresetId = 'flexible';
+
+export function getPolicyPreset(id: string): TreasuryPolicyPreset | undefined {
+  return TREASURY_POLICY_PRESETS.find((p) => p.id === id);
+}
+
+/** Allowed numeric bounds for a user-selected policy (server-validated; never trusted raw). */
+export const POLICY_BOUNDS = {
+  minLiquidityUsd: { min: 0, max: 1_000_000 },
+  maxPositionPct: { min: 1, max: 100 },
+  maxTxUsd: { min: 1, max: 10_000_000 },
+} as const;
+
+export interface CustomPolicyLimits {
+  minLiquidityUsd?: number;
+  maxPositionPct?: number;
+  maxTxUsd?: number;
+}
+
+/** What the client sends: a named preset, or `custom` with explicit numeric limits. */
+export interface UserPolicySelection {
+  preset: string;
+  custom?: CustomPolicyLimits;
+}
+
+export type PolicyLimitValues = {
+  minLiquidityUsd: number;
+  maxPositionPct: number;
+  maxTxUsd: number;
+};
+
+export type ResolvePolicyResult =
+  | { ok: true; values: PolicyLimitValues }
+  | { ok: false; error: string };
+
+function finiteInBounds(v: unknown, lo: number, hi: number): boolean {
+  return typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+}
+
+/**
+ * Resolve + validate a user-selected policy. Missing selection resolves to the demo default
+ * preset. A named preset returns its fixed values; `custom` requires explicit in-bounds
+ * limits. Out-of-bounds or unknown presets are rejected — the server never clamps silently.
+ */
+export function resolveUserPolicy(raw: unknown): ResolvePolicyResult {
+  if (raw === undefined || raw === null) {
+    const preset = getPolicyPreset(DEFAULT_POLICY_PRESET_ID)!;
+    return {
+      ok: true,
+      values: {
+        minLiquidityUsd: preset.minLiquidityUsd,
+        maxPositionPct: preset.maxPositionPct,
+        maxTxUsd: preset.maxTxUsd,
+      },
+    };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'policy must be an object' };
+  }
+  const r = raw as Record<string, unknown>;
+  const presetId = typeof r.preset === 'string' ? r.preset : '';
+  if (presetId !== 'custom') {
+    const preset = getPolicyPreset(presetId);
+    if (!preset) return { ok: false, error: `unknown policy preset: ${presetId}` };
+    return {
+      ok: true,
+      values: {
+        minLiquidityUsd: preset.minLiquidityUsd,
+        maxPositionPct: preset.maxPositionPct,
+        maxTxUsd: preset.maxTxUsd,
+      },
+    };
+  }
+  const c = (r.custom ?? {}) as Record<string, unknown>;
+  if (!finiteInBounds(c.minLiquidityUsd, POLICY_BOUNDS.minLiquidityUsd.min, POLICY_BOUNDS.minLiquidityUsd.max)) {
+    return { ok: false, error: 'custom minLiquidityUsd is out of bounds' };
+  }
+  if (!finiteInBounds(c.maxPositionPct, POLICY_BOUNDS.maxPositionPct.min, POLICY_BOUNDS.maxPositionPct.max)) {
+    return { ok: false, error: 'custom maxPositionPct is out of bounds' };
+  }
+  if (!finiteInBounds(c.maxTxUsd, POLICY_BOUNDS.maxTxUsd.min, POLICY_BOUNDS.maxTxUsd.max)) {
+    return { ok: false, error: 'custom maxTxUsd is out of bounds' };
+  }
+  return {
+    ok: true,
+    values: {
+      minLiquidityUsd: c.minLiquidityUsd as number,
+      maxPositionPct: c.maxPositionPct as number,
+      maxTxUsd: c.maxTxUsd as number,
+    },
+  };
+}
+
 export const DEFAULT_TREASURY_POLICY: TreasuryPolicy = {
-  minLiquidityUsd: 1000,
-  maxPositionPct: 60,
-  maxTxUsd: 5000,
+  // Small-testnet-friendly default (matches the "flexible" preset). No $1,000 floor.
+  minLiquidityUsd: 25,
+  maxPositionPct: 100,
+  maxTxUsd: 250,
   allowedAssets: [],
   // Empty = deny: an AI-controlled treasury never executes to an unapproved destination.
   allowedDestinations: [],

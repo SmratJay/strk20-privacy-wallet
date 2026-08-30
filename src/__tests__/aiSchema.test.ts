@@ -109,3 +109,86 @@ describe('validateProposal', () => {
     expect(validateProposal(42).ok).toBe(false);
   });
 });
+
+describe('validateProposal — structured insight (optional, presentation-only)', () => {
+  it('accepts an optional insight block on a transfer and preserves it', () => {
+    const r = validateProposal({
+      intent: 'rebalance',
+      reason: 'Reduce concentration.',
+      action: { type: 'private_transfer', asset: STRK, amount: '150.25', recipient: DEST },
+      requiresUserConfirmation: true,
+      insight: {
+        diagnosis: 'Your treasury is overly concentrated in STRK.',
+        recommendation: 'Move 150 STRK to your approved private reserve.',
+        why: 'Reducing STRK exposure closer to your guardrail.',
+        outcome: 'Liquidity remains above your guardrail.',
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.insight).toEqual({
+        diagnosis: 'Your treasury is overly concentrated in STRK.',
+        recommendation: 'Move 150 STRK to your approved private reserve.',
+        why: 'Reducing STRK exposure closer to your guardrail.',
+        outcome: 'Liquidity remains above your guardrail.',
+      });
+    }
+  });
+
+  it('accepts a report with insight (no execution payload)', () => {
+    const r = validateProposal({
+      intent: 'report',
+      reason: 'Treasury is balanced.',
+      action: { type: 'report', asset: '', amount: '', recipient: '' },
+      requiresUserConfirmation: false,
+      insight: {
+        diagnosis: 'Treasury is within guardrails.',
+        recommendation: 'No action required.',
+        why: 'All metrics are inside policy.',
+        outcome: 'Nothing to execute.',
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.action.type).toBe('report');
+  });
+
+  it('treats insight as optional — proposals without it still validate', () => {
+    const r = validateProposal({
+      intent: 'rebalance',
+      reason: 'Reduce concentration.',
+      action: { type: 'private_transfer', asset: STRK, amount: '150.25', recipient: DEST },
+      requiresUserConfirmation: true,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.insight).toBeUndefined();
+  });
+
+  it('rejects an insight missing any required field', () => {
+    const base = {
+      intent: 'rebalance',
+      reason: 'x',
+      action: { type: 'private_transfer', asset: STRK, amount: '1', recipient: DEST },
+      requiresUserConfirmation: true,
+    };
+    for (const missing of ['diagnosis', 'recommendation', 'why', 'outcome']) {
+      const ins: Record<string, string> = {
+        diagnosis: 'a', recommendation: 'b', why: 'c', outcome: 'd',
+      };
+      delete ins[missing];
+      const r = validateProposal({ ...base, insight: ins });
+      expect(r.ok, `missing ${missing} should be rejected`).toBe(false);
+      if (!r.ok) expect(r.error).toContain(`insight.${missing}`);
+    }
+  });
+
+  it('rejects a non-object insight', () => {
+    const r = validateProposal({
+      intent: 'rebalance',
+      reason: 'x',
+      action: { type: 'private_transfer', asset: STRK, amount: '1', recipient: DEST },
+      requiresUserConfirmation: true,
+      insight: 'nope',
+    });
+    expect(r.ok).toBe(false);
+  });
+});

@@ -39,6 +39,19 @@ function request(over: Record<string, unknown> = {}): NextRequest {
   });
 }
 
+function mockProposal(proposal: unknown) {
+  (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: any) => {
+    const url = String(input);
+    if (url.includes('/chat/completions')) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(proposal) } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw new TypeError('network unavailable');
+  });
+}
+
 describe('/api/ai/analyze', () => {
   beforeAll(() => {
     process.env.AI_API_KEY = 'test-key';
@@ -129,6 +142,58 @@ describe('/api/ai/analyze', () => {
       throw new TypeError('network unavailable');
     });
     const res = await POST(request());
+    expect(res.status).toBe(422);
+  });
+
+  it('reflects a user-selected preset as the server-authoritative policy', async () => {
+    mockProposal(PROPOSAL);
+    const res = await POST(request({ policy: { preset: 'conservative' } }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // The effective policy returned for execution carries the user's chosen guardrail.
+    expect(json.policy.minLiquidityUsd).toBe(100);
+    expect(json.policy.maxPositionPct).toBe(60);
+    expect(json.policy.maxTxUsd).toBe(100);
+  });
+
+  it('defaults to the small-wallet-friendly preset when no policy is sent', async () => {
+    mockProposal(PROPOSAL);
+    const res = await POST(request());
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.policy.minLiquidityUsd).toBe(25);
+    expect(json.policy.maxPositionPct).toBe(100);
+  });
+
+  it('rejects an out-of-bounds custom policy with 400 (server validates bounds)', async () => {
+    const res = await POST(
+      request({ policy: { preset: 'custom', custom: { minLiquidityUsd: -5, maxPositionPct: 80, maxTxUsd: 150 } } }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/out of bounds/);
+  });
+
+  it('rejects an unknown preset with 400', async () => {
+    const res = await POST(request({ policy: { preset: 'mega-loose' } }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/unknown policy preset/);
+  });
+
+  it('the AI can never inject its own policy — model output has no policy authority', async () => {
+    const withModelPolicy = { ...PROPOSAL, constraints: { minLiquidityAfterUsd: 0 } };
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes('/chat/completions')) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(withModelPolicy) } }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new TypeError('network unavailable');
+    });
+    const res = await POST(request({ policy: { preset: 'conservative' } }));
     expect(res.status).toBe(422);
   });
 });

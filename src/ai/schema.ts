@@ -33,6 +33,24 @@ export interface ActionProposal {
   action: ProposalAction;
   /** Must be true for any state-changing action; false only for 'report'. */
   requiresUserConfirmation: boolean;
+  /**
+   * Optional STRUCTURED copilot insight: one-line diagnosis → recommendation → why →
+   * outcome. Pure presentation copy, never parsed from prose and never used for execution
+   * decisions. Numbers shown in the UI are recomputed deterministically by the simulator;
+   * this text is advisory narrative only.
+   */
+  insight?: ProposalInsight;
+}
+
+export interface ProposalInsight {
+  /** One concise sentence — what is wrong with the treasury. */
+  diagnosis: string;
+  /** One concise sentence — what the copilot recommends doing. */
+  recommendation: string;
+  /** One concise sentence — the expected effect (grounded in the shown portfolio). */
+  why: string;
+  /** One concise sentence — the expected consequence for liquidity/policy. */
+  outcome: string;
 }
 
 function isStr(v: unknown): v is string {
@@ -64,6 +82,22 @@ export function validateProposal(
   if (!isStr(r.reason) || r.reason.trim() === '') return { ok: false, error: 'reason missing' };
   if (!isBool(r.requiresUserConfirmation)) return { ok: false, error: 'requiresUserConfirmation missing' };
 
+  // Optional structured insight (diagnosis → recommendation → why → outcome).
+  let insight: ProposalInsight | undefined;
+  if (r.insight !== undefined) {
+    if (r.insight === null || typeof r.insight !== 'object') return { ok: false, error: 'insight must be an object' };
+    const ins = r.insight as Record<string, unknown>;
+    for (const key of ['diagnosis', 'recommendation', 'why', 'outcome'] as const) {
+      if (!isStr(ins[key]) || ins[key].trim() === '') return { ok: false, error: `insight.${key} missing` };
+    }
+    insight = {
+      diagnosis: (ins.diagnosis as string).trim(),
+      recommendation: (ins.recommendation as string).trim(),
+      why: (ins.why as string).trim(),
+      outcome: (ins.outcome as string).trim(),
+    };
+  }
+
   const action = r.action as Record<string, unknown> | undefined;
   if (!action || typeof action !== 'object') return { ok: false, error: 'action missing' };
 
@@ -81,6 +115,7 @@ export function validateProposal(
         reason: r.reason.trim(),
         action: { type, asset: '', amount: '', recipient: '' },
         requiresUserConfirmation: false,
+        insight,
       },
     };
   }
@@ -115,6 +150,7 @@ export function validateProposal(
         recipient: recipient.value,
       },
       requiresUserConfirmation: true,
+      insight,
     },
   };
 }

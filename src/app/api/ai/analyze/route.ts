@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { createDefaultProvider } from '@/ai/provider';
 import { analyzeTreasury } from '@/ai/agent';
-import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, PolicyVerdict } from '@/ai/policy';
+import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, resolveUserPolicy, PolicyVerdict } from '@/ai/policy';
 import { buildPortfolioSummary, PrivateBalanceRow } from '@/ai/portfolio';
 import { resolvePortfolioPrices, AssetPrice } from '@/ai/prices';
 import { canonicalizeAddress } from '@/ai/address';
@@ -47,6 +47,8 @@ interface AnalyzeBody {
   prompt?: unknown;
   balances?: unknown;
   context?: unknown;
+  /** User-selected guardrail (preset or custom limits). Server-validated; the AI can never change it. */
+  policy?: unknown;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -200,13 +202,18 @@ export async function POST(req: NextRequest) {
   }
   const summary = buildPortfolioSummary(rows, prices);
 
-  // 2. Server-authoritative policy: verified/user + treasury + configured allowlists only.
+  // 2. Server-authoritative policy: user-selected guardrail (validated) + verified/user
+  //    addresses + configured allowlists only. The LLM can NEVER influence any of it.
+  const resolvedPolicy = resolveUserPolicy(body.policy);
+  if (!resolvedPolicy.ok) {
+    return NextResponse.json({ error: resolvedPolicy.error }, { status: 400 });
+  }
   const built = buildExecutionPolicy({
     userAddress,
     privateTreasuryAddress,
     allowedAssets: parseAllowlist(process.env.AI_ALLOWED_ASSETS),
     allowedDestinations: parseAllowlist(process.env.AI_ALLOWED_DESTINATIONS),
-    base: DEFAULT_TREASURY_POLICY,
+    base: { ...DEFAULT_TREASURY_POLICY, ...resolvedPolicy.values },
   });
   if (!built.ok) {
     return NextResponse.json({ error: built.error }, { status: 400 });

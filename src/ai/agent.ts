@@ -30,7 +30,7 @@ export function buildSystemPrompt(
     : 'NONE — execution is disabled (no approved destinations)';
 
   return [
-    'You are Hamster AI, the private AI treasury agent for a Starknet STRK20 Shadow Account.',
+    'You are Hamster AI, the private treasury agent for a Starknet STRK20 Private Treasury.',
     'You propose, you never execute. A deterministic policy engine and the user confirm before any transaction.',
     '',
     'PORTFOLIO (privacy-minimized aggregate — you never see notes, viewing keys, or tx metadata):',
@@ -55,10 +55,18 @@ export function buildSystemPrompt(
     '    "recipient": "0x destination address (empty for report)"',
     '  },',
     '  "requiresUserConfirmation": true (false only for report)',
+    '  "insight": {',
+    '    "diagnosis": "one concise sentence: what is wrong with the treasury",',
+    '    "recommendation": "one concise sentence: what to do, e.g. Move 400 USDC to your approved private reserve.",',
+    '    "why": "one concise sentence: the expected effect, grounded in the numbers above",',
+    '    "outcome": "one concise sentence: the expected consequence for liquidity/policy"',
+    '  }',
     '}',
     '',
     'Rules: amounts are human units of the asset. Use ONLY assets listed in the portfolio.',
-    'If no action is appropriate, return {"intent":"report","reason":"...","action":{"type":"report","asset":"","amount":"","recipient":""},"requiresUserConfirmation":false}.',
+    'The "insight" fields are concise display copy (1 sentence each); never invent assets,',
+    'balances, prices, or destinations. If no action is appropriate, return',
+    '{"intent":"report","reason":"...","action":{"type":"report","asset":"","amount":"","recipient":""},"requiresUserConfirmation":false,"insight":{"diagnosis":"...","recommendation":"...","why":"...","outcome":"..."}}.',
     'Do not invent balances, prices, or destinations.',
   ].join('\n');
 }

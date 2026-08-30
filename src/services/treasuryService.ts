@@ -18,7 +18,7 @@
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { ActionProposal } from '@/ai/schema';
 import { buildPortfolioSummary, PrivateBalanceRow, PortfolioSummary } from '@/ai/portfolio';
-import { evaluateProposal, TreasuryPolicy, PolicyVerdict } from '@/ai/policy';
+import { evaluateProposal, TreasuryPolicy, PolicyVerdict, UserPolicySelection } from '@/ai/policy';
 import { parseAmountExact } from '@/ai/amount';
 import { AssetPrice } from '@/ai/prices';
 import { canonicalizeAddress } from '@/ai/address';
@@ -141,6 +141,8 @@ export interface AnalyzeRequestBody {
   prompt: string;
   balances: { token: string; balance: string }[];
   context: { userAddress: string; privateTreasuryAddress: string };
+  /** The user-selected guardrail; the server validates bounds and the AI can never change it. */
+  policy?: UserPolicySelection;
 }
 
 export function buildAnalyzeRequest(input: {
@@ -148,6 +150,7 @@ export function buildAnalyzeRequest(input: {
   balances: PrivateBalanceRow[];
   userAddress: string;
   privateTreasuryAddress: string;
+  policy?: UserPolicySelection;
 }): AnalyzeRequestBody {
   return {
     prompt: input.prompt.trim(),
@@ -159,6 +162,7 @@ export function buildAnalyzeRequest(input: {
       userAddress: input.userAddress,
       privateTreasuryAddress: input.privateTreasuryAddress,
     },
+    policy: input.policy,
   };
 }
 
