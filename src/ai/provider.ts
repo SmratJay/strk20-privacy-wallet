@@ -10,6 +10,18 @@
  */
 export interface AiProvider {
   completeJson(system: string, user: string): Promise<unknown>;
+  /**
+   * Multi-turn JSON completion over an explicit message history. The agent loop uses this so
+   * tool results can be folded back into the conversation without native function-calling.
+   */
+  completeChatJson(messages: AiChatMessage[]): Promise<unknown>;
+}
+
+export type AiChatRole = 'system' | 'user' | 'assistant';
+
+export interface AiChatMessage {
+  role: AiChatRole;
+  content: string;
 }
 
 export interface OpenAiCompatibleConfig {
@@ -33,6 +45,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
   }
 
   async completeJson(system: string, user: string): Promise<unknown> {
+    return this.completeChatJson([
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ]);
+  }
+
+  async completeChatJson(messages: AiChatMessage[]): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     try {
@@ -44,10 +63,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         },
         body: JSON.stringify({
           model: this.config.model,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
+          messages,
           temperature: 0.2,
           response_format: { type: 'json_object' },
         }),

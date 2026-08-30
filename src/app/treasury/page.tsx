@@ -46,15 +46,20 @@ import {
   Actionability,
 } from '@/ai/health';
 import { AssetPrice, resolvePortfolioPrices } from '@/ai/prices';
+import { AgentPlan, selectedScenarioOf } from '@/ai/plan';
+import { ShadowAccountCapability } from '@/ai/shadow';
+import { verifyExecution, ExecutionVerification, OutcomePoint } from '@/ai/verification';
 import { executeProposal, tokenSymbols, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
 import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { shortenAddress, formatTokenAmount } from '@/utils/formatters';
 
 interface AnalyzeResponse {
   summary: PortfolioSummary;
+  plan: AgentPlan;
   proposal: ActionProposal;
   verdict: PolicyVerdict;
   policy: TreasuryPolicy;
+  shadowCapability: ShadowAccountCapability;
   addresses: { userAddress: string; privateTreasuryAddress: string; verification: 'privy' | 'client-claimed' };
   trust: { balances: string; note: string };
   proposalGeneratedAt: number;
@@ -109,6 +114,8 @@ export default function TreasuryPage() {
 
   // The currently displayed What-If scenario (starts from the recommendation).
   const [scenario, setScenario] = useState<ScenarioSimulation | null>(null);
+  // Post-execution verification: expected (simulated) vs actual (refreshed) outcome.
+  const [verification, setVerification] = useState<ExecutionVerification | null>(null);
 
   // User-selected treasury guardrail. The AI can NEVER modify this.
   const [guardrail, setGuardrail] = useState<UserPolicySelection>({ preset: DEFAULT_POLICY_PRESET_ID });
@@ -192,6 +199,7 @@ export default function TreasuryPage() {
     setAnalyzeState({ status: 'idle' });
     setExecuteState({ status: 'idle' });
     setScenario(null);
+    setVerification(null);
   };
 
   const applyCustomGuardrail = () => {
@@ -216,6 +224,7 @@ export default function TreasuryPage() {
     setExecuteState({ status: 'idle' });
     setAnalyzeState({ status: 'loading' });
     setScenario(null);
+    setVerification(null);
     try {
       const rows = await fetchRows();
       analysisBalancesRef.current = rows;
@@ -230,6 +239,7 @@ export default function TreasuryPage() {
             userAddress: wallet.address ?? '',
             privateTreasuryAddress,
             policy: guardrail,
+            recentActivity: treasuryActivity,
           }),
         ),
       });
@@ -239,8 +249,11 @@ export default function TreasuryPage() {
         return;
       }
       setAnalyzeState({ status: 'done', analysis: json });
-      // Seed the What-If with the recommended action (deterministic simulation of the proposal).
-      if (json.proposal.action.type === 'private_transfer') {
+      // Seed the What-If with the agent's selected scenario (REAL deterministic simulation).
+      const selected = selectedScenarioOf(json.plan);
+      if (selected) {
+        setScenario(selected.simulation);
+      } else if (json.proposal.action.type === 'private_transfer') {
         setScenario(
           simulateAction(json.summary, json.policy, {
             asset: json.proposal.action.asset,
@@ -316,7 +329,9 @@ export default function TreasuryPage() {
       });
       setExecuteState({ status: 'success', result });
       await refreshAfterMutation();
-      await refreshBalances();
+      // Refresh balances and verify the expected (simulated) outcome vs the actual result.
+      const expectedAfter = selectedScenarioOf(analyzeState.analysis.plan)?.simulation.after ?? null;
+      await refreshAndVerify(expectedAfter);
     } catch (e) {
       setExecuteState({
         status: 'failure',
@@ -325,6 +340,30 @@ export default function TreasuryPage() {
       });
     }
   };
+
+  const refreshAndVerify = useCallback(
+    async (expected: OutcomePoint | null) => {
+      try {
+        const fresh = await fetchRows();
+        const symbols = tokenSymbols(fresh);
+        const bySymbol = await resolvePortfolioPrices(symbols).catch(() => ({} as Record<string, AssetPrice>));
+        const prices: Record<string, AssetPrice> = {};
+        for (const r of fresh) {
+          const meta = SEPOLIA_TOKENS.find((t) => canonicalToken(t.address) === canonicalToken(r.token));
+          if (meta && bySymbol[meta.symbol]) prices[r.token.toLowerCase()] = bySymbol[meta.symbol];
+        }
+        setPriceStatus(prices);
+        const freshSummary = buildPortfolioSummary(fresh, prices);
+        setSummary(freshSummary);
+        if (expected) {
+          setVerification(verifyExecution(expected, freshSummary));
+        }
+      } catch {
+        // wallet/STRK20 read failed — verification stays null; prior summary remains.
+      }
+    },
+    [fetchRows],
+  );
 
   // A deterministic "what if" for a target USD move of the recommended asset.
   const scenarioForUsd = useCallback(
@@ -375,13 +414,7 @@ export default function TreasuryPage() {
   const actionability: Actionability | null = analysis ? classifyActionability(analysis.proposal, analysis.verdict) : null;
   const failedChecks = verdict ? blockedPolicyChecks(verdict) : [];
 
-  const recommendedSim: ScenarioSimulation | null =
-    analysis && actionability !== 'ADVISORY' && analysis.proposal.action.type === 'private_transfer'
-      ? simulateAction(analysis.summary, analysis.policy, {
-          asset: analysis.proposal.action.asset,
-          amount: analysis.proposal.action.amount,
-        })
-      : null;
+  const recommendedSim: ScenarioSimulation | null = analysis ? (selectedScenarioOf(analysis.plan)?.simulation ?? null) : null;
   const displaySim = scenario ?? recommendedSim;
 
   const noDestination = !!analysis && analysis.policy.allowedDestinations.length === 0;
@@ -858,6 +891,32 @@ export default function TreasuryPage() {
                 )}
               </div>
             )}
+            {verification && executeState.status === 'success' && analysis && (
+              <div className="product-card" style={{ padding: '1.25rem 1.5rem', display: 'grid', gap: '0.6rem' }}>
+                <div className="flex items-center gap-2 text-[13px] font-bold" style={{ color: 'var(--app-text)' }}>
+                  <CheckCircle2 className="w-4 h-4" style={{ color: verification.matches ? 'var(--app-success)' : 'var(--app-warning)' }} />
+                  Outcome verified
+                  <span
+                    className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                    style={
+                      verification.matches
+                        ? { background: 'color-mix(in srgb, var(--app-success) 14%, transparent)', color: 'var(--app-success)' }
+                        : { background: 'color-mix(in srgb, var(--app-warning) 14%, transparent)', color: 'var(--app-warning)' }
+                    }
+                  >
+                    {verification.matches ? 'matches' : 'deviation'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[12px]">
+                  <MetricLine label="Concentration expected" value={`${verification.expected.concentrationPct.toFixed(0)}%`} />
+                  <MetricLine label="Concentration actual" value={`${verification.actual.concentrationPct.toFixed(0)}%`} />
+                  <MetricLine label="Liquidity" value={fmtUsd(verification.actual.liquidityUsd)} />
+                </div>
+                <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  {verification.note} Within {verification.tolerancePct}% tolerance.
+                </div>
+              </div>
+            )}
             {executeState.status === 'failure' && (
               <div className="product-card" style={{ padding: '1.25rem 1.5rem', borderColor: 'color-mix(in srgb, var(--app-danger) 46%, transparent)', display: 'grid', gap: '0.3rem' }}>
                 <div className="flex items-center gap-2 text-[13px] font-bold" style={{ color: 'var(--app-danger)' }}>
@@ -1006,24 +1065,38 @@ function AnalysisInsight({
   requestConflict: boolean;
   requestedLiquidityUsd: number | null;
 }) {
-  const { proposal } = analysis;
+  const { proposal, plan } = analysis;
   const insight = proposal.insight;
   const action = proposal.action;
+  const selected = plan.selectedScenarioId ? plan.scenarios.find((s) => s.id === plan.selectedScenarioId) ?? null : null;
   const symbol =
     action.type === 'private_transfer'
       ? SEPOLIA_TOKENS.find((t) => t.address.toLowerCase() === action.asset.toLowerCase())?.symbol ?? 'TOKEN'
       : '';
-  const recommendation =
-    action.type === 'private_transfer' ? `Move ${action.amount} ${symbol} to your approved private reserve.` : (insight?.recommendation ?? 'No action is required right now.');
-  const why = insight?.why ?? (actionability === 'BLOCKED' ? 'Your chosen amount conflicts with the active guardrail.' : 'Bringing the treasury back within your guardrails.');
-  const outcome = insight?.outcome ?? (actionability === 'EXECUTABLE' ? 'Liquidity stays above your guardrail.' : 'The plan is not executable as proposed.');
+  const headline = insight?.diagnosis ?? plan.observations[0] ?? diagnosis?.concentrationLine ?? 'Your treasury needs attention.';
+  const recommendation = selected
+    ? `Move ${selected.action.amount} ${assetSymbolFor(selected.action.asset)} to your approved private reserve.`
+    : (insight?.recommendation ?? 'No action is required right now.');
+  const outcome =
+    plan.expectedOutcome ||
+    (actionability === 'EXECUTABLE' ? 'Liquidity stays above your guardrail.' : 'The plan is not executable as proposed.');
 
   return (
     <div style={{ display: 'grid', gap: '1.25rem' }}>
       {/* Diagnosis */}
       <div>
         <div className="text-[16px] font-bold" style={{ color: 'var(--app-text)' }}>
-          {insight?.diagnosis ?? diagnosis?.concentrationLine ?? 'Your treasury needs attention.'}
+          {headline}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-mono uppercase tracking-wide" style={{ color: plan.policyStatus === 'PASS' ? 'var(--app-success)' : plan.policyStatus === 'FAIL' ? 'var(--app-danger)' : 'var(--app-text-muted)' }}>
+            policy {plan.policyStatus}
+          </span>
+          {!analysis.shadowCapability.enabled && (
+            <span className="text-[11px] font-mono" style={{ color: 'var(--app-text-faint)' }}>
+              shadow accounts · off
+            </span>
+          )}
         </div>
         {requestConflict && requestedLiquidityUsd !== null && (
           <div className="mt-1 text-[12px]" style={{ color: 'var(--app-warning)' }}>
@@ -1031,6 +1104,51 @@ function AnalysisInsight({
           </div>
         )}
       </div>
+
+      {/* Agent observations */}
+      {plan.observations.length > 0 && (
+        <div className="text-[12px]" style={{ color: 'var(--app-text-secondary)' }}>
+          {plan.observations.slice(0, 2).map((o, i) => (
+            <div key={i}>• {o}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Tested scenarios (deterministic numbers) */}
+      {plan.scenarios.length > 0 && (
+        <div className="rounded-xl border p-3.5" style={{ borderColor: 'var(--app-border)', background: 'var(--app-surface-raised)' }}>
+          <div className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--app-text-muted)' }}>
+            {plan.selectedScenarioId ? `Hamster tested ${plan.scenarios.length} moves and picked one` : `Hamster tested ${plan.scenarios.length} moves`}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {plan.scenarios.map((sc) => {
+              const isSelected = selected !== null && sc.id === selected.id;
+              return (
+                <div
+                  key={sc.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px]"
+                  style={
+                    isSelected
+                      ? { borderColor: 'color-mix(in srgb, var(--app-accent) 45%, transparent)', background: 'var(--app-accent-soft)' }
+                      : { borderColor: 'var(--app-border)' }
+                  }
+                >
+                  <span className="font-semibold" style={{ color: 'var(--app-text)' }}>
+                    {sc.label}
+                    {isSelected && <span className="ml-1.5 text-[10px] font-mono" style={{ color: 'var(--app-accent)' }}>selected</span>}
+                  </span>
+                  <span className="font-mono" style={{ color: 'var(--app-text-secondary)' }}>
+                    {assetSymbolFor(sc.action.asset)} {sc.simulation.before.concentrationPct.toFixed(0)}% → {sc.simulation.after.concentrationPct.toFixed(0)}%
+                  </span>
+                  <span className="font-mono" style={{ color: sc.policyCompliant ? 'var(--app-success)' : 'var(--app-danger)' }}>
+                    {sc.policyCompliant ? '✓ policy' : '✗ policy'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Recommendation */}
       <div className="rounded-xl border p-3.5" style={{ borderColor: 'var(--app-border)', background: 'var(--app-surface-raised)' }}>
@@ -1041,8 +1159,16 @@ function AnalysisInsight({
           {recommendation}
         </div>
         <div className="mt-1.5 space-y-1 text-[12px]" style={{ color: 'var(--app-text-secondary)' }}>
-          <div><span className="font-semibold" style={{ color: 'var(--app-text-muted)' }}>Why · </span>{why}</div>
-          <div><span className="font-semibold" style={{ color: 'var(--app-text-muted)' }}>Outcome · </span>{outcome}</div>
+          <div>
+            <span className="font-semibold" style={{ color: 'var(--app-text-muted)' }}>Expected · </span>
+            {outcome}
+          </div>
+          {plan.risks.length > 0 && (
+            <div>
+              <span className="font-semibold" style={{ color: 'var(--app-text-muted)' }}>Risks · </span>
+              {plan.risks.slice(0, 2).join(' ')}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1129,6 +1255,10 @@ function AnalysisInsight({
     const liq = sim.before.liquidityUsd;
     const pol = analysis.policy;
     return top <= pol.maxPositionPct && liq >= pol.minLiquidityUsd;
+  }
+
+  function assetSymbolFor(asset: string): string {
+    return SEPOLIA_TOKENS.find((t) => t.address.toLowerCase() === asset.toLowerCase())?.symbol ?? 'TOKEN';
   }
 }
 

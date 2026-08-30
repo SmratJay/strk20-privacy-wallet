@@ -1,92 +1,224 @@
 /**
  * @file src/ai/agent.ts
- * @description Hamster AI orchestration: privacy-minimized portfolio + prompt → structured,
- * schema-validated proposal. Never signs and never executes — the policy engine and the
- * user confirm before the existing STRK20 stack runs anything.
+ * @description Hamster treasury agent: a bounded planning loop over deterministic tools.
+ *
+ * The model emits structured tool calls or a structured AgentPlan as strict JSON. The server
+ * runs each tool deterministically and feeds the result back; the loop stops when the model
+ * produces a plan (or the step budget is exhausted, in which case a deterministic fallback
+ * report is returned). The agent NEVER signs, never sees viewing keys/notes, and never emits
+ * arbitrary calldata. The deterministic policy + user confirmation remain the execution gate.
  */
 import { AiProvider } from '@/ai/provider';
-import { ActionProposal, validateProposal } from '@/ai/schema';
-import { PortfolioSummary } from '@/ai/portfolio';
-import { TreasuryPolicy, DEFAULT_TREASURY_POLICY } from '@/ai/policy';
+import { AgentToolContext, executeTool, ToolCallIntent } from '@/ai/tools';
+import {
+  compileAgentPlan,
+  validateAgentPlan,
+  AgentPlan,
+  PlanContext,
+  buildPlanContext,
+  planToProposal,
+  generateRebalanceCandidates,
+  deterministicNarrativeFor,
+} from '@/ai/plan';
 
-/** Build the system prompt: role, portfolio summary, policy rules, strict JSON schema. */
-export function buildSystemPrompt(
-  summary: PortfolioSummary,
-  policy: TreasuryPolicy = DEFAULT_TREASURY_POLICY,
-): string {
-  const portfolioLines = summary.positions.length
-    ? summary.positions
-        .map(
-          (p) =>
-            `- ${p.symbol}: ${p.balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 6 })} tokens ≈ $${p.usdValue.toFixed(2)} (${p.pct.toFixed(1)}% of treasury, price source: ${p.priceSource})`,
-        )
-        .join('\n')
-    : '- (empty treasury)';
-  const allowedAssets = policy.allowedAssets.length
-    ? policy.allowedAssets.join(', ')
-    : 'any asset present in the portfolio';
-  const allowedDests = policy.allowedDestinations.length
-    ? policy.allowedDestinations.join(', ')
-    : 'NONE — execution is disabled (no approved destinations)';
+export const MAX_AGENT_STEPS = 5;
 
+export interface AgentToolTrace {
+  step: number;
+  tool?: string;
+  ok: boolean;
+  error?: string;
+  summary?: string;
+}
+
+export interface AgentLoopResult {
+  plan: AgentPlan;
+  trace: AgentToolTrace[];
+  stepsUsed: number;
+}
+
+export function buildAgentSystemPrompt(ctx: AgentToolContext): string {
+  const toolLines = TOOL_LIST.map((t) => `- ${t.name}: ${t.desc}`).join('\n');
   return [
-    'You are Hamster AI, the private treasury agent for a Starknet STRK20 Private Treasury.',
-    'You propose, you never execute. A deterministic policy engine and the user confirm before any transaction.',
+    'You are Hamster, the private treasury agent for a STRK20 private treasury on Starknet.',
+    'You PROPOSE and PLAN. You never execute. A deterministic policy and the user decide. You never see viewing keys or encrypted notes.',
     '',
-    'PORTFOLIO (privacy-minimized aggregate — you never see notes, viewing keys, or tx metadata):',
-    `Total: $${summary.totalUsd.toFixed(2)} · Liquid: $${summary.liquidityUsd.toFixed(2)} (${summary.liquidPct.toFixed(1)}%)`,
-    portfolioLines,
+    'You operate in a bounded tool loop. Each response MUST be strict JSON, one of:',
+    '1. {"type":"tool_call","tool":"<tool>","args":{...}}',
+    '2. {"type":"plan", ...} (see schema below)',
     '',
-    'TREASURY POLICY (you MUST respect these):',
-    `- keep at least $${policy.minLiquidityUsd.toFixed(2)} liquid after any action`,
-    `- no single position above ${policy.maxPositionPct}% after any action`,
-    `- any single action ≤ $${policy.maxTxUsd.toFixed(2)}`,
-    `- assets allowed: ${allowedAssets}`,
-    `- destinations allowed: ${allowedDests}`,
+    `AVAILABLE TOOLS (use these; no other tools exist):\n${toolLines}`,
     '',
-    'RESPONSE: return ONLY strict JSON matching this schema:',
+    'PLAN SCHEMA — the server computes every number; do NOT include computed results:',
     '{',
-    '  "intent": "short label (e.g. rebalance | liquidate | diversify | transfer | report)",',
-    '  "reason": "one or two plain sentences",',
-    '  "action": {',
-    '    "type": "private_transfer" | "report",',
-    '    "asset": "0x token address from the portfolio (empty for report)",',
-    '    "amount": "human-readable decimal string, e.g. \\"150.25\\" (empty for report)",',
-    '    "recipient": "0x destination address (empty for report)"',
-    '  },',
-    '  "requiresUserConfirmation": true (false only for report)',
-    '  "insight": {',
-    '    "diagnosis": "one concise sentence: what is wrong with the treasury",',
-    '    "recommendation": "one concise sentence: what to do, e.g. Move 400 USDC to your approved private reserve.",',
-    '    "why": "one concise sentence: the expected effect, grounded in the numbers above",',
-    '    "outcome": "one concise sentence: the expected consequence for liquidity/policy"',
-    '  }',
+    '  "type": "plan",',
+    '  "goal": "the user goal",',
+    '  "observations": ["short finding", "..."],',
+    '  "risks": ["short risk", "..."],',
+    '  "scenarios": [{ "id": "s1", "label": "move 100 STRK", "action": { "type": "private_transfer", "asset": "0x...", "amount": "100" } }],',
+    '  "selectedScenarioId": "s1" | null,',
+    '  "expectedOutcome": "one sentence",',
+    '  "reason": "one sentence"',
     '}',
     '',
-    'Rules: amounts are human units of the asset. Use ONLY assets listed in the portfolio.',
-    'The "insight" fields are concise display copy (1 sentence each); never invent assets,',
-    'balances, prices, or destinations. If no action is appropriate, return',
-    '{"intent":"report","reason":"...","action":{"type":"report","asset":"","amount":"","recipient":""},"requiresUserConfirmation":false,"insight":{"diagnosis":"...","recommendation":"...","why":"...","outcome":"..."}}.',
-    'Do not invent balances, prices, or destinations.',
+    'RULES:',
+    '- Use ONLY assets present in the portfolio and ONLY approved destinations (read them with tools).',
+    '- Simulate before deciding: call simulate_transfer / simulate_rebalance / compare_scenarios with candidate amounts.',
+    '- Stop with a plan as soon as you can decide. Max 4 tool calls.',
+    '- If no compliant action exists, emit a plan with scenarios: [] and selectedScenarioId: null.',
+    '- Never invent balances, prices, scenario outcomes, or tool names. Never emit prose outside JSON.',
   ].join('\n');
 }
 
-export interface AnalyzeResult {
-  proposal: ActionProposal;
+const TOOL_LIST: { name: string; desc: string }[] = [
+  { name: 'get_portfolio', desc: 'read the private treasury portfolio' },
+  { name: 'get_treasury_health', desc: 'read advisory health (concentration, liquidity, diversification)' },
+  { name: 'get_policy', desc: 'read the active guardrail and approved destinations' },
+  { name: 'get_prices', desc: 'read per-position USD prices' },
+  { name: 'get_private_identity', desc: 'read the STRK20 private identity + shadow-account capability' },
+  { name: 'get_approved_destinations', desc: 'read approved private destinations' },
+  { name: 'get_recent_activity', desc: 'read recent treasury activity' },
+  { name: 'simulate_transfer', desc: 'simulate moving an amount of an asset (args: asset, amount)' },
+  { name: 'simulate_rebalance', desc: 'generate deterministic rebalance candidates for an asset' },
+  { name: 'compare_scenarios', desc: 'compare 1..6 candidate moves (args: scenarios)' },
+  { name: 'inspect_concentration', desc: 'concentration vs the guardrail cap' },
+  { name: 'inspect_liquidity', desc: 'liquidity vs the guardrail floor' },
+  { name: 'inspect_diversification', desc: 'diversification by asset count' },
+  { name: 'prepare_private_transfer', desc: 'prepare a private-transfer action for review (never executes)' },
+  { name: 'prepare_shadow_execution', desc: 'check shadow-account execution availability (feature-gated)' },
+  { name: 'get_execution_status', desc: 'read the current execution status' },
+  { name: 'refresh_portfolio', desc: 'refresh the portfolio from fresh state' },
+  { name: 'compare_expected_vs_actual', desc: 'compare a prior expectation against the current portfolio' },
+];
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** Run the analysis: build prompt → provider → strict schema validation. */
-export async function analyzeTreasury(
-  provider: AiProvider,
-  summary: PortfolioSummary,
-  prompt: string,
-  policy: TreasuryPolicy = DEFAULT_TREASURY_POLICY,
-): Promise<AnalyzeResult> {
-  const system = buildSystemPrompt(summary, policy);
-  const raw = await provider.completeJson(system, prompt);
-  const validated = validateProposal(raw);
-  if (!validated.ok) {
-    throw new Error(`Hamster AI produced an invalid proposal: ${validated.error}`);
+function isToolCall(raw: unknown): raw is ToolCallIntent {
+  if (!isRecord(raw) || raw.type !== 'tool_call') return false;
+  return typeof raw.tool === 'string' && isRecord(raw.args);
+}
+
+function isPlanOrProposal(raw: unknown): boolean {
+  if (!isRecord(raw)) return false;
+  if (raw.type === 'plan') return true;
+  // Legacy single-shot proposal (intent + action, no type) — compiled as a one-scenario plan.
+  return typeof raw.intent === 'string' && raw.action !== undefined && raw.type === undefined;
+}
+
+function traceSummary(result: { ok: true; output: unknown } | { ok: false; error: string }, tool: string): string {
+  if (!result.ok) return `${tool}: ${result.error}`;
+  const out = result.output as Record<string, unknown> | unknown[] | null;
+  if (Array.isArray(out)) return `${tool}: ${out.length} items`;
+  if (isRecord(out)) {
+    if (typeof out.policyCompliant === 'boolean') return `${tool}: ${out.policyCompliant ? 'compliant' : 'not compliant'}`;
+    if (Array.isArray(out.scenarios)) return `${tool}: ${out.scenarios.length} scenarios compared`;
+    if (Array.isArray(out.positions)) return `${tool}: ${out.positions.length} positions`;
+    if (typeof out.concentrationPct === 'number') return `${tool}: concentration ${out.concentrationPct}%`;
+    if (typeof out.liquidityUsd === 'number') return `${tool}: liquidity $${out.liquidityUsd}`;
   }
-  return { proposal: validated.value };
+  return `${tool}: ok`;
+}
+
+/**
+ * Run the bounded agent loop for one user goal. Returns a validated AgentPlan (never a raw model
+ * output) plus a tool trace for the UI. Falls back to a deterministic report when the model
+ * cannot produce a plan within the step budget.
+ */
+export async function runAgentLoop(
+  provider: AiProvider,
+  ctx: AgentToolContext,
+  prompt: string,
+): Promise<AgentLoopResult> {
+  const planCtx: PlanContext = buildPlanContext(ctx.summary, ctx.policy, ctx.shadowCapability);
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+    { role: 'system', content: buildAgentSystemPrompt(ctx) },
+    { role: 'user', content: prompt },
+  ];
+  const trace: AgentToolTrace[] = [];
+
+  for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
+    const raw = await provider.completeChatJson(messages);
+
+    if (isPlanOrProposal(raw)) {
+      const compiled = compileAgentPlan(raw, planCtx);
+      if (!compiled.ok) {
+        trace.push({ step, ok: false, error: compiled.error });
+        messages.push({ role: 'assistant', content: JSON.stringify(raw) });
+        messages.push({ role: 'user', content: `Your plan was rejected: ${compiled.error}. Emit a corrected plan or a tool_call.` });
+        continue;
+      }
+      const plan = compiled.plan;
+      const validated = validateAgentPlan(plan);
+      if (!validated.ok) {
+        trace.push({ step, ok: false, error: `invalid compiled plan: ${validated.error}` });
+        messages.push({ role: 'user', content: `Plan validation failed: ${validated.error}. Emit a corrected plan.` });
+        continue;
+      }
+      trace.push({ step, ok: true, summary: planRequiresConfirmation(plan) ? `plan: ${plan.scenarios.length} scenarios` : 'plan: advisory' });
+      return { plan, trace, stepsUsed: step };
+    }
+
+    if (isToolCall(raw)) {
+      const result = await executeTool(ctx, raw);
+      trace.push({ step, tool: raw.tool, ok: result.ok, error: result.ok ? undefined : result.error, summary: traceSummary(result, raw.tool) });
+      messages.push({ role: 'assistant', content: JSON.stringify({ type: 'tool_call', tool: raw.tool, args: raw.args }) });
+      messages.push({ role: 'user', content: `TOOL RESULT (${raw.tool}): ${JSON.stringify(result)}` });
+      continue;
+    }
+
+    // Malformed output — reject without executing anything.
+    trace.push({ step, ok: false, error: 'malformed model output' });
+    messages.push({ role: 'assistant', content: JSON.stringify(raw) });
+    messages.push({
+      role: 'user',
+      content: 'Your output must be strict JSON: either {"type":"tool_call","tool":"<listed tool>","args":{}} or a plan (type:"plan").',
+    });
+  }
+
+  // Step budget exhausted — deterministic fallback report.
+  const fallback = buildFallbackPlan(planCtx);
+  return { plan: fallback, trace, stepsUsed: MAX_AGENT_STEPS };
+}
+
+function planRequiresConfirmation(plan: AgentPlan): boolean {
+  return plan.selectedScenarioId !== null;
+}
+
+/**
+ * Deterministic fallback plan used when the model cannot produce one. It reports what it found
+ * and why no action is being proposed, and is ALWAYS advisory — a broken/absent model can never
+ * auto-generate an executable action.
+ */
+export function buildFallbackPlan(ctx: PlanContext): AgentPlan {
+  const narrative = deterministicNarrativeFor(ctx);
+  const candidates = generateRebalanceCandidates(ctx.summary, ctx.policy);
+  const plan: AgentPlan = {
+    type: 'plan',
+    goal: 'Treasury analysis',
+    observations: narrative.observations,
+    risks: narrative.risks,
+    scenarios: candidates.slice(0, 3).map((c) => ({
+      id: c.id,
+      label: c.label,
+      action: { type: 'private_transfer' as const, ...c.action },
+      simulation: c.simulation,
+      policyCompliant: c.policyCompliant,
+    })),
+    selectedScenarioId: null,
+    expectedOutcome:
+      'The agent could not produce a validated plan, so no action is proposed. Use the What-If simulator to explore options manually.',
+    policyStatus: 'ADVISORY',
+    requiresUserConfirmation: false,
+    reason: 'Deterministic fallback after the agent could not produce a plan.',
+  };
+  return plan;
+}
+
+// Re-export for callers that previously used analyzeTreasury: a one-shot wrapper that runs the
+// loop and returns the compiled proposal (for back-compat with any external consumer).
+export async function analyzeTreasury(provider: AiProvider, ctx: AgentToolContext, prompt: string): Promise<{ proposal: ReturnType<typeof planToProposal>; plan: AgentPlan }> {
+  const { plan } = await runAgentLoop(provider, ctx, prompt);
+  return { proposal: planToProposal(plan), plan };
 }

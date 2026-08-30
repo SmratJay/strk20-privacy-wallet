@@ -1,38 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { createDefaultProvider } from '@/ai/provider';
-import { analyzeTreasury } from '@/ai/agent';
+import { runAgentLoop } from '@/ai/agent';
+import { AgentToolContext, RecentActivityRow } from '@/ai/tools';
+import { planToProposal, planToJsonSafe } from '@/ai/plan';
+import { getShadowAccountCapability } from '@/ai/shadow';
 import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, resolveUserPolicy, PolicyVerdict } from '@/ai/policy';
 import { buildPortfolioSummary, PrivateBalanceRow } from '@/ai/portfolio';
 import { resolvePortfolioPrices, AssetPrice } from '@/ai/prices';
+import { computeTreasuryHealth } from '@/ai/health';
 import { canonicalizeAddress } from '@/ai/address';
 import { computeReadyAccountAddress } from '@/privacy/privy/ready';
 
 /**
- * Hamster AI analyze endpoint (M2).
+ * Hamster AI analyze endpoint (M2 — agent loop).
  *
  *   POST /api/ai/analyze
- *   { prompt, balances: [{ token, balance }], context: { userAddress, privateTreasuryAddress } }
+ *   { prompt, balances: [{ token, balance }], context: { userAddress, privateTreasuryAddress },
+ *     policy?: { preset, custom? }, recentActivity?: [...] }
  *   Authorization: Bearer <privy-session-jwt>  (optional; preferred when present)
+ *
+ * The endpoint runs the bounded agent loop: the model emits deterministic tool calls (read /
+ * simulate / inspect — never execution primitives), then a structured AgentPlan. All scenario
+ * numbers are computed server-side with the same deterministic policy math the rest of the app
+ * uses. The response returns the validated plan plus a derived proposal/verdict for back-compat
+ * with the existing execution gate.
  *
  * Security boundaries:
  *   - The server fetches FRESH AVNU prices and rebuilds the portfolio summary itself, so a
  *     stale/static volatile price cannot authorize execution.
  *   - Only tokens present in the existing `SEPOLIA_TOKENS` configuration are accepted; an
  *     unknown token address is rejected (400) — no invented metadata for unknown assets.
- *   - Destinations are ONLY the user's primary account, the STRK20 private treasury
- *     identity, and any server-configured allowlist. When a valid Privy session is supplied,
- *     those addresses are derived server-side from the verified user's Starknet wallet (the
- *     treasury identity is `computeReadyAccountAddress(publicKey)` — the exact address the
- *     existing STRK20 integration uses as its `user`, owning private notes and sourcing
- *     private transfers), and client-supplied addresses are ignored. Without a session they
- *     are accepted only as NON-authoritative, client-claimed inputs
- *     (`addressVerification: 'client-claimed'`) — the final wallet confirmation/execution
- *     gate independently re-checks state and requires the user's signature.
- *   - The SDK's separate "Shadow Account" (`shadow_account_anonymizer`) is NOT used by this
- *     integration; the treasury identity above is distinct from it.
+ *   - Destinations are ONLY the user's primary account, the STRK20 private treasury identity,
+ *     and any server-configured allowlist. When a valid Privy session is supplied, those
+ *     addresses are derived server-side from the verified user's Starknet wallet; without a
+ *     session they are NON-authoritative client-claimed inputs — the final execution gate
+ *     independently re-checks state and requires the user's signature.
+ *   - The AI can never modify policy (server-validated user selection), add a destination, or
+ *     emit arbitrary calldata. The shadow-account anonymizer is feature-gated and NOT wired in
+ *     this build unless SHADOW_ACCOUNT_ANONYMIZER_ADDRESS is configured.
  *   - Balances are wallet-provided analysis input, not server-verified on-chain truth.
- *   - Proposals carry generatedAt/expiresAt; execution must re-fetch state and re-run policy.
+ *   - Plans carry generatedAt/expiresAt; execution must re-fetch state and re-run policy.
  *
  * The AI NEVER receives notes, viewing keys, private keys, or per-transaction metadata.
  */
@@ -49,6 +57,8 @@ interface AnalyzeBody {
   context?: unknown;
   /** User-selected guardrail (preset or custom limits). Server-validated; the AI can never change it. */
   policy?: unknown;
+  /** Compact recent treasury activity (the user's own private transfers). Optional. */
+  recentActivity?: unknown;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -220,7 +230,7 @@ export async function POST(req: NextRequest) {
   }
   const policy = built.policy;
 
-  // 3. AI proposes (schema-validated), policy decides.
+  // 3. Run the bounded agent loop: the model emits deterministic tool calls, then a plan.
   let provider;
   try {
     provider = createDefaultProvider();
@@ -231,17 +241,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let proposal;
+  // Compact recent activity (the user's own private transfers), if the client sent it.
+  const recentActivity: RecentActivityRow[] = Array.isArray(body.recentActivity)
+    ? body.recentActivity
+        .filter((r): r is RecentActivityRow => isRecord(r) && typeof r.id === 'string' && typeof r.tokenSymbol === 'string')
+        .slice(0, 10)
+    : [];
+
+  const agentContext: AgentToolContext = {
+    summary,
+    policy,
+    health: computeTreasuryHealth(summary, policy),
+    prices,
+    identity: { userAddress, privateTreasuryAddress, verification },
+    recentActivity,
+    shadowCapability: getShadowAccountCapability(),
+  };
+
+  let plan;
   try {
-    proposal = (await analyzeTreasury(provider, summary, prompt, policy)).proposal;
+    ({ plan } = await runAgentLoop(provider, agentContext, prompt));
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
-    if (/invalid proposal/i.test(msg)) {
-      return NextResponse.json({ error: msg }, { status: 422 });
-    }
     return NextResponse.json({ error: `AI analysis failed: ${msg}` }, { status: 502 });
   }
 
+  // Derive the execution-facing proposal from the plan (advisory — the execution gate re-checks).
+  const proposal = planToProposal(plan);
   const verdict = evaluateProposal(proposal, summary, policy);
 
   const now = Date.now();
@@ -257,8 +283,10 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     summary,
+    plan: planToJsonSafe(plan),
     proposal,
     verdict: verdictDto,
+    shadowCapability: agentContext.shadowCapability,
     // Full effective policy is returned so the client can re-run the SAME deterministic
     // policy against CURRENT state (with fresh prices) before execution. The verdict is
     // advisory; this policy + a fresh state re-check are what gate execution client-side.

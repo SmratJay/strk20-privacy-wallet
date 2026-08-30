@@ -143,6 +143,8 @@ export interface AnalyzeRequestBody {
   context: { userAddress: string; privateTreasuryAddress: string };
   /** The user-selected guardrail; the server validates bounds and the AI can never change it. */
   policy?: UserPolicySelection;
+  /** Compact recent private transfers (the user's own activity). Optional. */
+  recentActivity?: { id: string; amount: string; tokenSymbol: string; status: string }[];
 }
 
 export function buildAnalyzeRequest(input: {
@@ -151,6 +153,7 @@ export function buildAnalyzeRequest(input: {
   userAddress: string;
   privateTreasuryAddress: string;
   policy?: UserPolicySelection;
+  recentActivity?: { id: string; amount: string; tokenSymbol: string; status: string }[];
 }): AnalyzeRequestBody {
   return {
     prompt: input.prompt.trim(),
@@ -163,6 +166,7 @@ export function buildAnalyzeRequest(input: {
       privateTreasuryAddress: input.privateTreasuryAddress,
     },
     policy: input.policy,
+    recentActivity: input.recentActivity,
   };
 }
 

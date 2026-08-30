@@ -129,7 +129,7 @@ describe('/api/ai/analyze', () => {
     expect((await POST(request({ balances: [] }))).status).toBe(400);
   });
 
-  it('rejects an invalid AI proposal with 422', async () => {
+  it('never executes a malformed AI proposal — the agent falls back to an advisory plan', async () => {
     const malformed = { ...PROPOSAL, action: { type: 'mint_money', asset: STRK, amount: '1', recipient: USER } };
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: any) => {
       const url = String(input);
@@ -142,7 +142,13 @@ describe('/api/ai/analyze', () => {
       throw new TypeError('network unavailable');
     });
     const res = await POST(request());
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // The unsupported action type is rejected, never executed; the response is a safe advisory plan.
+    expect(json.plan.type).toBe('plan');
+    expect(json.plan.selectedScenarioId).toBeNull();
+    expect(json.proposal.action.type).toBe('report');
+    expect(json.proposal.requiresUserConfirmation).toBe(false);
   });
 
   it('reflects a user-selected preset as the server-authoritative policy', async () => {
@@ -194,6 +200,13 @@ describe('/api/ai/analyze', () => {
       throw new TypeError('network unavailable');
     });
     const res = await POST(request({ policy: { preset: 'conservative' } }));
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // The model's constraints were rejected; the effective policy is the USER-selected preset,
+    // and the response is a safe advisory plan (nothing executable was produced).
+    expect(json.policy.minLiquidityUsd).toBe(100);
+    expect(json.policy.maxPositionPct).toBe(60);
+    expect(json.plan.selectedScenarioId).toBeNull();
+    expect(json.proposal.action.type).toBe('report');
   });
 });
