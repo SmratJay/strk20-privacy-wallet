@@ -2,29 +2,42 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { createDefaultProvider } from '@/ai/provider';
 import { analyzeTreasury } from '@/ai/agent';
-import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, TreasuryPolicy } from '@/ai/policy';
+import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, TreasuryPolicy, PolicyVerdict } from '@/ai/policy';
 import { buildPortfolioSummary, PrivateBalanceRow } from '@/ai/portfolio';
 import { resolvePortfolioPrices, AssetPrice } from '@/ai/prices';
+import { canonicalizeAddress } from '@/ai/address';
+import { computeReadyAccountAddress } from '@/privacy/privy/ready';
 
 /**
  * Hamster AI analyze endpoint (M2).
  *
  *   POST /api/ai/analyze
  *   { prompt, balances: [{ token, balance }], context: { userAddress, shadowAccountAddress } }
+ *   Authorization: Bearer <privy-session-jwt>  (optional; preferred when present)
  *
- * The server is the ONLY place policy is decided:
- *   - it fetches FRESH prices (AVNU) and rebuilds the portfolio summary itself — stale or
- *     static volatile prices cannot authorize execution;
- *   - it builds the execution policy from the user's primary + Shadow Account addresses and
- *     server-configured allowlists — the model can never invent a destination or asset;
- *   - it returns a structured, schema-validated proposal plus the policy verdict.
+ * Security boundaries:
+ *   - The server fetches FRESH AVNU prices and rebuilds the portfolio summary itself, so a
+ *     stale/static volatile price cannot authorize execution.
+ *   - Only tokens present in the existing `SEPOLIA_TOKENS` configuration are accepted; an
+ *     unknown token address is rejected (400) — no invented metadata for unknown assets.
+ *   - Destinations are ONLY the user's primary account, the STRK20 Shadow Account, and any
+ *     server-configured allowlist. When a valid Privy session is supplied, those addresses
+ *     are derived server-side from the verified user's Starknet wallet (the Shadow Account is
+ *     `computeReadyAccountAddress(publicKey)`), and client-supplied addresses are ignored.
+ *     Without a session they are accepted only as NON-authoritative, client-claimed inputs
+ *     (`addressVerification: 'client-claimed'`) — the final wallet confirmation/execution
+ *     gate independently re-checks state and requires the user's signature.
+ *   - Balances are wallet-provided analysis input, not server-verified on-chain truth.
+ *   - Proposals carry generatedAt/expiresAt; execution must re-fetch state and re-run policy.
  *
- * The AI NEVER receives notes, viewing keys, private keys, or per-transaction metadata — only
- * the aggregate balances the client already reads through the STRK20 wallet lane.
+ * The AI NEVER receives notes, viewing keys, private keys, or per-transaction metadata.
  */
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_BALANCES = 50;
+const PROPOSAL_TTL_MS = 120_000;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 20;
 
 interface AnalyzeBody {
   prompt?: unknown;
@@ -44,6 +57,11 @@ function parseAllowlist(envValue: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+function bearerToken(req: NextRequest): string | null {
+  const header = req.headers.get('authorization') ?? '';
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
+}
+
 function sanitizedPolicyView(policy: TreasuryPolicy) {
   return {
     minLiquidityUsd: policy.minLiquidityUsd,
@@ -54,7 +72,59 @@ function sanitizedPolicyView(policy: TreasuryPolicy) {
   };
 }
 
+/** Minimal in-memory sliding-window request guard (best-effort; not a security boundary). */
+const rateBuckets = new Map<string, number[]>();
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const buckets = (rateBuckets.get(ip) ?? []).filter((t) => t > windowStart);
+  if (buckets.length >= RATE_LIMIT_MAX) {
+    rateBuckets.set(ip, buckets);
+    return true;
+  }
+  buckets.push(now);
+  rateBuckets.set(ip, buckets);
+  return false;
+}
+
+/**
+ * Server-verified addresses when a valid Privy session is presented. Returns null when the
+ * session cannot be verified or Privy is not configured — callers then fall back to the
+ * client-claimed (non-authoritative) path.
+ */
+async function resolveVerifiedAddresses(
+  token: string | null,
+): Promise<{ userAddress: string; shadowAccountAddress: string } | null> {
+  if (!token) return null;
+  try {
+    const { getPrivyServerClient } = await import('@/privacy/privy/server');
+    const privy = getPrivyServerClient();
+    const claims = await privy.verifyAuthToken(token);
+    const user: any = await privy.getUserById(claims.userId);
+    const walletId = user?.customMetadata?.starknetWalletId;
+    if (typeof walletId !== 'string' || !walletId) return null;
+    const wallet: any = await privy.walletApi.getWallet({ id: walletId });
+    const address = String(wallet?.address ?? '');
+    const publicKey = String(wallet?.public_key ?? wallet?.publicKey ?? '');
+    if (!address || !publicKey) return null;
+    let shadow: string;
+    try {
+      shadow = computeReadyAccountAddress(publicKey);
+    } catch {
+      return null;
+    }
+    return { userAddress: address, shadowAccountAddress: shadow };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? 'unknown';
+  if (rateLimited(ip)) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
+
   let body: AnalyzeBody;
   try {
     body = (await req.json()) as AnalyzeBody;
@@ -74,10 +144,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `balances array (1..${MAX_BALANCES}) is required.` }, { status: 400 });
   }
 
+  // Every token MUST be a supported token in SEPOLIA_TOKENS (canonical match). Unknown → 400.
+  const supportedTokens = new Set<string>();
+  for (const t of SEPOLIA_TOKENS) {
+    const c = canonicalizeAddress(t.address);
+    supportedTokens.add(c.ok ? c.value : t.address.toLowerCase());
+  }
   const rows: PrivateBalanceRow[] = [];
   for (const raw of body.balances) {
     if (!isRecord(raw) || typeof raw.token !== 'string' || typeof raw.balance !== 'string') {
       return NextResponse.json({ error: 'each balance must be { token, balance }.' }, { status: 400 });
+    }
+    const canonical = canonicalizeAddress(raw.token);
+    if (!canonical.ok || !supportedTokens.has(canonical.value)) {
+      return NextResponse.json({ error: `unsupported token: ${raw.token}.` }, { status: 400 });
     }
     let balance: bigint;
     try {
@@ -91,10 +171,14 @@ export async function POST(req: NextRequest) {
     rows.push({ token: raw.token, balance });
   }
 
+  // Addresses: server-verified (Privy session) preferred; otherwise client-claimed.
+  const verified = await resolveVerifiedAddresses(bearerToken(req));
   const context = isRecord(body.context) ? body.context : {};
-  const userAddress = typeof context.userAddress === 'string' ? context.userAddress : '';
-  const shadowAccountAddress =
-    typeof context.shadowAccountAddress === 'string' ? context.shadowAccountAddress : '';
+  const clientUser = typeof context.userAddress === 'string' ? context.userAddress : '';
+  const clientShadow = typeof context.shadowAccountAddress === 'string' ? context.shadowAccountAddress : '';
+  const verification: 'privy' | 'client-claimed' = verified ? 'privy' : 'client-claimed';
+  const userAddress = verified?.userAddress ?? clientUser;
+  const shadowAccountAddress = verified?.shadowAccountAddress ?? clientShadow;
 
   // 1. Fresh prices, server-side (no stale-price reuse; static volatile prices are advisory).
   const symbols = new Set<string>();
@@ -120,7 +204,7 @@ export async function POST(req: NextRequest) {
   }
   const summary = buildPortfolioSummary(rows, prices);
 
-  // 2. Server-authoritative policy: user + Shadow Account + configured allowlists only.
+  // 2. Server-authoritative policy: verified/user + shadow + configured allowlists only.
   const built = buildExecutionPolicy({
     userAddress,
     shadowAccountAddress,
@@ -157,10 +241,36 @@ export async function POST(req: NextRequest) {
 
   const verdict = evaluateProposal(proposal, summary, policy);
 
+  const now = Date.now();
+
+  // JSON-safe response DTO: bigint is serialized as a decimal string at the HTTP boundary.
+  const verdictDto = {
+    allowed: verdict.allowed,
+    reportOnly: verdict.reportOnly,
+    amountUsd: verdict.amountUsd,
+    amountBaseUnits: verdict.amountBaseUnits.toString(),
+    checks: verdict.checks,
+  } satisfies PolicyVerdictTo;
+
   return NextResponse.json({
     summary,
     proposal,
-    verdict,
+    verdict: verdictDto,
     policy: sanitizedPolicyView(policy),
+    addresses: { userAddress, shadowAccountAddress, verification },
+    trust: {
+      balances: 'wallet-provided-analysis-input',
+      note: 'Execution independently re-checks current STRK20 state client-side and requires the user’s wallet confirmation before signing.',
+    },
+    proposalGeneratedAt: now,
+    proposalExpiresAt: now + PROPOSAL_TTL_MS,
   });
 }
+
+type PolicyVerdictTo = {
+  allowed: boolean;
+  reportOnly: boolean;
+  amountUsd: number;
+  amountBaseUnits: string;
+  checks: PolicyVerdict['checks'];
+};
