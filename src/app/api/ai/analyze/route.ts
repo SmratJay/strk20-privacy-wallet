@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { createDefaultProvider } from '@/ai/provider';
 import { analyzeTreasury } from '@/ai/agent';
-import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, TreasuryPolicy, PolicyVerdict } from '@/ai/policy';
+import { buildExecutionPolicy, evaluateProposal, DEFAULT_TREASURY_POLICY, PolicyVerdict } from '@/ai/policy';
 import { buildPortfolioSummary, PrivateBalanceRow } from '@/ai/portfolio';
 import { resolvePortfolioPrices, AssetPrice } from '@/ai/prices';
 import { canonicalizeAddress } from '@/ai/address';
@@ -64,16 +64,6 @@ function parseAllowlist(envValue: string | undefined): string[] {
 function bearerToken(req: NextRequest): string | null {
   const header = req.headers.get('authorization') ?? '';
   return header.startsWith('Bearer ') ? header.slice(7) : null;
-}
-
-function sanitizedPolicyView(policy: TreasuryPolicy) {
-  return {
-    minLiquidityUsd: policy.minLiquidityUsd,
-    maxPositionPct: policy.maxPositionPct,
-    maxTxUsd: policy.maxTxUsd,
-    allowedAssetCount: policy.allowedAssets.length,
-    allowedDestinationCount: policy.allowedDestinations.length,
-  };
 }
 
 /** Minimal in-memory sliding-window request guard (best-effort; not a security boundary). */
@@ -262,7 +252,10 @@ export async function POST(req: NextRequest) {
     summary,
     proposal,
     verdict: verdictDto,
-    policy: sanitizedPolicyView(policy),
+    // Full effective policy is returned so the client can re-run the SAME deterministic
+    // policy against CURRENT state (with fresh prices) before execution. The verdict is
+    // advisory; this policy + a fresh state re-check are what gate execution client-side.
+    policy,
     addresses: { userAddress, privateTreasuryAddress, verification },
     trust: {
       balances: 'wallet-provided-analysis-input',

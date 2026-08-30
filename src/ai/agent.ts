@@ -27,7 +27,7 @@ export function buildSystemPrompt(
     : 'any asset present in the portfolio';
   const allowedDests = policy.allowedDestinations.length
     ? policy.allowedDestinations.join(', ')
-    : 'any non-zero recipient';
+    : 'NONE — execution is disabled (no approved destinations)';
 
   return [
     'You are Hamster AI, the private AI treasury agent for a Starknet STRK20 Shadow Account.',

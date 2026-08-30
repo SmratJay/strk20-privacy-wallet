@@ -17,6 +17,7 @@ import {
   Rocket,
   Settings,
   ShieldCheck,
+  Sparkles,
   Sun,
   TrendingUp,
   X,
@@ -28,6 +29,7 @@ import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
 const PRIMARY_NAV = [
   { href: '/wallet', label: 'Wallet', icon: ShieldCheck },
+  { href: '/treasury', label: 'Treasury', icon: Sparkles },
   { href: '/activity', label: 'Activity', icon: Activity },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
