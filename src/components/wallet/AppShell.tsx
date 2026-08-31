@@ -47,7 +47,7 @@ type AppTheme = 'light' | 'dark';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
-  const { wallet, currentNetwork, isSepolia } = useWallet();
+  const { wallet } = useWallet();
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<AppTheme>('light');
@@ -125,10 +125,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             <button type="button" className="product-mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-expanded={mobileMenuOpen} aria-controls="product-mobile-menu" aria-label={mobileMenuOpen ? 'Close app menu' : 'Open app menu'}>
               {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
             </button>
-            <span className="product-network-status" title={`Connected to ${currentNetwork.name}`}>
-              <span className={isSepolia ? 'is-sepolia' : 'is-mainnet'} />
-              {isSepolia ? 'Sepolia' : 'Mainnet'}
-            </span>
             <button type="button" className="product-icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} aria-pressed={theme === 'dark'}>
               {theme === 'light' ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>

@@ -184,11 +184,11 @@ describe('Viewing Key Service (Whitepaper Section 4.3 & 14)', () => {
 });
 
 describe('Price Service (Real-Time Rates)', () => {
-  it('provides default fallback token prices with valid symbols', () => {
+  it('does not invent fallback token prices before a live fetch', () => {
     const prices = priceService.getCachedPrices();
-    expect(prices.STRK).toBeGreaterThan(0);
-    expect(prices.ETH).toBeGreaterThan(0);
-    expect(prices.USDC).toBe(1.0);
-    expect(prices.USDT).toBe(1.0);
+    expect(prices.STRK).toBeUndefined();
+    expect(prices.ETH).toBeUndefined();
+    expect(prices.USDC).toBeUndefined();
+    expect(prices.USDT).toBeUndefined();
   });
 });

@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
-import { Copy, Check, Share2, ShieldCheck } from 'lucide-react';
+import { Copy, Check, Share2 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { copyToClipboard, shortenAddress } from '@/utils/formatters';
 
@@ -18,11 +17,10 @@ import { copyToClipboard, shortenAddress } from '@/utils/formatters';
  * private receiving must be enabled first — we never claim a payment can arrive before setup.
  */
 export const ReceivePanel: React.FC<{ large?: boolean }> = ({ large }) => {
-  const { wallet, privateReceivingState } = useWallet();
+  const { wallet } = useWallet();
   const [copied, setCopied] = useState(false);
 
   const address = wallet.address || '';
-  const ready = privateReceivingState === 'READY';
 
   const handleCopy = async () => {
     if (!address) return;
@@ -35,12 +33,9 @@ export const ReceivePanel: React.FC<{ large?: boolean }> = ({ large }) => {
 
   const handleShare = async () => {
     if (!address) return;
-    const text = ready
-      ? `Pay me privately on Starknet: ${address}`
-      : `${address}`;
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
-        await navigator.share({ title: 'Private payment', text });
+        await navigator.share({ title: 'ORRANGE wallet address', text: address });
         return;
       } catch {
         // User cancelled — fall through to copy.
@@ -54,59 +49,34 @@ export const ReceivePanel: React.FC<{ large?: boolean }> = ({ large }) => {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 sm:p-6 text-center space-y-4">
       <div className="space-y-1">
-        <h2 className="text-base font-semibold text-zinc-100">Receive privately</h2>
-        {ready ? (
-          <p className="text-[12px] text-zinc-500">
-            Anyone can send you a private payment to this address.
-          </p>
-        ) : (
-          <p className="text-[12px] text-amber-300/90">
-            Enable private receiving first — this address can't receive yet.
-          </p>
-        )}
+        <h2 className="text-base font-semibold text-zinc-100">Your wallet address</h2>
+        <p className="text-[12px] text-zinc-500">Share this Starknet address to receive funds.</p>
       </div>
 
-      {ready ? (
-        <>
-          <div className="mx-auto w-fit p-3 rounded-2xl bg-white">
-            <QRCodeSVG value={address} size={large ? 200 : 148} level="M" />
-          </div>
-          <div className="space-y-2">
-            <div className="text-xs font-mono text-zinc-300 break-all rounded-xl bg-zinc-900/80 border border-zinc-800 px-3 py-2">
-              {shortenAddress(address, 10)}
-            </div>
-            <div className="flex items-center gap-2 justify-center">
-              <button
-                onClick={handleCopy}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-[13px] font-medium hover:bg-zinc-800 transition-colors"
-              >
-                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                {copied ? 'Copied' : 'Copy address'}
-              </button>
-              <button
-                onClick={handleShare}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-[13px] font-medium hover:bg-zinc-800 transition-colors"
-              >
-                <Share2 className="w-4 h-4" />
-                Share
-              </button>
-            </div>
-          </div>
-        </>
-      ) : (
-        <div className="space-y-3">
-          <div className="text-xs font-mono text-zinc-300 break-all rounded-xl bg-zinc-900/80 border border-zinc-800 px-3 py-2">
-            {shortenAddress(address, 10)}
-          </div>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-500 hover:bg-violet-400 text-white text-[13px] font-semibold transition-colors"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            Enable private receiving
-          </Link>
+      <div className="mx-auto w-fit p-3 rounded-2xl bg-white">
+        <QRCodeSVG value={address} size={large ? 200 : 148} level="M" />
+      </div>
+      <div className="space-y-2">
+        <div className="text-xs font-mono text-zinc-300 break-all rounded-xl bg-zinc-900/80 border border-zinc-800 px-3 py-2">
+          {shortenAddress(address, 10)}
         </div>
-      )}
+        <div className="flex items-center gap-2 justify-center">
+          <button
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-[13px] font-medium hover:bg-zinc-800 transition-colors"
+          >
+            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            {copied ? 'Copied' : 'Copy address'}
+          </button>
+          <button
+            onClick={handleShare}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-[13px] font-medium hover:bg-zinc-800 transition-colors"
+          >
+            <Share2 className="w-4 h-4" />
+            Share
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

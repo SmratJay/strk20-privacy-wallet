@@ -37,10 +37,12 @@ export function ProductMockup() {
           <div className="orrange-assets-heading"><span>Private assets</span><span>STRK20 pool</span></div>
           <div className="orrange-asset-list">
             <div className="orrange-asset-row"><span className="orrange-asset-icon orrange-asset-icon-strk">S</span><span><strong>STRK</strong><small>Starknet</small></span><b>$4,280.21</b></div>
-            <div className="orrange-asset-row"><span className="orrange-asset-icon orrange-asset-icon-usdc">$</span><span><strong>USDC</strong><small>USD Coin</small></span><b>$3,421.00</b></div>
+            <div className="orrange-asset-row"><span className="orrange-asset-icon orrange-asset-icon-eth">E</span><span><strong>ETH</strong><small>Ethereum</small></span><b>$2,361.40</b></div>
+            <div className="orrange-asset-row"><span className="orrange-asset-icon orrange-asset-icon-usdc">U</span><span><strong>USDC</strong><small>USD Coin</small></span><b>$3,421.00</b></div>
+            <div className="orrange-asset-row"><span className="orrange-asset-icon orrange-asset-icon-usdt">T</span><span><strong>USDT</strong><small>Tether USD</small></span><b>$2,420.60</b></div>
           </div>
 
-          <div className="orrange-product-foot"><span><WalletCards aria-hidden="true" /> Private balance</span><span>Demo values · not live</span></div>
+          <div className="orrange-product-foot"><span><WalletCards aria-hidden="true" /> Private balance</span><span>STRK20 / WALLET PREVIEW</span></div>
         </article>
       </div>
     </div>

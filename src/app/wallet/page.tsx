@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight, Repeat } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
@@ -10,9 +10,52 @@ import { BalanceCard } from '@/components/wallet/BalanceCard';
 import { ReceivePanel } from '@/components/wallet/ReceivePanel';
 import { TransactionList } from '@/components/wallet/TransactionList';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
-import { PrivyConnect } from '@/components/wallet/PrivyConnect';
 import { useWallet } from '@/context/WalletContext';
-import { formatTokenAmount, shortenAddress } from '@/utils/formatters';
+import { usePrivyWallet } from '@/context/PrivyWalletContext';
+import { privacyService } from '@/services/privacyService';
+import { priceService, type TokenPrices } from '@/services/priceService';
+import { shortenAddress } from '@/utils/formatters';
+import type { TokenInfo } from '@/config/networks';
+
+interface ValuationRow {
+  token: TokenInfo;
+  publicBalance: bigint;
+  publicAvailable: boolean;
+  privateBalance: bigint;
+  privateAvailable: boolean;
+}
+
+interface WalletValuation {
+  prices: TokenPrices;
+  rows: ValuationRow[];
+}
+
+const formatUsd = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
+const valueRows = (
+  rows: ValuationRow[],
+  prices: TokenPrices,
+  kind: 'public' | 'private',
+): number | null => {
+  const relevant = rows.filter((row) => kind === 'public' ? row.publicAvailable : row.privateAvailable);
+  if (relevant.length === 0) return null;
+
+  let total = 0;
+  for (const row of relevant) {
+    const price = prices[row.token.symbol];
+    if (price === undefined || price === null) return null;
+    const balance = kind === 'public' ? row.publicBalance : row.privateBalance;
+    total += Number(balance) / (10 ** row.token.decimals) * price;
+  }
+  return total;
+};
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -22,12 +65,80 @@ const greeting = () => {
 };
 
 export default function WalletPage() {
-  const { wallet, transactions, balances } = useWallet();
-  const primaryBalance = balances[0];
-  const totalAvailable = Boolean(primaryBalance?.publicBalanceAvailable && primaryBalance?.shieldedBalanceAvailable === true);
-  const formatBalance = (value: bigint, available: boolean) => available && primaryBalance
-    ? `${formatTokenAmount(value, primaryBalance.token.decimals, 4)} ${primaryBalance.token.symbol}`
-    : '—';
+  const { wallet, transactions, balances, currentNetwork, privyConnected } = useWallet();
+  const privy = usePrivyWallet();
+  const [valuation, setValuation] = useState<WalletValuation | null>(null);
+  const [valuationLoading, setValuationLoading] = useState(false);
+
+  useEffect(() => {
+    if (!wallet.isConnected) {
+      setValuation(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadValuation = async () => {
+      setValuationLoading(true);
+      try {
+        const prices = await priceService.getPrices();
+        let rows: ValuationRow[];
+
+        if (privyConnected && privy.address) {
+          const publicBalances = await privacyService.fetchBalances(privy.address, undefined, currentNetwork);
+          const publicByToken = new Map(
+            publicBalances.map((balance) => [balance.token.address.toLowerCase(), balance]),
+          );
+
+          rows = await Promise.all(currentNetwork.tokens.map(async (token) => {
+            const publicBalance = publicByToken.get(token.address.toLowerCase());
+            let privateBalance = 0n;
+            let privateAvailable = false;
+            try {
+              privateBalance = await privy.getPrivateBalance(token.address);
+              privateAvailable = true;
+            } catch {
+              // A failed discovery read stays unknown; it must not become a fake zero.
+            }
+            return {
+              token,
+              publicBalance: publicBalance?.publicBalance ?? 0n,
+              publicAvailable: publicBalance?.publicBalanceAvailable === true,
+              privateBalance,
+              privateAvailable,
+            };
+          }));
+        } else {
+          rows = currentNetwork.tokens.map((token) => {
+            const balance = balances.find((entry) => entry.token.address.toLowerCase() === token.address.toLowerCase());
+            return {
+              token,
+              publicBalance: balance?.publicBalance ?? 0n,
+              publicAvailable: balance?.publicBalanceAvailable === true,
+              privateBalance: balance?.shieldedBalance ?? 0n,
+              privateAvailable: balance?.shieldedBalanceAvailable === true,
+            };
+          });
+        }
+
+        if (!cancelled) setValuation({ prices, rows });
+      } catch {
+        if (!cancelled) setValuation(null);
+      } finally {
+        if (!cancelled) setValuationLoading(false);
+      }
+    };
+
+    void loadValuation();
+    const timer = setInterval(loadValuation, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [wallet.isConnected, balances, currentNetwork, privyConnected, privy.address]);
+
+  const publicUsd = valuation ? valueRows(valuation.rows, valuation.prices, 'public') : null;
+  const privateUsd = valuation ? valueRows(valuation.rows, valuation.prices, 'private') : null;
+  const totalUsd = publicUsd !== null && privateUsd !== null ? publicUsd + privateUsd : null;
 
   return (
     <AppShell>
@@ -39,7 +150,7 @@ export default function WalletPage() {
             <p className="product-page-description">
             {wallet.isConnected
               ? 'Your private money, at a glance.'
-              : 'Receive privately and spend freely on Starknet.'}
+              : 'Receive and spend freely on Starknet.'}
             </p>
           </div>
           {wallet.isConnected && wallet.address && (
@@ -51,8 +162,6 @@ export default function WalletPage() {
 
         {!wallet.isConnected && <ConnectGate />}
 
-        <PrivyConnect />
-
         {wallet.isConnected && (
           <>
             <section className="product-summary" aria-label="Account balance summary">
@@ -60,20 +169,22 @@ export default function WalletPage() {
                 <div>
                   <div className="product-summary-label">Total balance</div>
                   <div className="product-summary-value">
-                    {primaryBalance ? formatBalance(primaryBalance.publicBalance + primaryBalance.shieldedBalance, totalAvailable) : '—'}
+                    {valuationLoading && !valuation ? '…' : formatUsd(totalUsd)}
                   </div>
-                  <div className="product-summary-note">Values shown per asset · no fiat conversion</div>
+                  <div className="product-summary-note">
+                    {totalUsd === null ? 'USD value appears when live prices and balances are available' : 'Live USD estimate · public + private balances'}
+                  </div>
                 </div>
-                <span className="product-summary-label">{primaryBalance?.token.symbol || 'STRK20'}</span>
+                <span className="product-summary-label">USD</span>
               </div>
               <div className="product-summary-split">
                 <div>
                   <div className="product-split-label"><span /> Public</div>
-                  <div className="product-split-value">{primaryBalance ? formatBalance(primaryBalance.publicBalance, primaryBalance.publicBalanceAvailable) : '—'}</div>
+                  <div className="product-split-value">{formatUsd(publicUsd)}</div>
                 </div>
                 <div>
                   <div className="product-split-label"><span className="is-private" /> Private</div>
-                  <div className="product-split-value">{primaryBalance ? formatBalance(primaryBalance.shieldedBalance, primaryBalance.shieldedBalanceAvailable === true) : '—'}</div>
+                  <div className="product-split-value">{formatUsd(privateUsd)}</div>
                 </div>
               </div>
             </section>

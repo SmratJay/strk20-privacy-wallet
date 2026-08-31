@@ -1275,7 +1275,9 @@ select:focus-visible {
 }
 
 .orrange-asset-icon-strk { background: #c85a25; }
+.orrange-asset-icon-eth { background: #4d6578; }
 .orrange-asset-icon-usdc { background: #7e4426; }
+.orrange-asset-icon-usdt { background: #287a5c; }
 
 .orrange-asset-row span:not(.orrange-asset-icon) {
   display: grid;

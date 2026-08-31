@@ -16,9 +16,9 @@ export default function ReceivePage() {
         <div className="product-page-intro">
           <div>
             <div className="product-eyebrow">ORRANGE / RECEIVE</div>
-            <h1 className="product-page-title">Receive privately</h1>
+            <h1 className="product-page-title">Receive</h1>
             <p className="product-page-description">
-            Share your private address — anyone can pay you without seeing your activity.
+            Share your Starknet wallet address.
             </p>
           </div>
         </div>
@@ -36,7 +36,7 @@ export default function ReceivePage() {
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-8 text-center">
                   <p className="text-sm text-zinc-400">No activity yet</p>
                   <p className="text-[12px] text-zinc-600">
-                    Your private payments and balance changes will appear here.
+                    Your incoming transfers and balance changes will appear here.
                   </p>
                 </div>
               )}

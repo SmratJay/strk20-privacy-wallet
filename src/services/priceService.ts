@@ -1,23 +1,15 @@
 /**
  * @file priceService.ts
- * @description Centralized Real-time Token Price Service (Whitepaper Sections 5 & 13)
- * Fetches real market rates with Binance + CoinGecko streaming and graceful fallback.
+ * @description Centralized real-time token price service (Whitepaper Sections 5 & 13)
+ * Fetches real market rates with Binance + CoinGecko fallback; never fabricates a price.
  */
 
 export interface TokenPrices {
-  [symbol: string]: number;
+  [symbol: string]: number | null;
 }
 
-const DEFAULT_PRICES: TokenPrices = {
-  BTC: 96420.0,
-  ETH: 3418.0,
-  STRK: 0.58,
-  USDC: 1.0,
-  USDT: 1.0,
-};
-
 class PriceService {
-  private cachedPrices: TokenPrices = { ...DEFAULT_PRICES };
+  private cachedPrices: TokenPrices = {};
   private lastFetchTime: number = 0;
   private readonly CACHE_TTL_MS = 5 * 1000; // 5 seconds cache for fast live ticks
 
@@ -74,7 +66,7 @@ class PriceService {
         }
       }
     } catch {
-      // Graceful fallback to default/cached prices
+      // Keep the last verified prices. If none exist, callers must show an unavailable value.
     }
 
     return this.cachedPrices;
@@ -83,8 +75,8 @@ class PriceService {
   /**
    * Synchronous cached getter for instant UI renders
    */
-  getCachedPrice(symbol: string): number {
-    return this.cachedPrices[symbol.toUpperCase()] || 1.0;
+  getCachedPrice(symbol: string): number | null {
+    return this.cachedPrices[symbol.toUpperCase()] ?? null;
   }
 
   getCachedPrices(): TokenPrices {
