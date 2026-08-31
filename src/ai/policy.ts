@@ -419,7 +419,7 @@ export function evaluateProposal(
     } else if (STABLECOIN_SYMBOLS.has(pos.symbol)) {
       priceOk = true;
       priceDetail = `${pos.symbol} is a stablecoin pinned at $1.`;
-    } else if (pos.priceSource !== 'avnu') {
+    } else if (pos.priceSource !== 'avnu' && pos.priceSource !== 'market') {
       priceDetail = `${pos.symbol} price is ${pos.priceSource} (fallback). A fresh live price is required to authorize execution.`;
     } else {
       const fetchedAt = pos.priceFetchedAt;
@@ -431,7 +431,7 @@ export function evaluateProposal(
           priceDetail = `${pos.symbol} price is stale (${Math.max(0, Math.round(ageMs / 1000))}s old; max ${MAX_PRICE_AGE_MS / 1000}s).`;
         } else {
           priceOk = true;
-          priceDetail = `${pos.symbol} has a fresh live market price (source: avnu, ${Math.round(ageMs / 1000)}s old).`;
+          priceDetail = `${pos.symbol} has a fresh live market price (source: ${pos.priceSource}, ${Math.round(ageMs / 1000)}s old).`;
         }
       }
     }

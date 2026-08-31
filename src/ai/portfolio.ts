@@ -29,7 +29,7 @@ export interface PortfolioAssetPosition {
   /** USD value of this position (price input — see prices.ts). */
   usdValue: number;
   priceUsd: number;
-  priceSource: 'avnu' | 'static';
+  priceSource: 'avnu' | 'market' | 'static';
   /** ms epoch when the price was resolved — live prices must be fresh to authorize execution. */
   priceFetchedAt?: number;
   /** Allocation percentage of total treasury USD. */

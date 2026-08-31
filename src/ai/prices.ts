@@ -11,18 +11,23 @@
 import { getQuotes } from '@avnu/avnu-sdk';
 import { SEPOLIA_TOKENS, TokenInfo } from '@/config/networks';
 import { getActivePoolAddress } from '@/config/tokens';
+import { priceService } from '@/services/priceService';
 
 export interface AssetPrice {
   priceUsd: number;
-  source: 'avnu' | 'static';
+  source: 'avnu' | 'market' | 'static';
   /** ms epoch when the price was resolved — live prices must be fresh to authorize execution. */
   priceFetchedAt: number;
 }
 
-/** Documented static USD reference (matches the repo's existing fallback rates). */
+/**
+ * Documented static USD reference — LAST-RESORT offline fallback only. STRK/ETH are resolved
+ * from live market feeds (AVNU aggregator, then Binance/CoinGecko via priceService) whenever a
+ * network is reachable; these values are only used when every live feed is unavailable.
+ */
 export const STATIC_PRICES_USD: Record<string, number> = {
-  STRK: 0.38,
-  ETH: 2715,
+  STRK: 0.026,
+  ETH: 2467,
   USDC: 1,
   USDT: 1,
 };
@@ -65,7 +70,7 @@ async function tryAvnuPriceUsd(symbol: 'STRK' | 'ETH'): Promise<number | null> {
   }
 }
 
-/** Resolve a USD price for a token symbol (AVNU where possible, static fallback). */
+/** Resolve a USD price for a token symbol: AVNU aggregator → live market feed → static fallback. */
 export async function getAssetPriceUsd(symbol: string): Promise<AssetPrice> {
   const now = Date.now();
   if (symbol === 'USDC' || symbol === 'USDT') {
@@ -74,9 +79,24 @@ export async function getAssetPriceUsd(symbol: string): Promise<AssetPrice> {
   if (symbol === 'STRK' || symbol === 'ETH') {
     const live = await tryAvnuPriceUsd(symbol);
     if (live !== null) return { priceUsd: live, source: 'avnu', priceFetchedAt: now };
+    // Real market price (Binance STRKUSDT/ETHUSDT, CoinGecko fallback). The STRK token address is
+    // identical on mainnet and Sepolia, so the mainnet market price is the realistic STRK price.
+    const market = await tryMarketPriceUsd(symbol);
+    if (market !== null) return { priceUsd: market, source: 'market', priceFetchedAt: now };
   }
   const staticPrice = STATIC_PRICES_USD[symbol];
   return { priceUsd: staticPrice ?? 0, source: 'static', priceFetchedAt: now };
+}
+
+/** Real market price via the shared Binance→CoinGecko feed (5s cache). Returns null when unreachable. */
+async function tryMarketPriceUsd(symbol: 'STRK' | 'ETH'): Promise<number | null> {
+  try {
+    const prices = await priceService.getPrices();
+    const value = prices[symbol];
+    return value != null && Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve prices for every known token in the treasury in one pass. */

@@ -111,6 +111,9 @@ export default function TreasuryPage() {
   const [executeState, setExecuteState] = useState<ExecuteState>({ status: 'idle' });
   const [expiresIn, setExpiresIn] = useState<number | null>(null);
   const analysisBalancesRef = useRef<PrivateBalanceRow[]>([]);
+  // Refs so the mount effect never re-triggers when `privy`/`wallet` object identities churn.
+  const summaryRef = useRef<PortfolioSummary | null>(null);
+  const refreshBalancesRef = useRef<() => Promise<void>>(async () => {});
 
   // The currently displayed What-If scenario (starts from the recommendation).
   const [scenario, setScenario] = useState<ScenarioSimulation | null>(null);
@@ -146,11 +149,17 @@ export default function TreasuryPage() {
       }
       setPriceStatus(prices);
       const built = buildPortfolioSummary(rows, prices);
+      summaryRef.current = built;
       setSummary(built);
     } catch {
       // wallet/STRK20 read failed — keep prior state
     }
   }, [connected, privyConnected, privy, wallet]);
+
+  // Keep the ref pointing at the latest refresh closure so the connect effect below is stable.
+  useEffect(() => {
+    refreshBalancesRef.current = refreshBalances;
+  });
 
   const fetchRows = useCallback(async (): Promise<PrivateBalanceRow[]> => {
     if (privyConnected) {
@@ -174,9 +183,19 @@ export default function TreasuryPage() {
 
   useEffect(() => {
     if (!connected) return;
-    setLoadingBalances(true);
-    void refreshBalances().finally(() => setLoadingBalances(false));
-  }, [connected, refreshBalances]);
+    let active = true;
+    // Only show the loading placeholder when there is nothing on screen yet — an in-place
+    // refresh must never blank the current balance. Run once per connect (the refresh closure
+    // is read from a ref so unstable `privy`/`wallet` identities cannot re-trigger this effect).
+    if (!summaryRef.current) setLoadingBalances(true);
+    void refreshBalancesRef.current().finally(() => {
+      if (active) setLoadingBalances(false);
+    });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
 
   // Expiry countdown for a completed analysis.
   useEffect(() => {
@@ -347,6 +366,7 @@ export default function TreasuryPage() {
         }
         setPriceStatus(prices);
         const freshSummary = buildPortfolioSummary(fresh, prices);
+        summaryRef.current = freshSummary;
         setSummary(freshSummary);
         if (expected) {
           setVerification(verifyExecution(expected, freshSummary));

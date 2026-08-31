@@ -16,7 +16,7 @@ function pos(
   decimals: number,
   balanceBase: string,
   priceUsd: number,
-  priceSource: 'avnu' | 'static',
+  priceSource: 'avnu' | 'market' | 'static',
   liquid: boolean,
   over: Partial<PortfolioAssetPosition> = {},
 ): PortfolioAssetPosition {
@@ -201,6 +201,24 @@ describe('evaluateProposal — volatile price freshness for execution', () => {
   it('allows stablecoin execution on its pinned $1 price (static is authoritative)', () => {
     const v = evalProposal(transfer(USDC, '10'), summary());
     expect(check(v, 'price-valid')?.passed).toBe(true);
+  });
+
+  it('accepts a FRESH live market price (Binance/CoinGecko) for a volatile asset', () => {
+    const s = summary({
+      positions: [pos(STRK, 'STRK', 18, '1000000000000000000000', 5, 'market', true, { priceFetchedAt: NOW }), pos(USDC, 'USDC', 6, '5000000000', 1, 'static', true)],
+    });
+    const v = evalProposal(transfer(STRK, '1'), s);
+    const price = check(v, 'price-valid');
+    expect(price?.passed).toBe(true);
+    if (price) expect(price.detail).toMatch(/fresh live market price/);
+  });
+
+  it('rejects a STALE market price for a volatile asset', () => {
+    const s = summary({
+      positions: [pos(STRK, 'STRK', 18, '1000000000000000000000', 5, 'market', true, { priceFetchedAt: NOW - (MAX_PRICE_AGE_MS + 60_000) }), pos(USDC, 'USDC', 6, '5000000000', 1, 'static', true)],
+    });
+    const v = evaluateProposal(transfer(STRK, '1'), s, policy(), { now: NOW });
+    expect(check(v, 'price-valid')?.passed).toBe(false);
   });
 });
 

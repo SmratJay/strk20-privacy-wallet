@@ -100,7 +100,7 @@ interface WalletContextValue {
 const WalletContext = createContext<WalletContextValue | undefined>(undefined);
 
 /** How often to reconcile external incoming private payments (Wallet API has no subscription). */
-const PRIVATE_POLL_MS = 25000;
+const PRIVATE_POLL_MS = 45000;
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const wallet = useStarknetWallet();
@@ -419,10 +419,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshPublicBalances();
   }, [refreshPublicBalances]);
 
-  // ── Public balance polling (12s) — private balances are never polled via this timer ──
+  // ── Public balance polling (30s) — private balances are never polled via this timer ──
   useEffect(() => {
     if (!wallet.isConnected) return;
-    const t = setInterval(refreshPublicBalances, 12000);
+    const t = setInterval(refreshPublicBalances, 30000);
     return () => clearInterval(t);
   }, [refreshPublicBalances, wallet.isConnected]);
 
