@@ -9,7 +9,6 @@ import { formatTokenAmount } from '@/utils/formatters';
 
 interface Row {
   address: string;
-  icon: string;
   symbol: string;
   decimals: number;
   publicBalance: bigint;
@@ -44,7 +43,6 @@ export const BalanceCard: React.FC = () => {
         const key = t.address.toLowerCase();
         map.set(key, {
           address: t.address,
-          icon: t.icon,
           symbol: t.symbol,
           decimals: t.decimals,
           publicBalance: 0n,
@@ -94,7 +92,6 @@ export const BalanceCard: React.FC = () => {
   const rows: Row[] = privyConnected
     ? currentNetwork.tokens.map((t) => privyBalances.get(t.address.toLowerCase()) ?? {
         address: t.address,
-        icon: t.icon,
         symbol: t.symbol,
         decimals: t.decimals,
         publicBalance: 0n,
@@ -104,7 +101,6 @@ export const BalanceCard: React.FC = () => {
       })
     : balances.map((b) => ({
         address: b.token.address,
-        icon: b.token.icon,
         symbol: b.token.symbol,
         decimals: b.token.decimals,
         publicBalance: b.publicBalance,
@@ -179,8 +175,8 @@ export const BalanceCard: React.FC = () => {
         {rows.map((r) => (
           <div key={r.address} className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-zinc-800/80 flex items-center justify-center text-sm">
-                {r.icon}
+              <div className="w-8 h-8 rounded-full bg-zinc-800/80 flex items-center justify-center text-xs font-semibold tracking-tight">
+                {r.symbol.slice(0, 1)}
               </div>
               <div>
                 <div className="text-sm font-medium text-zinc-100">{r.symbol}</div>

@@ -9,7 +9,6 @@ import { formatTokenAmount } from '@/utils/formatters';
 
 interface PubRow {
   address: string;
-  icon: string;
   symbol: string;
   name: string;
   decimals: number;
@@ -48,7 +47,6 @@ export const PublicBalanceCard: React.FC = () => {
           const key = t.address.toLowerCase();
           map.set(key, {
             address: t.address,
-            icon: t.icon,
             symbol: t.symbol,
             name: t.name,
             decimals: t.decimals,
@@ -97,7 +95,6 @@ export const PublicBalanceCard: React.FC = () => {
         (t) =>
           privyPub.get(t.address.toLowerCase()) ?? {
             address: t.address,
-            icon: t.icon,
             symbol: t.symbol,
             name: t.name,
             decimals: t.decimals,
@@ -107,7 +104,6 @@ export const PublicBalanceCard: React.FC = () => {
       )
     : balances.map((b) => ({
         address: b.token.address,
-        icon: b.token.icon,
         symbol: b.token.symbol,
         name: b.token.name,
         decimals: b.token.decimals,
@@ -166,8 +162,8 @@ export const PublicBalanceCard: React.FC = () => {
         {rows.map((r) => (
           <div key={r.address} className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-zinc-800/80 flex items-center justify-center text-sm">
-                {r.icon}
+              <div className="w-8 h-8 rounded-full bg-zinc-800/80 flex items-center justify-center text-xs font-semibold tracking-tight">
+                {r.symbol.slice(0, 1)}
               </div>
               <div>
                 <div className="text-sm font-medium text-zinc-100">{r.symbol}</div>
