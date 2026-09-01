@@ -1,23 +1,24 @@
-# STRK20 Privacy Wallet
+# Orrange — STRK20 Privacy Terminal
 
-> **Publish once. Receive privately. Spend freely.**
+> **Everything private, in one terminal.**
 
-A consumer privacy wallet for **STRK20** on Starknet. It composes the existing STRK20 privacy
-pool through the official Starknet **Wallet API** and a compatible privacy wallet, so ordinary
-users can send and receive STRK20 privately without touching any cryptography.
+A private financial terminal for **Starknet**, built on the STRK20 privacy pool. **Shield. Send.
+Swap. Trade.** Ordinary users can hold, receive, send, swap, and trade **STRK20** (and STRK20-based
+assets) privately — without touching any cryptography.
 
-**This application does not implement a new wallet, privacy pool, proof system, or
-cryptographic protocol.** It provides the consumer-facing STRK20 privacy experience on top of
-the existing Starknet Wallet API and STRK20 privacy infrastructure.
+This application **does not implement a new wallet, privacy pool, proof system, or cryptographic
+protocol.** It provides the consumer-facing STRK20 privacy experience on top of the existing
+Starknet **Wallet API**, the **STRK20 privacy pool**, and compatible privacy wallets (Ready,
+Privy embedded).
 
 ---
 
 ## What is this?
 
-STRK20 is Starknet's native, Umbra-style privacy pool for shielded private payments. This app is
-the consumer surface for it: a wallet-like experience where you **connect your privacy wallet**,
-**enable private receiving once**, **share your private address**, and then **send and receive
-STRK20 privately** — while the pool hides sender, recipient, amount, and token.
+STRK20 is Starknet's native, Umbra-style privacy pool for shielded private payments. **Orrange** is
+the consumer surface for it: a wallet-like terminal where you **connect your privacy wallet**,
+**enable private receiving once**, **share your private address**, and then **send, receive, swap,
+and trade privately** — while the pool hides sender, recipient, amount, and token.
 
 ## The problem
 
@@ -27,9 +28,10 @@ developer SDK, not a consumer product.
 
 ## The solution
 
-A normal, calm consumer wallet experience on top of the STRK20 protocol. The user sees
-**Receive / Send / Balance / Activity**. The STRK20 complexity (viewing keys, encrypted notes,
-discovery, proofs) is handled underneath by the connected privacy wallet and the pool.
+A normal, calm consumer terminal on top of the STRK20 protocol. The user sees
+**Receive / Send / Balance / Activity / Swap / Trade**. The STRK20 complexity (viewing keys,
+encrypted notes, discovery, proofs) is handled underneath by the connected privacy wallet, the
+pool, and Orrange's integration layer.
 
 ## Why STRK20
 
@@ -49,23 +51,40 @@ discovery, proofs) is handled underneath by the connected privacy wallet and the
 | Discovery | scan announced events | wallet-side encrypted-note discovery |
 | Relayer | required | optional / paymaster-friendly |
 
-## Architecture
+---
 
-```
-USER
-  ↓
-OUR DAPP            ← UI, routing, connect, receive/send UX, activity, app state
-  ↓
-STARKNET WALLET API  ← wallet_strk20InvokeTransaction / wallet_strk20Balances
-  ↓
-PRIVACY WALLET (e.g. Ready)   ← viewing keys, notes, discovery, decryption, proofs, signing
-  ↓
-STRK20 PRIVACY INFRASTRUCTURE (proving / discovery services)
-  ↓
-STRK20 PRIVACY POOL
-  ↓
-STARKNET
-```
+## Terminal features
+
+### Shield (private wallet)
+
+The core STRK20 wallet: **Enable private receiving** once, share your **private address**, then
+**send and receive STRK20 privately**. Accurate balances come only from your connected wallet via
+`wallet_strk20Balances` — no mock balances or fake confirmations.
+
+### Swap
+
+Public and **private swap** through the AVNU DEX aggregator. Private swaps route a shielded STRK
+note through the STRK20 pool and return the output as a shielded note.
+
+### Launchpad (Orrange Launchpad V2)
+
+A memecoin launchpad with a private execution layer, **deployed and verified on Starknet Sepolia**
+(`docs/LAUNCHPAD_V2_DEPLOYMENT.md`). The market is a single canonical public bonding curve; a trade
+can run **publicly** or **privately** through the STRK20 privacy pool via the `PrivateCurveExecutor`
+— the *same* curve, so graduation and liquidity migration stay truthful and on-chain.
+
+### Treasury (AI private treasury agent)
+
+An in-terminal AI agent ("Orrange Treasury") that reads your private balances, builds a portfolio
+summary, applies a configurable treasury policy (presets + custom), simulates actions, and proposes
+governed private actions with health/actionability diagnosis. See `src/ai/`.
+
+### Extended (private perpetuals)
+
+Private perpetuals and trading surface backed by the PEL (Private Execution Layer) contracts,
+the Rust risk engine, and STRK20 note-based settlement. See `docs/LP_*` and `docs/PERPS_*`.
+
+---
 
 ## Wallet API architecture
 
@@ -98,38 +117,30 @@ There is **no standalone registration RPC**. Registration is *transparent*: the 
 3. Confirm in your wallet — it builds the note, generates the proof, and submits.
 4. The dapp reconciles the real transaction state (submitted → confirming → confirmed).
 
-## Supported wallet
+## Supported wallets
 
 - **Ready** (privacy-enabled Starknet wallet, Wallet API ≥ 0.10). STRK20 private features require
   a wallet that supports the STRK20 Wallet API methods.
+- **Privy embedded wallet** via the `PrivyStrk20Adapter` (server-side rawSign), for a
+  non-extension onboarding lane. See `docs/PRIVY_STRK20_ARCHITECTURE.md`.
 
 ## Supported network
 
 - **Starknet Sepolia** (primary, validated). Network is auto-synced from the connected wallet.
 
-## Umbra Launch
-
-> **Privacy is a property of the trade, not the market.**
-
-`/launch` is a memecoin launchpad with a private execution layer. The market is a single
-canonical public bonding curve (price, liquidity, curve state, graduation all on-chain and
-public). A trade can be executed **publicly** (your wallet calls the curve) or **privately**
-through the STRK20 privacy pool: shielded STRK note → `PrivateCurveExecutor` → the *same*
-curve → shielded memecoin note (and the reverse for selling).
-
-See `docs/UMBRA_LAUNCH.md` for the architecture, privacy/threat model, exact STRK20 flow,
-deployment, and the 3-minute demo script. Contracts live in `umbra-launch-contracts/`
-(48/48 snforge tests passing; existing PEL perps contracts untouched).
+---
 
 ## Getting started
 
 ```bash
 npm install
 npm run dev        # open http://localhost:3000
-npm run typecheck  # TypeScript (note: legacy PEL test files have pre-existing type drift)
+npm run typecheck  # TypeScript
+npm test           # vitest
 ```
 
-Install the Ready browser extension, connect, enable private receiving, and fund a small amount.
+Install the Ready browser extension (or connect Privy), connect, enable private receiving, and fund
+a small amount.
 
 ## Demo
 
@@ -144,6 +155,8 @@ Two-wallet private receive:
 > End-to-end execution requires a live privacy wallet, a funded Sepolia account, and the STRK20
 > operator proving/discovery stack. See `docs/RFP_ALIGNMENT.md` for status and blockers.
 
+---
+
 ## Privacy model
 
 STRK20 hides the sender, recipient, amount, and token type inside the privacy pool. It does not
@@ -157,6 +170,8 @@ or "untraceable" — it accurately communicates STRK20's pool-level privacy prop
 - Viewing keys, notes, discovery, decryption, and proofs are owned by the connected privacy wallet.
 - Private balances come only from the wallet via `wallet_strk20Balances`.
 - No mock balances, fake transactions, or fake confirmations exist in the real flow.
+- The private launchpad is honest about its boundaries: graduation and liquidity migration are
+  real, on-chain router states — never a fake "DEX" claim.
 
 ## Known limitations
 
@@ -172,8 +187,20 @@ or "untraceable" — it accurately communicates STRK20's pool-level privacy prop
 - **Live end-to-end not verified in this repo**: wallet-side registration/discovery/proving are
   inferred from the official spec and SDK, not demonstrated against a real wallet + chain here.
 
+---
+
 ## RFP alignment
 
 See `docs/RFP_ALIGNMENT.md` for a requirement-by-requirement mapping with status.
 See `docs/RFP_PRODUCT_SPEC.md` (product contract) and
 `docs/PRIVATE_RECEIVING_ARCHITECTURE.md` (receive architecture) for the source of truth.
+
+## Documentation index
+
+- `docs/RFP_ALIGNMENT.md`, `docs/RFP_PRODUCT_SPEC.md` — RFP requirements and product contract
+- `docs/PRIVATE_RECEIVING_ARCHITECTURE.md` — private receiving / viewing-key architecture
+- `docs/PRIVY_STRK20_ARCHITECTURE.md` (+ `_AUDIT`, `_COMPATIBILITY_AUDIT`, `_SECURITY_MODEL`) — Privy lane
+- `docs/UMBRA_LAUNCH.md`, `docs/LAUNCHPAD_V2_DEPLOYMENT.md` — private launchpad
+- `docs/LP_ARCHITECTURE.md` (+ `_ECONOMIC_MODEL`, `_RISK_MODEL`, `_SECURITY_MODEL`) — liquidity
+- `docs/PERPS_IMPLEMENTATION_STATUS.md` (+ `PERPS_ARCHITECTURE.md` at repo root) — private perps
+- `docs/CIRCUITS.md` — circuit/proving notes

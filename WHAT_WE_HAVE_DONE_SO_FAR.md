@@ -1200,3 +1200,14 @@ Two intentionally separate STRK20 lanes now exist:
 
 ### ✅ PEL isolation
 * PEL remains USDC-only (`strk20SdkService.openPerpPosition` → `computeAndInvoke` → bridge); no PEL contract or perp code changed.
+
+---
+
+## 📅 Tuesday, September 01, 2026 — 23:17:34 IST
+
+### 🟢 [SMALL CHANGE] — README refresh for GitHub
+
+* Rebranded the README around the current **Orrange — STRK20 Privacy Terminal** positioning ("Shield. Send. Swap. Trade.") while keeping the honest STRK20/Umbra framing.
+* Added a **Terminal features** section covering: Shield (private wallet), Swap (public + private via AVNU), Launchpad V2 (deployed on Sepolia), the AI Treasury agent (`src/ai/`), and Extended private perps.
+* Updated **Supported wallets** to include the **Privy embedded wallet** lane (`PrivyStrk20Adapter`), and added a **Documentation index** pointing at the current `docs/` set.
+* No application code changed; docs only.
