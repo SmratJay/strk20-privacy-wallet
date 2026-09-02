@@ -1211,3 +1211,10 @@ Two intentionally separate STRK20 lanes now exist:
 * Added a **Terminal features** section covering: Shield (private wallet), Swap (public + private via AVNU), Launchpad V2 (deployed on Sepolia), the AI Treasury agent (`src/ai/`), and Extended private perps.
 * Updated **Supported wallets** to include the **Privy embedded wallet** lane (`PrivyStrk20Adapter`), and added a **Documentation index** pointing at the current `docs/` set.
 * No application code changed; docs only.
+
+### 🟢 [SMALL CHANGE] — README expanded with per-feature detail
+
+* Added a **screen/route map** (landing → wallet, swap, explore, launch, treasury, extended, settings, activity).
+* Expanded every terminal feature: Shield lanes, Swap (AVNU aggregator, slippage, server-only paymaster), Launchpad V2 (bonding curve math, executor, factory, graduation router, on-chain verification), Hamster AI treasury (deterministic policy engine, bounded agent loop, health, execution guardrails, shadow accounts), and PEL perps (Garaga verifiers, Rust risk engine, real OPEN E2E).
+* Added a **project structure** map, a **configuration** table from `.env.example`, and documented the two STRK20 integration lanes (Lane A wallet API vs Lane B PEL SDK).
+* No application code changed; docs only.
