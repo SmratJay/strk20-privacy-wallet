@@ -1,16 +1,20 @@
 'use client';
 
 import React, { useCallback, useState } from 'react';
-import { ArrowUpRight, Loader2, Shield } from 'lucide-react';
-import { CallData } from 'starknet';
+import { ArrowUpRight, Loader2 } from 'lucide-react';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { parseAmountToBase } from '@/wallet';
+import { buildPublicTransferCall } from '@/wallet/publicTransfer';
 import { getNetworkConfig } from '@/config/networks';
 
 /**
  * The primary Orrange SEND surface. Uses the Wallet Core runtime's local signer for ordinary
- * public STRK transactions — no Privy, no external extension, no Wallet API. Amount parsing is
- * the exact integer-only `parseAmountToBase` from Wallet Core.
+ * public STRK transactions — no Privy, no external extension, no Wallet API.
+ *
+ * ENCODING: ERC20 `transfer(recipient, amount: u256)` requires `[recipient, amountLow,
+ * amountHigh]`. The amount is encoded with starknet.js's canonical `uint256.bnToUint256` via
+ * `buildPublicTransferCall` (NOT a single felt — a lone bigint would fail deserialization of
+ * u256 param #2 on-chain). Amount parsing stays the exact integer-only `parseAmountToBase`.
  */
 export const WalletCoreSend: React.FC = () => {
   const { runtime, state } = useWalletRuntime();
@@ -31,12 +35,7 @@ export const WalletCoreSend: React.FC = () => {
     setBusy(true);
     try {
       const amountBase = parseAmountToBase(amount, strk.decimals);
-      if (amountBase <= 0n) throw new Error('Amount must be greater than zero.');
-      const call = {
-        contractAddress: strk.address,
-        entrypoint: 'transfer',
-        calldata: CallData.compile({ recipient, amount: amountBase }),
-      };
+      const call = buildPublicTransferCall(strk.address, recipient, amountBase);
       const { transactionHash } = await runtime.send(call);
       setNotice(`Transaction submitted (locally signed): ${transactionHash}`);
     } catch (err) {
@@ -79,26 +78,5 @@ export const WalletCoreSend: React.FC = () => {
         Send STRK
       </button>
     </section>
-  );
-};
-
-/** Legacy STRK20 privacy-lane note for the Wallet Core runtime (viewing keys are a later stage). */
-export const LegacyStrk20CompatNote: React.FC<{ available: boolean; modeLabel: string }> = ({ available, modeLabel }) => {
-  if (available) return null;
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
-      <div className="flex items-start gap-3">
-        <Shield className="w-5 h-5 text-violet-300 mt-0.5" />
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-200">STRK20 private {modeLabel} — legacy lane</h2>
-          <p className="text-xs text-zinc-500 mt-1">
-            STRK20 private {modeLabel} still requires the legacy Ready privacy-wallet lane (viewing
-            keys / proofs are owned by that runtime). It is not yet wired into the Wallet Core
-            runtime — the Wallet Core signer is ready for STRK20, but private capabilities arrive
-            in a later stage. Public sends work now via your Orrange wallet.
-          </p>
-        </div>
-      </div>
-    </div>
   );
 };

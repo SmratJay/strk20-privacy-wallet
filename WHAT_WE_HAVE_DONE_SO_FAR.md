@@ -83,6 +83,21 @@ dormant systems; all wallet/STRK20/AI behavior coverage preserved).
 
 ---
 
+## Public STRK send fix (2026-09)
+
+Fixed malformed ERC20 u256 calldata for public STRK sends. Root cause: `WalletCoreSend` built
+`transfer` calldata as `[recipient, amount]` (a single bigint felt, length 2), which failed
+deserialization of the `u256` amount param on-chain (`argent/multicall-failed`,
+`ENTRYPOINT_FAILED`). Fixed encoding is `[recipient, amountLow, amountHigh]` (length 3) using
+starknet.js's canonical `uint256.bnToUint256` via a new `buildPublicTransferCall`
+(`src/wallet/publicTransfer.ts`), with recipient validation/normalization before any RPC work and
+clear UI errors. **Verified live on Sepolia**: 0.1 STRK sent from the funded deployer account
+(`0x20cc…bda34d`) to a throwaway Ready wallet; `estimateFee` succeeded, tx
+`0x14651534…40c0b2` confirmed (`SUCCEEDED`), recipient balance increased by exactly
+100000000000000000 base, sender balance decreased by amount + fee.
+
+---
+
 Authoritative docs: `docs/WALLET_CORE.md` (architecture), `docs/STRK20_COMPATIBILITY_MATRIX.md`
 (SDK/operator compatibility), `docs/STRK20_LIVE_ACCEPTANCE.md` (live procedure), `docs/archive/`
 (historical perps/privy/planning records).
