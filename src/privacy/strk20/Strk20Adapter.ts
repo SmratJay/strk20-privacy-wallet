@@ -22,6 +22,28 @@ export interface Strk20AdapterConfig {
   feeTokenAddress?: string;
   /** UX callback fired while the STRK allowance prerequisite is being handled. */
   onApprovalStatus?: (status: ApprovalStatus) => void;
+  /**
+   * OPTIONAL discovery OHTTP (RFC 9458) seam for the indexer discovery provider.
+   *
+   * In the vendored SDK (`@starkware-libs/starknet-privacy-sdk` 0.14.3-rc.5) the indexer
+   * discovery provider is constructed with an instance of `IndexerDiscoveryProvider` whose
+   * constructor accepts `{ ohttp?: boolean | { relayUrl?; publicKeyConfig? } }`; the factory's
+   * `DiscoveryProviderConfig` shorthand (`{ url }`) does NOT expose OHTTP. When this option is
+   * set, the adapter constructs the discovery provider instance directly with OHTTP enabled.
+   *
+   * DISABLED BY DEFAULT: the operator's discovery/relay infrastructure must actually support
+   * OHTTP (a gateway serving `/ohttp-keys`, and optionally a relay). Until that is ready, leave
+   * this unset — discovery then goes direct HTTPS (see docs for what the operator can observe).
+   * Do not invent a custom OHTTP protocol; this only wires the SDK's supported mechanism.
+   */
+  discoveryOhttp?: boolean | { relayUrl?: string; publicKeyConfig?: Uint8Array };
+}
+
+/** A private balance plus the discovery snapshot it was read at (indexer sync reference). */
+export interface PrivateBalanceSnapshot {
+  balance: bigint;
+  /** The block the discovery indexer's snapshot is at, when known (numeric). Null when unknown. */
+  asOfBlock: number | null;
 }
 
 export interface Strk20ExecuteReceipt {
@@ -46,7 +68,8 @@ interface ExecuteResultLike {
   warnings?: unknown[];
 }
 
-interface TokenOpsLike {
+/** The STRK20 SDK builder surface the generic adapter executes. Shared with higher-level adapters. */
+export interface TokenOpsLike {
   deposit(...inputs: unknown[]): unknown;
   withdraw(...outputs: unknown[]): unknown;
   transfer(...outputs: unknown[]): unknown;
@@ -54,13 +77,14 @@ interface TokenOpsLike {
   surplusTo(recipient: string, withdraw?: boolean): unknown;
 }
 
-interface InvokeCalldataArgsLike {
+/** Arguments exposed to a `privacy_invoke` call builder (anonymizer/executor invocation). */
+export interface InvokeCalldataArgsLike {
   openNotes: { noteId: bigint }[];
   withdrawals: unknown[];
   poolAddress: bigint;
 }
 
-interface BuilderLike {
+export interface BuilderLike {
   with(token: string, ops: (t: TokenOpsLike) => void): BuilderLike;
   register(): BuilderLike;
   surplusTo(recipient: string, withdraw?: boolean): BuilderLike;
@@ -71,13 +95,28 @@ interface BuilderLike {
   simulate(options: { node: ProviderInterface; validateSignature?: boolean }): Promise<ExecuteResultLike>;
 }
 
-interface PrivateTransfersLike {
+export interface PrivateTransfersLike {
   build(options?: Record<string, unknown>): BuilderLike;
   discoverNotes(params?: { tokens?: string[] }): Promise<{
+    /** The block reference the discovery snapshot was served at (indexer sync state). */
+    timestamp: unknown;
     notes: Map<bigint, ShieldedNote[]>;
   }>;
   /** SDK readiness check (preflight) → SetupRequirement numeric enum: 0 = Register. */
   discoverRequirement(recipient: string, token: string): Promise<number>;
+}
+
+/** Best-effort conversion of a discovery `timestamp` (block ref) into a numeric block, if possible. */
+function blockNumberFromIdentifier(identifier: unknown): number | null {
+  if (typeof identifier === "number") return Number.isFinite(identifier) ? identifier : null;
+  if (typeof identifier === "bigint") return Number(identifier);
+  if (typeof identifier === "string") {
+    const trimmed = identifier.trim();
+    if (/^0x[0-9a-fA-F]+$/.test(trimmed)) return Number(BigInt(trimmed));
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    return null;
+  }
+  return null;
 }
 
 type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTransfersLike;
@@ -129,41 +168,26 @@ function debugWarn(...args: unknown[]): void {
   console.warn("[Strk20Adapter]", ...args);
 }
 
-let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
-let openNoteSymbol: unknown = null;
+type SdkModule = {
+  createPrivateTransfers: CreatePrivateTransfersFn;
+  IndexerDiscoveryProvider?: new (
+    apiUrl: string,
+    contractAddress: string,
+    options?: { ohttp?: boolean | { relayUrl?: string; publicKeyConfig?: Uint8Array } },
+  ) => unknown;
+};
+
+let sdkModule: SdkModule | null = null;
+
+async function loadSdkModule(): Promise<SdkModule> {
+  if (sdkModule) return sdkModule;
+  sdkModule = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as SdkModule;
+  return sdkModule;
+}
 
 async function loadCreatePrivateTransfers(): Promise<CreatePrivateTransfersFn> {
-  if (createPrivateTransfersFn) return createPrivateTransfersFn;
-  const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as {
-    createPrivateTransfers: CreatePrivateTransfersFn;
-  };
-  createPrivateTransfersFn = mod.createPrivateTransfers;
-  return createPrivateTransfersFn;
-}
-
-/** The SDK's `Open` unique symbol — used as `amount` to create an open note that a
- * `privacy_invoke` executor deposit will fill. Cached after first load. */
-async function loadOpenNoteSymbol(): Promise<unknown> {
-  if (openNoteSymbol) return openNoteSymbol;
-  const mod = (await import("@starkware-libs/starknet-privacy-sdk")) as unknown as {
-    Open?: unknown;
-  };
-  openNoteSymbol = mod.Open;
-  return openNoteSymbol;
-}
-
-/** A private trade through the launchpad's canonical PrivateCurveExecutor. `operation` is the
- * curve op (0 = BUY, 1 = SELL) matching `curve_operation` in the contracts. */
-export interface PrivateCurveTradeParams {
-  operation: number;
-  /** PrivateCurveExecutor bound to this curve. */
-  curveExecutor: string;
-  /** Input token the pool withdraws to the executor (base for BUY, memecoin for SELL). */
-  inputToken: string;
-  /** Output token deposited to the user's open note (memecoin for BUY, base for SELL). */
-  outputToken: string;
-  /** Input amount in smallest units. */
-  amount: bigint;
+  const mod = await loadSdkModule();
+  return mod.createPrivateTransfers;
 }
 
 export class Strk20Adapter {
@@ -198,11 +222,30 @@ export class Strk20Adapter {
     if (existing) return existing;
 
     const createPrivateTransfers = await loadCreatePrivateTransfers();
+    // Discovery provider: when OHTTP is requested, construct the SDK's IndexerDiscoveryProvider
+    // instance directly (the factory's `{ url }` shorthand has no OHTTP option in this SDK
+    // revision). When unset, discovery goes direct HTTPS via the factory shorthand.
+    let discoveryProvider: unknown = { url: this.config.discoveryUrl };
+    if (this.config.discoveryOhttp !== undefined && this.config.discoveryOhttp !== false) {
+      const mod = await loadSdkModule();
+      const IndexerDiscoveryProvider = mod.IndexerDiscoveryProvider;
+      if (!IndexerDiscoveryProvider) {
+        throw new Error(
+          "STRK20 discovery OHTTP requested, but the vendored SDK does not expose IndexerDiscoveryProvider.",
+        );
+      }
+      discoveryProvider = new IndexerDiscoveryProvider(
+        this.config.discoveryUrl,
+        this.config.poolContractAddress,
+        { ohttp: this.config.discoveryOhttp },
+      );
+    }
+
     const transfers = createPrivateTransfers({
       account: { address: user.address, signer: user.account.signer },
       viewingKeyProvider: { getViewingKey: async () => user.viewingKey },
       provingProvider: { url: this.config.proverUrl, chainId: this.config.chainId },
-      discoveryProvider: { url: this.config.discoveryUrl },
+      discoveryProvider,
       poolContractAddress: this.config.poolContractAddress,
     });
 
@@ -261,50 +304,23 @@ export class Strk20Adapter {
   }
 
   /**
-   * Private trade on a launchpad BondingCurve through its canonical PrivateCurveExecutor —
-   * the Privy-lane equivalent of the Ready wallet's STRK20 invoke actions:
-   *   1. withdraw input token → executor          (pool pays the executor)
-   *   2. transfer output token → OPEN note        (open-note deposit for the user)
-   *   3. invoke(executor, privacy_invoke)         (executor trades on the public curve)
-   * The pool fills the open note from the executor's returned `OpenNoteDeposit`.
+   * Generic STRK20 operation execution over an SDK builder — the shared simulate → fee-estimate →
+   * execute → submit machinery used by register/shield/transfer/unshield and by higher-level
+   * application adapters (e.g. the launchpad private-curve trade) without coupling THIS adapter
+   * to application-specific actions.
    */
-  async privateTrade(
+  async executeBuilder(
     user: Strk20User,
-    params: PrivateCurveTradeParams,
+    build: (transfers: PrivateTransfersLike) => BuilderLike,
+    allowance?: { depositToken?: string; depositAmount?: bigint },
   ): Promise<Strk20ExecuteReceipt> {
-    const open = await loadOpenNoteSymbol();
-    if (open == null) throw new Error("STRK20 SDK did not expose the Open-note symbol.");
     const provingBlockId = await this.getSafeProvingBlock(user);
     return this.runWithBounds(
       user,
-      (t, node) => this.buildCurveTrade(t, params, user.address, open).simulate({ node }),
-      (t) => this.buildCurveTrade(t, params, user.address, open).execute({ provingBlockId }),
+      (t, node) => build(t).simulate({ node }),
+      (t) => build(t).execute({ provingBlockId }),
+      allowance,
     );
-  }
-
-  private buildCurveTrade(
-    t: PrivateTransfersLike,
-    params: PrivateCurveTradeParams,
-    recipient: string,
-    open: unknown,
-  ): BuilderLike {
-    const opts = {
-      autoSetup: true,
-      autoDiscover: { notes: "refresh", channels: "refresh" },
-      autoSelectNotes: "naive",
-    };
-    return t
-      .build(opts)
-      .with(params.inputToken, (x) =>
-        x.withdraw({ recipient: params.curveExecutor, amount: params.amount }),
-      )
-      .with(params.outputToken, (x) => x.transfer({ recipient, amount: open }))
-      .invoke(({ openNotes }) => ({
-        contractAddress: params.curveExecutor,
-        entrypoint: "privacy_invoke",
-        calldata: [params.operation, params.inputToken, params.amount, openNotes[0]?.noteId ?? 0n],
-      }))
-      .surplusTo(recipient);
   }
 
   async transfer(
@@ -394,6 +410,12 @@ export class Strk20Adapter {
   /**
    * Compute resource bounds from the current block's gas prices (2x headroom), the way the
    * starkware demo does for public testnets where estimateFee rejects STRK20 proof facts.
+   *
+   * DEPLOYMENT-SPECIFIC, NOT UNIVERSAL: the `max_amount` caps below (L2 1_210_000_000 gas,
+   * L1 1 gas, L1-data 10_000 gas) are hardcoded for the currently supported Sepolia STRK20
+   * deployment (and the demo it was derived from). They are NOT generic Starknet defaults and
+   * must be revisited for any other network/pool. The `max_price_per_unit` is derived from the
+   * live block's gas prices with 2x headroom so it tracks the current network.
    */
   private async resolveResourceBounds(user: Strk20User): Promise<ResourceBoundsBN> {
     const provider = this.getNode(user);
@@ -430,10 +452,21 @@ export class Strk20Adapter {
   }
 
   async getPrivateBalance(user: Strk20User, token: string): Promise<bigint> {
+    const snapshot = await this.getPrivateBalanceSnapshot(user, token);
+    return snapshot.balance;
+  }
+
+  /**
+   * Private balance plus the discovery snapshot it was read at. The SDK returns the indexer's
+   * sync block reference alongside the notes, which lets callers distinguish "genuinely zero"
+   * from "the indexer has not caught up yet" (a freshly shielded note may take blocks to appear).
+   */
+  async getPrivateBalanceSnapshot(user: Strk20User, token: string): Promise<PrivateBalanceSnapshot> {
     const transfers = await this.getTransfers(user);
-    const { notes } = await transfers.discoverNotes({ tokens: [token] });
-    const tokenNotes = notes.get(BigInt(token)) ?? [];
-    return tokenNotes.reduce((sum, n) => sum + n.amount, 0n);
+    const result = await transfers.discoverNotes({ tokens: [token] });
+    const tokenNotes = (result.notes as Map<bigint, ShieldedNote[]>).get(BigInt(token)) ?? [];
+    const balance = tokenNotes.reduce((sum, n) => sum + n.amount, 0n);
+    return { balance, asOfBlock: blockNumberFromIdentifier(result.timestamp) };
   }
 
   /**
@@ -479,7 +512,7 @@ export class Strk20Adapter {
   }
 
   /**
-   * STRK20 allowance prerequisite (Privy lane only). Reads the pool's `get_fee_amount()` once and
+   * STRK20 allowance prerequisite. Reads the pool's `get_fee_amount()` once and
    * ensures the account has approved what the pool will pull from it:
    *   - the STRK pool fee on every apply_actions (collect_fee transfers STRK from the caller), plus
    *     the deposit amount when the deposit token IS STRK (a shield transferFrom pulls it from the
@@ -487,6 +520,7 @@ export class Strk20Adapter {
    *   - when the deposit token is NOT STRK, a separate allowance on the deposit token for the
    *     deposit amount.
    * Approval is an ordinary ERC20 `approve` — it never goes through the privacy prover.
+   * The `account` is a generic starknet.js account (Wallet Core account or any compatible signer).
    */
   private async ensureAllowance(
     user: Strk20User,

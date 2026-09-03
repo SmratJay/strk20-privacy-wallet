@@ -29,18 +29,24 @@ const PASSWORD = "correct horse battery staple";
 // Hoisted mock state for the STRK20 adapter so privacy ops are deterministic in tests.
 const mockState = vi.hoisted(() => ({
   balances: new Map<string, bigint>(),
+  asOfBlock: null as number | null,
   registered: true,
   shieldCalls: [] as unknown[],
   transferCalls: [] as unknown[],
   withdrawCalls: [] as unknown[],
+  registerCalls: [] as unknown[],
   shieldDelay: null as null | (() => Promise<void>),
+  registerDelay: null as null | (() => Promise<void>),
   reset() {
     this.balances.clear();
+    this.asOfBlock = null;
     this.registered = true;
     this.shieldCalls.length = 0;
     this.transferCalls.length = 0;
     this.withdrawCalls.length = 0;
+    this.registerCalls.length = 0;
     this.shieldDelay = null;
+    this.registerDelay = null;
   },
 }));
 
@@ -52,10 +58,20 @@ vi.mock("@/privacy/strk20", async (importOriginal) => {
       void user;
       return mockState.balances.get(token.toLowerCase()) ?? 0n;
     }
+    async getPrivateBalanceSnapshot(user: unknown, token: string) {
+      void user;
+      if (mockState.shieldDelay) await mockState.shieldDelay();
+      return { balance: mockState.balances.get(token.toLowerCase()) ?? 0n, asOfBlock: mockState.asOfBlock };
+    }
     async getPrivacyRegistration(user: unknown, token: string): Promise<"registered" | "unregistered"> {
       void user;
       void token;
       return mockState.registered ? "registered" : "unregistered";
+    }
+    async register(user: unknown) {
+      mockState.registerCalls.push({ user });
+      if (mockState.registerDelay) await mockState.registerDelay();
+      return { transactionHash: "0xregister", status: "PENDING", explorerUrl: "", warnings: [] };
     }
     async shield(user: unknown, token: string, amount: bigint) {
       mockState.shieldCalls.push({ user, token, amount });
@@ -334,8 +350,8 @@ describe("first-use STRK20 privacy setup", () => {
     // The mock returns 0n for unknown tokens — instead force an error by making the session's
     // discovery fail: patch the runtime's privacy session adapter.
     const session = (runtime as unknown as { privacySession: WalletPrivacySession }).privacySession;
-    const patch = session as unknown as { adapter: { getPrivateBalance: () => Promise<never> } };
-    patch.adapter.getPrivateBalance = vi.fn(async () => {
+    const patch = session as unknown as { adapter: { getPrivateBalanceSnapshot: () => Promise<never> } };
+    patch.adapter.getPrivateBalanceSnapshot = vi.fn(async () => {
       throw new Error("discovery service unreachable");
     });
     await runtime.refreshPrivateBalances();
@@ -354,6 +370,15 @@ describe("first-use STRK20 privacy setup", () => {
     expect(strkRow?.balance).toBe(42n * 10n ** 18n);
     expect(runtime.getState().privacy.status).toBe("available");
     void wallet;
+  });
+
+  it("discovery OHTTP is a config seam, disabled by default (env 'true' enables it)", async () => {
+    const { resolveWalletPrivacyConfig } = await import("../wallet/privacy");
+    expect(resolveWalletPrivacyConfig("sepolia")?.discoveryOhttp).toBeUndefined();
+    process.env.NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP = "true";
+    expect(resolveWalletPrivacyConfig("sepolia")?.discoveryOhttp).toBe(true);
+    delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP;
+    expect(resolveWalletPrivacyConfig("sepolia")?.discoveryOhttp).toBeUndefined();
   });
 });
 
@@ -555,5 +580,217 @@ describe("wallet boundary isolation", () => {
     await runtime.unlock(PASSWORD);
     expect(runtime.getState().account?.walletId).toBe(walletA.walletId);
     expect(getPublicKey(runtime.getState().account?.publicKey ?? "")).toBeDefined();
+  });
+});
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 8. STRK20 end-to-end acceptance path (deterministic mock; explicit about what is mocked)
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("STRK20 end-to-end acceptance path (mocked)", () => {
+  it("register → shield → private balance discovery → private transfer → withdraw", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    mockState.balances.set(STRK.toLowerCase(), 10n * 10n ** 18n);
+
+    // 1. Registration
+    const reg = await runtime.register();
+    expect(reg.transactionHash).toBe("0xregister");
+    expect(mockState.registerCalls).toHaveLength(1);
+    expect(runtime.getState().privacyOp.phase).toBe("success");
+
+    // 2. Shield
+    const shield = await runtime.shield(STRK, 2n * 10n ** 18n);
+    expect(shield.transactionHash).toBe("0xshield");
+
+    // 3. Private balance discovery (wallet-native viewing key, honest balance)
+    const rows = await runtime.refreshPrivateBalances();
+    const strkRow = rows.find((r) => r.token.symbol === "STRK");
+    expect(strkRow?.balance).toBe(10n * 10n ** 18n);
+    expect(runtime.getState().privacy.status).toBe("available");
+
+    // 4. Private transfer
+    const transfer = await runtime.privateTransfer(STRK, 1n * 10n ** 18n, "0xrecipient");
+    expect(transfer.transactionHash).toBe("0xtransfer");
+
+    // 5. Withdraw
+    const withdraw = await runtime.withdraw(STRK, 1n * 10n ** 18n);
+    expect(withdraw.transactionHash).toBe("0xwithdraw");
+
+    // Every op went through the active wallet's session (bound to the created wallet).
+    const s = runtime.getState();
+    expect(s.recentTransactions.map((t) => t.hash)).toEqual(["0xwithdraw", "0xtransfer", "0xshield", "0xregister"]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 9. Serialization — errors never wedge the queue
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("privacy serialization recovery", () => {
+  it("a failing operation does not wedge the queue (a later op still executes)", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+
+    const session = (runtime as unknown as { privacySession: WalletPrivacySession }).privacySession;
+    const adapter = (session as unknown as { adapter: { shield: (u: unknown, t: string, a: bigint) => Promise<unknown> } }).adapter;
+    const origShield = adapter.shield.bind(adapter);
+    adapter.shield = vi.fn(async () => {
+      throw new Error("prover down");
+    });
+
+    // A rejects.
+    await expect(runtime.shield(STRK, 5n)).rejects.toThrow(/prover down/);
+    expect(runtime.getState().privacyOp.phase).toBe("failed");
+
+    // B still executes after A's failure.
+    adapter.shield = origShield;
+    const second = await runtime.shield(STRK, 7n);
+    expect(second.transactionHash).toBe("0xshield");
+    expect(mockState.shieldCalls).toHaveLength(1);
+    expect(runtime.getState().privacyOp.phase).toBe("success");
+  });
+
+  it("register is serialized with other mutating ops (B waits for A)", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockState.registerDelay = async () => {
+      await gate;
+    };
+
+    const order: string[] = [];
+    const reg = runtime.register().then(() => order.push("register-done"));
+    const shield = runtime.shield(STRK, 5n).then(() => order.push("shield-done"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mockState.registerCalls).toHaveLength(1);
+    expect(mockState.shieldCalls).toHaveLength(0); // shield waits for register
+    release();
+    await Promise.all([reg, shield]);
+    expect(mockState.shieldCalls).toHaveLength(1);
+    expect(order).toEqual(["register-done", "shield-done"]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 10. Proving-chain maturity (honest, never a generic "privacy failed")
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("first-use proving-chain maturity", () => {
+  function deployableAdapter() {
+    const adapter: AccountAdapter = {
+      type: "ready-v0.4.0",
+      address: "0x123",
+      publicKey: "0xabc",
+      addressDerivable: true,
+      probeDeployment: vi.fn(async () => "not_deployed" as const),
+      isDeployed: vi.fn(),
+      deploy: vi.fn(async () => ({ transactionHash: "0xdeploy", contractAddress: "0x123", deployedAtBlock: 100 })),
+      verifyOwnership: vi.fn(async () => ({ verified: true, method: "counterfactual-derivation" })),
+      waitForFinality: vi.fn(),
+    };
+    return adapter;
+  }
+
+  it("after a successful deployment the account is mature; a head below the ready block is honestly WAITING (never 'failed')", async () => {
+    const head = { value: 11 };
+    const provider = mockProvider({ getBlockNumber: vi.fn(async () => head.value) });
+    const { runtime } = makeRuntime({ provider, adapter: () => deployableAdapter() });
+    await createdWallet(runtime);
+
+    // Receipt block_number = 1 → readyAt = 1 + MATURITY_BLOCKS (10) = 11. Head 11 ≥ 11 → ready.
+    await runtime.deploy({ finalityPollMs: 10, finalityTimeoutMs: 1000 });
+    await runtime.refreshPrivacyMaturity();
+    let s = runtime.getState();
+    expect(s.deploymentStatus).toBe("deployed");
+    expect(s.privacy.maturity).toBe("ready");
+    expect(s.privacy.maturityReadyAtBlock).toBe(11);
+
+    // A chain head that regresses below the ready block must report WAITING, not a generic failure.
+    head.value = 5;
+    await runtime.refreshPrivacyMaturity();
+    s = runtime.getState();
+    expect(s.privacy.maturity).toBe("waiting");
+    expect(s.privacy.currentBlock).toBe(5);
+    expect(s.privacy.status).not.toBe("error");
+  });
+
+  it("maturity is honestly UNKNOWN when the deploy block is not known this session", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.refreshDeployment();
+    const s = runtime.getState();
+    expect(s.privacy.maturity).toBe("unknown");
+    expect(s.privacy.maturityReadyAtBlock).toBeNull();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 11. Private-balance semantics — discovery lag is "syncing", never a silent 0
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("private-balance sync semantics", () => {
+  it("a snapshot lagging the chain head reports syncing while still showing the balance", async () => {
+    const { runtime } = makeRuntime({
+      provider: mockProvider({ getBlockNumber: vi.fn(async () => 1000) }),
+    });
+    await createdWallet(runtime);
+    mockState.asOfBlock = 990; // 1000 - 990 = 10 > SYNC_TOLERANCE_BLOCKS
+    mockState.balances.set(STRK.toLowerCase(), 5n);
+
+    const rows = await runtime.refreshPrivateBalances();
+    const s = runtime.getState();
+    const strkRow = rows.find((r) => r.token.symbol === "STRK");
+    expect(strkRow?.syncing).toBe(true);
+    expect(strkRow?.asOfBlock).toBe(990);
+    expect(strkRow?.balance).toBe(5n); // balance is real, just possibly incomplete
+    expect(s.privacy.syncing).toBe(true);
+  });
+
+  it("a current snapshot is NOT marked syncing", async () => {
+    const { runtime } = makeRuntime({
+      provider: mockProvider({ getBlockNumber: vi.fn(async () => 1000) }),
+    });
+    await createdWallet(runtime);
+    mockState.asOfBlock = 999;
+    mockState.balances.set(STRK.toLowerCase(), 5n);
+
+    const rows = await runtime.refreshPrivateBalances();
+    const strkRow = rows.find((r) => r.token.symbol === "STRK");
+    expect(strkRow?.syncing).toBe(false);
+    expect(runtime.getState().privacy.syncing).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 12. Network reload (reloadForNetwork) discards in-flight privacy results
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("network reload invalidates in-flight privacy work", () => {
+  it("a delete-triggered reloadForNetwork discards an in-flight private-balance refresh", async () => {
+    const { runtime } = makeRuntime();
+    const walletA = await createdWallet(runtime);
+    const secretB = canonicalizeSecret(generateSecretKey());
+    const walletB = await runtime.import({ accountType: "ready-v0.4.0", secret: secretB, password: PASSWORD });
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockState.shieldDelay = async () => {
+      await gate;
+    };
+
+    const p = runtime.refreshPrivateBalances();
+    // Deleting a different wallet reloads the network registry → invalidates the session guard.
+    runtime.deleteWallet(walletB.walletId);
+    release();
+    const rows = await p;
+    expect(rows).toHaveLength(0);
+    expect(runtime.getState().privateBalances).toHaveLength(0);
+    void walletA;
   });
 });

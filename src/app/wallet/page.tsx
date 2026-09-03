@@ -276,21 +276,25 @@ export default function WalletPage() {
                   <span className="text-zinc-300">
                     {!state.privacy.available
                       ? 'Privacy setup unavailable'
-                      : state.privacy.registered === true
-                        ? 'Privacy ready'
-                        : state.privacy.registered === false
-                          ? 'Privacy available — not registered yet'
-                          : 'Checking privacy…'}
+                      : state.privacy.maturity === 'waiting'
+                        ? 'Privacy setup waiting for chain confirmation'
+                        : state.privacy.registered === true
+                          ? 'Privacy ready'
+                          : state.privacy.registered === false
+                            ? 'Privacy available — not registered yet'
+                            : 'Checking privacy…'}
                   </span>
                   <DeploymentBadge
                     status={
                       !state.privacy.available
                         ? 'error'
-                        : state.privacy.registered === true
-                          ? 'deployed'
-                          : state.privacy.registered === false
-                            ? 'not_deployed'
-                            : 'unknown'
+                        : state.privacy.maturity === 'waiting'
+                          ? 'finalizing'
+                          : state.privacy.registered === true
+                            ? 'deployed'
+                            : state.privacy.registered === false
+                              ? 'not_deployed'
+                              : 'unknown'
                     }
                   />
                 </div>
@@ -298,14 +302,24 @@ export default function WalletPage() {
                   {!state.privacy.available
                     ? state.privacy.reason ??
                       'Privacy setup unavailable: proving/discovery service is not configured.'
-                    : state.privacy.registered === true
-                      ? 'Your wallet-native viewing key is registered in the STRK20 pool. Shield, send privately, and withdraw are live.'
-                      : state.privacy.registered === false
-                        ? 'The STRK20 protocol is available. Your viewing key is not yet registered — the first shield auto-registers it on-chain.'
-                        : state.privacy.status === 'error'
-                          ? `Privacy setup unavailable: ${state.privacy.reason ?? 'registration check failed.'}`
-                          : 'Contacting the discovery service…'}
+                    : state.privacy.maturity === 'waiting'
+                      ? `Account deployed — privacy setup is waiting for chain confirmation. Ready at block ${
+                          state.privacy.maturityReadyAtBlock ?? '…'
+                        }${state.privacy.currentBlock !== null ? ` (current head ${state.privacy.currentBlock})` : ''}.`
+                      : state.privacy.registered === true
+                        ? 'Your wallet-native viewing key is registered in the STRK20 pool. Shield, send privately, and withdraw are live.'
+                        : state.privacy.registered === false
+                          ? 'The STRK20 protocol is available. Your viewing key is not yet registered — the first shield auto-registers it on-chain.'
+                          : state.privacy.status === 'error'
+                            ? `Privacy setup unavailable: ${state.privacy.reason ?? 'registration check failed.'}`
+                            : 'Contacting the discovery service…'}
                 </p>
+                {state.privacy.syncing && (
+                  <p className="text-xs text-amber-300/80 mt-2">
+                    The private-balance indexer is still syncing — recent shielded amounts may not
+                    appear yet. Balances shown are as of the discovery snapshot.
+                  </p>
+                )}
               </div>
             </div>
 

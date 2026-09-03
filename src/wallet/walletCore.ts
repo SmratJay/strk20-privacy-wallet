@@ -100,6 +100,11 @@ export interface UnlockWalletOptions {
 export interface DeployAccountResult {
   transactionHash: string;
   contractAddress: string;
+  /**
+   * The block the account was deployed in, when this call performed the deployment. `undefined`
+   * when the account was already deployed (early return) — the deploy block is then unknown.
+   */
+  deployedAtBlock?: number;
 }
 
 export interface DeployAccountOptions {
@@ -475,7 +480,7 @@ export async function deployAccount(
     }
     throw err;
   }
-  return deployment;
+  return { ...deployment, deployedAtBlock };
 }
 
 /** Reconcile the on-chain deployment status against the store. Never guesses. */

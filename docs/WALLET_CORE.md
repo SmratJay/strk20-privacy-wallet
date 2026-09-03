@@ -452,28 +452,42 @@ Strk20Adapter → STRK20 SDK → Wallet Core local signer
   unreachable. All discovery calls are time-bounded so a hung service surfaces an honest error
   instead of spinning forever.
 - Private balances come from `WalletPrivacySession → wallet-native viewing key → STRK20
-  discovery`. Stale results are dropped by the `(walletId, network, generation)` guard on lock /
-  wallet switch / network switch.
+  discovery`. The discovery snapshot block is exposed (`asOfBlock`) and balances whose snapshot
+  lags the chain head are reported **syncing** (with the balance still visible) instead of a
+  silent stale 0. Stale results are dropped by the `(walletId, network, generation)` guard on
+  lock / wallet switch / network reload.
+- Proving-chain maturity is honest: after a deployment, the deployment state machine already waits
+  for 10-block finality; `privacy.maturity` is `ready` after a successful deploy, `waiting` if the
+  head ever reads below the ready block (never a generic "privacy failed"), and `unknown` when the
+  deploy block is not known this session (imported/existing accounts).
 - Privacy operations expose an honest lifecycle in `state.privacyOp`:
   `preparing → approving → proving → submitted → pending → success/reverted/rejected/failed`.
-  Success is never reported before on-chain reconciliation confirms it.
+  Success is never reported before on-chain reconciliation confirms it. `register()` is exposed as
+  a first-class, serialized operation.
 
 ### 16c. STRK20 hardening applied
 
 - **Viewing key is internal**: `WalletPrivacySession` has NO public `getViewingKey()` API; the
   adapter receives it via an internal provider closure. Runtime/UI state never contains it.
-- **Operations serialized**: mutating privacy ops (`shield / privateTransfer / withdraw /
-  register`) run behind a single async mutex per session — two ops can never race on a cached
-  private-transfers context or the pool nonce.
+- **Operations serialized**: mutating privacy ops (`register / shield / privateTransfer /
+  withdraw`) run behind a single async mutex per session — two ops can never race on a cached
+  private-transfers context or the pool nonce, and a failing op never wedges the queue.
 - **Production logging sanitized**: the STRK20 adapter + allowance helpers use a
   dev-only logger (no-op under `NODE_ENV === "production"`); wallet addresses, prover/discovery
   URLs, amounts, calldata, proofs, notes, viewing keys and private balances are never logged.
+  Stale "Privy account" nomenclature removed from neutral helpers (they are wallet-generic).
 - **Cache-context safety**: the private-transfers cache key includes `chainId | pool |
   prover | discovery | feeToken | address`, so a cached context can never be reused across
   incompatible networks/pools/configurations.
 - **Fee/resource fallback bounded**: real fee estimation is preferred; the gas-price fallback
   (2x headroom, capped amounts) is only used when the node rejects the STRK20 PROOF0 proof
-  version, and insufficient-resource failures are never silently swallowed.
+  version, and insufficient-resource failures are never silently swallowed. The capped amounts are
+  documented as **deployment-specific** (current Sepolia deployment), not universal Starknet
+  defaults.
+- **Private-trade separation**: the launchpad BondingCurve/PrivateCurveExecutor logic is extracted
+  out of the generic `Strk20Adapter` into `src/privacy/strk20/privateCurve.ts`
+  (`privateCurveTrade(adapter, user, params)`), which composes on the adapter's generic
+  `executeBuilder`. The generic adapter no longer owns application-specific actions.
 
 ### 16d. Vendored SDK revision & discovery privacy
 
@@ -481,22 +495,31 @@ Strk20Adapter → STRK20 SDK → Wallet Core local signer
   `vendor/starknet-privacy-sdk` (build of `github.com/starkware-libs/starknet-privacy`, `sdk/` @
   tag `PRIVACY-0.14.3-RC.5`, Apache-2.0). This is the ONLY SDK surface the adapter targets; code
   must not assume APIs from a newer SDK revision unless that revision is actually vendored.
-- **Discovery transport**: the indexer discovery provider (`IndexerDiscoveryProvider`) currently
-  goes **direct HTTPS** to `NEXT_PUBLIC_STRK20_DISCOVERY_URL` (`https://discovery.orrange.xyz/`).
-  The vendored SDK exposes `OhttpClient` (RFC 9458 OHTTP envelope encryption, `ohttp-ts`) and the
-  **proving** provider config accepts `ohttp?: OhttpOption`; the **discovery** provider config does
-  NOT expose an OHTTP option in this revision. No custom OHTTP implementation is introduced.
+  Tests pin this revision and assert the app only imports SDK APIs that exist in it.
+- **Discovery transport**: by default the indexer discovery provider goes **direct HTTPS** to
+  `NEXT_PUBLIC_STRK20_DISCOVERY_URL`. The vendored SDK DOES support OHTTP for discovery at the
+  provider-class level (`IndexerDiscoveryProvider` constructor accepts `{ ohttp }`), but the
+  factory's `DiscoveryProviderConfig` shorthand does not expose it. The adapter exposes a
+  `discoveryOhttp` config seam that constructs the SDK's `IndexerDiscoveryProvider` instance
+  directly with OHTTP — **disabled by default** until the operator's discovery/relay
+  infrastructure supports it. No custom OHTTP protocol is invented.
 - **What the discovery service can observe today (direct HTTPS)**: the operator that runs the
   discovery endpoint can see the requesting wallet's IP, its address, and the viewing-key-scoped
   queries it makes (note/channel sync, registration preflight). The viewing key itself is only
   ever held client-side and sent inside the request payloads the operator serves, so an honest
   (but non-OHTTP) operator can associate a wallet address with its private-note queries. Enabling
-  OHTTP/relay discovery is a future infrastructure task gated on operator support; the adapter is
-  structured so the SDK's `OhttpOption` can be wired in when the discovery provider supports it.
+  `discoveryOhttp` (and the future relay requirement) is gated on operator support.
 - **PrivateIdentity semantics (honest)**: `PrivateIdentity.id` is an application-level namespace
   (`poseidon(owner, purpose)`); it is NOT an anonymity primitive. The actual STRK20 privacy
   primitives are the shadow-account commitments (`partialCommitment` / `commitmentNonce0`).
   PrivateIdentity alone provides no anonymity/unlinkability guarantee.
+
+### 16e. Live acceptance
+
+See `docs/STRK20_LIVE_ACCEPTANCE.md` for the funded, real-environment acceptance procedure
+(register → shield → private balance discovery → private transfer → withdraw). The automated
+live test skips honestly when the RPC, operator services, or a funded wallet are unavailable and
+never fakes success.
 
 ## 17. Stage 3B+ boundaries (do NOT touch yet)
 

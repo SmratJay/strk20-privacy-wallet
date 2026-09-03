@@ -18,14 +18,18 @@ import type { WalletStorage } from "./storage";
  *   Formula:   viewingKey = canonicalize( poseidon( masterSecretScalar, starknetKeccak(domain) ) )
  *   domain     = "ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1:<network>"
  *
- *   Rationale: the STRK20 protocol REQUIRES a deterministically reproducible secret per wallet
- *   (privacy state — the registered viewing key, private notes — is recovered after every unlock),
- *   and the pool/sdk consume a field element. We retain and FREEZE this construction:
+ *   This is ORRANGE's WALLET-LEVEL derivation — NOT a STRK20 protocol-mandated KDF. The STRK20
+ *   protocol requires only a valid, non-canonical-rejected field element per user; it does not
+ *   specify how the app derives it. Orrange derives it from the wallet's master signing secret so
+ *   it is deterministic and recoverable.
+ *
+ *   Rationale for retaining it (do not change it, do not add a second derivation):
  *   - it is deterministic (same wallet + network ⇒ same key), so privacy state is recoverable;
  *   - changing it now would create a SECOND, incompatible derivation and orphan any wallet whose
  *     viewing key is already registered in the pool. A standard HKDF/HMAC-SHA-256 construction
  *     would be cryptographically defensible for NEW deployments but is intentionally NOT adopted
- *     here to preserve recovery for existing wallets. Do NOT introduce a second derivation.
+ *     here to preserve recovery for existing wallets. A migration to a new derivation requires a
+ *     separate, explicit migration design (re-registering each wallet's viewing key in the pool).
  *
  *   Input key material: the wallet's master signing secret (the same scalar that owns the
  *     Ready/Braavos account). Deterministic per wallet; different wallets (or a different secret)
@@ -42,6 +46,9 @@ import type { WalletStorage } from "./storage";
  *     preserves the derived public identity (the curve is symmetric about the x-axis).
  *   Recovery behavior: the key is never persisted — it is re-derived from the decrypted master
  *     secret on every unlock, so privacy state survives reloads as long as the password is known.
+ *   Compatibility: existing wallets already use this derivation; it MUST remain byte-identical so
+ *     registered viewing keys and private notes stay discoverable after every unlock. Do NOT
+ *     migrate existing users to a new key without a separate explicit migration design.
  *
  * SECURITY:
  *   - the viewing key is derived in memory from the in-memory session secret and is NEVER
@@ -82,6 +89,11 @@ export interface WalletPrivacyConfig {
   proverUrl: string;
   discoveryUrl: string;
   feeTokenAddress?: string;
+  /**
+   * Optional discovery OHTTP seam (RFC 9458) forwarded to the STRK20 adapter. Disabled by default;
+   * only set when the operator's discovery/relay infrastructure supports it. See Strk20Adapter.
+   */
+  discoveryOhttp?: boolean | { relayUrl?: string; publicKeyConfig?: Uint8Array };
 }
 
 /**
@@ -100,12 +112,19 @@ export function resolveWalletPrivacyConfig(
   const proverUrl = (env?.NEXT_PUBLIC_STRK20_PROVER_URL ?? process.env.NEXT_PUBLIC_STRK20_PROVER_URL ?? "").trim();
   const discoveryUrl = (env?.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? "").trim();
   if (!proverUrl || !discoveryUrl) return null;
+  const ohttpRaw = (
+    env?.NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP ??
+    process.env.NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP ??
+    ""
+  ).trim();
   const pool = getNetworkConfig(network).poolAddress;
   return {
     poolContractAddress: pool,
     proverUrl: proverUrl.replace(/\/+$/, ""),
     discoveryUrl: discoveryUrl.replace(/\/+$/, ""),
     feeTokenAddress: STRK_TOKEN_ADDRESS,
+    // Enable discovery OHTTP ONLY when the operator supports it ("true"); defaults to direct HTTPS.
+    discoveryOhttp: ohttpRaw === "true" ? true : undefined,
   };
 }
 
@@ -160,6 +179,7 @@ export class WalletPrivacySession {
       proverUrl: config.proverUrl,
       discoveryUrl: config.discoveryUrl,
       feeTokenAddress: config.feeTokenAddress,
+      discoveryOhttp: config.discoveryOhttp,
       onApprovalStatus: (status) => this.onApprovalStatus?.(status),
     });
   }
@@ -189,12 +209,26 @@ export class WalletPrivacySession {
   }
 
   async getPrivateBalance(token: string): Promise<bigint> {
-    return this.adapter.getPrivateBalance(this.user(), token);
+    const snapshot = await this.getPrivateBalanceSnapshot(token);
+    return snapshot.balance;
+  }
+
+  /** Private balance plus the discovery snapshot block it was read at. */
+  async getPrivateBalanceSnapshot(token: string): Promise<import("@/privacy/strk20").PrivateBalanceSnapshot> {
+    return this.adapter.getPrivateBalanceSnapshot(this.user(), token);
   }
 
   /** Authoritative on-chain registration state of this wallet's viewing key. */
   async getPrivacyRegistration(token: string): Promise<"registered" | "unregistered"> {
     return this.adapter.getPrivacyRegistration(this.user(), token);
+  }
+
+  /** Explicit STRK20 registration (serialized like every mutating pool op). */
+  register(): Promise<PrivacyOperationResult> {
+    return this.serialize(async () => {
+      const receipt = await this.adapter.register(this.user());
+      return toSafeResult(receipt);
+    });
   }
 
   shield(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {

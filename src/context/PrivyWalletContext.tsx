@@ -28,6 +28,7 @@ import {
   waitForDeploymentFinality,
 } from "@/privacy/privy/ready";
 import { PrivyStrk20Adapter, type Strk20ExecuteReceipt } from "@/privacy/adapter";
+import { privateCurveTrade } from "@/privacy/strk20";
 import {
   STRK_TOKEN_ADDRESS,
   type ApprovalStatus,
@@ -523,7 +524,9 @@ const PrivyWalletInner: React.FC<{ children: React.ReactNode }> = ({ children })
       await ensureReady();
       const user = requireReady();
       setApprovalStatus("idle");
-      return buildAdapter((s) => setApprovalStatus(s)).privateTrade(user, params);
+      // The generic adapter no longer owns curve-specific logic; the launchpad private-curve
+      // adapter composes it on top of the generic Strk20Adapter.
+      return privateCurveTrade(buildAdapter((s) => setApprovalStatus(s)), user, params);
     },
     [requireReady, ensureReady],
   );

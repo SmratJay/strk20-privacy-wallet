@@ -43,6 +43,10 @@ vi.mock("@/privacy/strk20", async (importOriginal) => {
       void user;
       return mockState.balances.get(token.toLowerCase()) ?? 0n;
     }
+    async getPrivateBalanceSnapshot(user: unknown, token: string) {
+      void user;
+      return { balance: mockState.balances.get(token.toLowerCase()) ?? 0n, asOfBlock: null };
+    }
     async shield(user: unknown, token: string, amount: bigint) {
       mockState.shieldCalls.push({ user, token, amount });
       return { transactionHash: "0xshield", status: "PENDING", explorerUrl: "", warnings: [] };

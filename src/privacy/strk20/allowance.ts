@@ -106,7 +106,9 @@ export async function readAllowance(
 }
 
 /**
- * Ensure the Privy account has approved enough STRK for the privacy pool to charge its fee.
+ * Ensure the wallet account has approved enough STRK for the privacy pool to charge its fee.
+ * `account` is a generic starknet.js account (a Wallet Core `UnlockedWallet.account`, a Privy
+ * embedded account, or any compatible signer) — this helper is wallet-generic.
  *
  * - Reads the current allowance.
  * - If already `>= requiredAmount` → no transaction.

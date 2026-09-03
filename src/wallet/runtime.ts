@@ -56,6 +56,10 @@ export interface PublicBalanceRow {
   token: TokenInfo;
   balance: bigint;
   available: boolean;
+  /** The discovery snapshot block a private balance was read at (numeric), when known. */
+  asOfBlock?: number | null;
+  /** True when the private-balance discovery snapshot lags the chain head (indexer syncing). */
+  syncing?: boolean;
 }
 
 /** Safe, UI-facing view of an unlocked wallet — never exposes secret/signer/account internals. */
@@ -83,6 +87,19 @@ export interface PrivacyCapability {
    * shield auto-registers the viewing key on-chain.
    */
   registered: boolean | null;
+  /**
+   * Proving-chain maturity of the wallet's account. After a fresh deployment the chain must
+   * advance `PROVING_SAFETY_MARGIN` blocks past the deploy block before the STRK20 pool can
+   * validate proofs referencing that state. `waiting` means "honestly not ready yet", never
+   * "privacy failed". `unknown` when the deploy block is not known this session.
+   */
+  maturity: "unknown" | "waiting" | "ready";
+  /** The block at which proving/private ops become safe (`deployedAtBlock + margin`), when known. */
+  maturityReadyAtBlock: number | null;
+  /** The latest known chain head, when read. */
+  currentBlock: number | null;
+  /** True when the discovery indexer's snapshot lags the chain head (private balances may not include the newest notes yet). */
+  syncing: boolean;
 }
 
 /** Honest lifecycle of the most recent STRK20 privacy operation. Never contains secrets. */
@@ -157,6 +174,30 @@ const PRIVACY_FINALITY_TIMEOUT_MS = 120_000;
 /** How long to wait for a STRK20 discovery/registration call before reporting an honest error. */
 const DISCOVERY_TIMEOUT_MS = 20_000;
 
+/**
+ * The chain must advance this many blocks past the deploy block before the STRK20 pool accepts
+ * proofs (mirrors `PROVING_SAFETY_MARGIN` in the adapter). Balances/ops are honest-but-waiting
+ * until then — never a generic "privacy failed".
+ */
+const MATURITY_BLOCKS = 10;
+
+/** Indexer lag (chain head - snapshot block) above which a private balance is reported "syncing". */
+const SYNC_TOLERANCE_BLOCKS = 3;
+
+/** A fresh privacy capability default — never claims readiness it cannot verify. */
+function idlePrivacy(available: boolean, reason: string | null): PrivacyCapability {
+  return {
+    available,
+    status: available ? "idle" : "unavailable",
+    reason,
+    registered: null,
+    maturity: "unknown",
+    maturityReadyAtBlock: null,
+    currentBlock: null,
+    syncing: false,
+  };
+}
+
 /** Bound an async call so a hung discovery/proving service never leaves the UI spinning forever. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -184,6 +225,8 @@ export class WalletRuntime {
   private readonly privacyConfig: WalletPrivacyConfig | null;
   private readonly listeners = new Set<() => void>();
   private generation = 0;
+  /** Deploy block of the active session (set when this session deployed the account), for maturity. */
+  private deployedAtBlock: number | null = null;
 
   constructor(options: WalletRuntimeOptions = {}) {
     this.storage = options.storage ?? defaultStorage();
@@ -199,12 +242,10 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
-      privacy: {
-        available: this.privacyConfig !== null,
-        status: this.privacyConfig !== null ? "idle" : "unavailable",
-        reason: this.privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
-        registered: null,
-      },
+      privacy: idlePrivacy(
+        this.privacyConfig !== null,
+        this.privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
+      ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       recentTransactions: [],
@@ -275,6 +316,7 @@ export class WalletRuntime {
     if (this.privacySession) this.privacySession.dispose();
     this.privacySession = null;
     this.session = null;
+    this.deployedAtBlock = null;
     const privacyConfig = this.privacyConfig !== null ? resolveWalletPrivacyConfig(network) : null;
     this.view = {
       network,
@@ -284,12 +326,10 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
-      privacy: {
-        available: privacyConfig !== null,
-        status: privacyConfig !== null ? "idle" : "unavailable",
-        reason: privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
-        registered: null,
-      },
+      privacy: idlePrivacy(
+        privacyConfig !== null,
+        privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
+      ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       recentTransactions: [],
@@ -317,12 +357,10 @@ export class WalletRuntime {
       isUnlocked: true,
       deploymentStatus: "unknown",
       publicBalances: [],
-      privacy: {
-        available: this.privacySession !== null,
-        status: this.privacySession !== null ? "idle" : "unavailable",
-        reason: this.privacySession !== null ? null : "STRK20 proving/discovery services are not configured.",
-        registered: null,
-      },
+      privacy: idlePrivacy(
+        this.privacySession !== null,
+        this.privacySession !== null ? null : "STRK20 proving/discovery services are not configured.",
+      ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       error: null,
@@ -348,6 +386,7 @@ export class WalletRuntime {
     this.privacySession = null;
     this.invalidate();
     this.session = null;
+    this.deployedAtBlock = null;
     this.setView({
       selectedWalletId: walletId,
       account: null,
@@ -444,6 +483,7 @@ export class WalletRuntime {
     this.privacySession = null;
     this.invalidate();
     this.session = null;
+    this.deployedAtBlock = null;
     this.setView({
       account: null,
       isUnlocked: false,
@@ -496,7 +536,9 @@ export class WalletRuntime {
         },
       });
       if (!this.isCurrent(guard)) return result;
+      this.deployedAtBlock = result.deployedAtBlock ?? null;
       this.setView({ deploymentStatus: "deployed" });
+      void this.refreshPrivacyMaturity();
       return result;
     } catch (err) {
       if (!this.isCurrent(guard)) throw err;
@@ -570,12 +612,7 @@ export class WalletRuntime {
     if (!this.session) return null;
     if (!this.privacySession) {
       this.setView({
-        privacy: {
-          available: false,
-          status: "unavailable",
-          reason: "STRK20 proving/discovery services are not configured.",
-          registered: null,
-        },
+        privacy: idlePrivacy(false, "STRK20 proving/discovery services are not configured."),
       });
       return null;
     }
@@ -592,13 +629,13 @@ export class WalletRuntime {
           "STRK20 registration discovery",
         )) === "registered";
       if (!this.isCurrent(guard)) return null;
-      this.setView({ privacy: { available: true, status: "available", reason: null, registered } });
+      this.setView({ privacy: { ...this.view.privacy, status: "available", reason: null, registered } });
       return registered;
     } catch (err) {
       if (!this.isCurrent(guard)) return null;
       this.setView({
         privacy: {
-          available: true,
+          ...this.view.privacy,
           status: "error",
           reason: err instanceof Error ? err.message : "STRK20 privacy registration check failed.",
           registered: null,
@@ -614,19 +651,14 @@ export class WalletRuntime {
     if (!session) {
       this.setView({
         privateBalances: [],
-        privacy: { available: false, status: "idle", reason: null, registered: null },
+        privacy: idlePrivacy(false, null),
       });
       return [];
     }
     if (!this.privacySession) {
       this.setView({
         privateBalances: [],
-        privacy: {
-          available: false,
-          status: "unavailable",
-          reason: "STRK20 proving/discovery services are not configured.",
-          registered: null,
-        },
+        privacy: idlePrivacy(false, "STRK20 proving/discovery services are not configured."),
       });
       return [];
     }
@@ -635,31 +667,92 @@ export class WalletRuntime {
     try {
       const networkConfig = getNetworkConfig(this.view.network);
       const rows: PublicBalanceRow[] = [];
+      let currentBlock: number | null = null;
+      try {
+        currentBlock = await withTimeout(session.provider.getBlockNumber(), DISCOVERY_TIMEOUT_MS, "chain head");
+      } catch {
+        currentBlock = null;
+      }
+      let anySyncing = false;
       for (const token of networkConfig.tokens) {
-        const balance = await withTimeout(
-          this.privacySession.getPrivateBalance(token.address),
+        const snapshot = await withTimeout(
+          this.privacySession.getPrivateBalanceSnapshot(token.address),
           DISCOVERY_TIMEOUT_MS,
           "STRK20 private balance discovery",
         );
-        rows.push({ token, balance, available: true });
+        const asOfBlock = snapshot.asOfBlock;
+        const syncing = Boolean(
+          currentBlock !== null &&
+            asOfBlock !== null &&
+            asOfBlock > 0 &&
+            currentBlock - asOfBlock > SYNC_TOLERANCE_BLOCKS,
+        );
+        if (syncing) anySyncing = true;
+        rows.push({ token, balance: snapshot.balance, available: true, asOfBlock, syncing });
       }
       if (!this.isCurrent(guard)) return [];
       this.setView({
         privateBalances: rows,
-        privacy: { ...this.view.privacy, status: "available", reason: null },
+        privacy: {
+          ...this.view.privacy,
+          status: "available",
+          reason: null,
+          currentBlock,
+          syncing: anySyncing,
+        },
       });
       return rows;
     } catch (err) {
       if (!this.isCurrent(guard)) return [];
       this.setView({
         privacy: {
-          available: true,
+          ...this.view.privacy,
           status: "error",
           reason: err instanceof Error ? err.message : "STRK20 private balance discovery failed.",
           registered: this.view.privacy.registered,
         },
       });
       return [];
+    }
+  }
+
+  /**
+   * Probe proving-chain maturity of the active wallet: after a deployment this session, the chain
+   * must advance `MATURITY_BLOCKS` past the deploy block before STRK20 proofs can be validated.
+   * Honest states — `waiting` (with the ready-at block) is NOT a failure, and `unknown` is used
+   * whenever the deploy block is not known (imported/existing accounts) rather than claiming ready.
+   */
+  async refreshPrivacyMaturity(): Promise<void> {
+    if (!this.session) return;
+    if (this.deployedAtBlock === null) {
+      this.setView({ privacy: { ...this.view.privacy, maturity: "unknown", currentBlock: null } });
+      return;
+    }
+    const guard = this.captureGuard();
+    const readyAt = this.deployedAtBlock + MATURITY_BLOCKS;
+    try {
+      const currentBlock = await withTimeout(
+        this.session.provider.getBlockNumber(),
+        DISCOVERY_TIMEOUT_MS,
+        "chain head",
+      );
+      if (!this.isCurrent(guard)) return;
+      this.setView({
+        privacy: {
+          ...this.view.privacy,
+          maturity: currentBlock >= readyAt ? "ready" : "waiting",
+          maturityReadyAtBlock: readyAt,
+          currentBlock,
+        },
+      });
+    } catch (err) {
+      if (!this.isCurrent(guard)) return;
+      // A failed head read cannot claim readiness; stay honestly "waiting" when we know a deploy
+      // block, without inventing a block number.
+      this.setView({
+        privacy: { ...this.view.privacy, maturity: "waiting", maturityReadyAtBlock: readyAt, currentBlock: null },
+      });
+      void err;
     }
   }
 
@@ -755,6 +848,11 @@ export class WalletRuntime {
 
   async shield(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
     return this.runPrivacyOp("shield", (privacy) => privacy.shield(token, amountBase));
+  }
+
+  /** Explicit STRK20 registration of the wallet's viewing key (serialized with other pool ops). */
+  async register(): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("register", (privacy) => privacy.register());
   }
 
   async privateTransfer(token: string, amountBase: bigint, recipient: string): Promise<PrivacyOperationResult> {

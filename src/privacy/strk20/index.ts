@@ -8,8 +8,11 @@ export {
   type Strk20User,
   type Strk20AdapterConfig,
   type Strk20ExecuteReceipt,
-  type PrivateCurveTradeParams,
+  type PrivateBalanceSnapshot,
+  type BuilderLike,
+  type PrivateTransfersLike,
 } from "./Strk20Adapter";
+export { privateCurveTrade, type PrivateCurveTradeParams } from "./privateCurve";
 export {
   STRK_TOKEN_ADDRESS,
   DEFAULT_STRK_ALLOWANCE_TARGET,

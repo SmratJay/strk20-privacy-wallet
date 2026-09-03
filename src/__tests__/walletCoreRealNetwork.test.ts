@@ -138,4 +138,83 @@ describe("real Starknet Sepolia network", () => {
     await runtime.refreshDeployment();
     expect(runtime.getState().deploymentStatus).toBe("not_deployed");
   });
+
+  it("LIVE ACCEPTANCE — full privacy path (register→shield→balance→transfer→withdraw) when funded + operator reachable; skips honestly otherwise", async (ctx) => {
+    // This test does NOT fake success. It attempts the real privacy path only when every
+    // prerequisite holds (reachable RPC, configured + reachable operator services, funded
+    // Sepolia wallet). Otherwise it skips with the exact reason. Use a funded Sepolia wallet
+    // and reachable discovery/prover services to exercise the real flow.
+    if (!(await rpcReachable())) return ctx.skip();
+
+    const proverUrl = (process.env.NEXT_PUBLIC_STRK20_PROVER_URL ?? "").trim();
+    const discoveryUrl = (process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? "").trim();
+    if (!proverUrl || !discoveryUrl) {
+      console.log("[live-acceptance] SKIPPED: operator prover/discovery services not configured (NEXT_PUBLIC_STRK20_*).");
+      return ctx.skip();
+    }
+
+    // Discovery reachability: any HTTP response (even 4xx/5xx) means the service is up; a
+    // network-level failure/timeout means it is unreachable from this environment.
+    let discoveryUp = false;
+    try {
+      const res = await fetch(`${discoveryUrl}/v1/sync/preflight_check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: "0x0", token: "0x0" }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      discoveryUp = res.status >= 100; // any response ⇒ reachable
+    } catch {
+      discoveryUp = false;
+    }
+    if (!discoveryUp) {
+      console.log("[live-acceptance] SKIPPED: discovery service unreachable from this environment.");
+      return ctx.skip();
+    }
+
+    const { WalletRuntime } = await import("../wallet/runtime");
+    const { createMemoryStorage } = await import("../wallet/storage");
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    runtime.init();
+    const wallet = await runtime.create("correct horse battery staple");
+
+    // Funded-wallet gate: the account must hold enough STRK to cover the pool fee + a real
+    // shield deposit. A fresh counterfactual account is not funded, so this usually skips.
+    const strk = getNetworkConfig("sepolia").tokens[0];
+    const balanceRes = await provider.callContract({
+      contractAddress: strk.address,
+      entrypoint: "balanceOf",
+      calldata: [wallet.address],
+    });
+    const balance = BigInt(balanceRes[0] ?? "0x0");
+    const MIN_STRK_FOR_LIVE_SHIELD = 2n * 10n ** 18n; // fee headroom + a real deposit
+    if (balance < MIN_STRK_FOR_LIVE_SHIELD) {
+      console.log(
+        `[live-acceptance] SKIPPED: wallet is not funded (STRK balance ${balance.toString()} < ${MIN_STRK_FOR_LIVE_SHIELD.toString()}). No real funds were spent.`,
+      );
+      return ctx.skip();
+    }
+
+    // Every prerequisite holds → execute the REAL privacy path. Any assertion failure below is a
+    // genuine finding (no mocking, no fake success).
+    const config = resolveWalletPrivacyConfig("sepolia");
+    if (!config) return ctx.skip();
+
+    const reg = await runtime.register();
+    expect(reg.status).toBe("PENDING");
+
+    const shield = await runtime.shield(strk.address, 1n * 10n ** 18n);
+    expect(shield.status).toBe("PENDING");
+
+    const rows = await runtime.refreshPrivateBalances();
+    const strkRow = rows.find((r) => r.token.symbol === "STRK");
+    expect(strkRow).toBeDefined();
+    expect(strkRow!.balance).toBeGreaterThanOrEqual(1n * 10n ** 18n);
+
+    const transfer = await runtime.privateTransfer(strk.address, 1n * 10n ** 18n, wallet.address);
+    expect(transfer.status).toBe("PENDING");
+
+    const withdraw = await runtime.withdraw(strk.address, 1n * 10n ** 18n);
+    expect(withdraw.status).toBe("PENDING");
+  });
 });

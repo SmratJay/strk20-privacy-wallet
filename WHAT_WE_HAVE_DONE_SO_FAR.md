@@ -1661,3 +1661,104 @@ now works end to end: create → dashboard (Deployment pending, PUBLIC/PRIVATE, 
 dashboard probes the real discovery service and honestly reports "Privacy setup unavailable:
 STRK20 registration discovery timed out" from this environment (discovery.orrange.xyz is not
 reachable from the sandbox; the prover endpoint is reachable). No fake zero, no fake privacy.
+
+## 📅 Thursday, September 03, 2026 — 15:57:43 IST
+### Stage 3A Final Hardening — resolve all audit findings, freeze the STRK20 foundation
+
+#### 🔴 [BIG CHANGE] — STRK20 end-to-end acceptance path + live procedure
+
+**Detailed Technical Explanation.**
+- Added a first-class `WalletRuntime.register()` / `WalletPrivacySession.register()` (serialized,
+  honest lifecycle) so the full acceptance path is an explicit surface:
+  `wallet → viewing key → register → shield → private balance discovery → private transfer →
+  withdraw`.
+- Added a deterministic mocked acceptance-path test (register→shield→balance→transfer→withdraw
+  through the runtime) and a **live acceptance test** in `walletCoreRealNetwork.test.ts` that
+  executes the REAL path only when every gate holds (reachable RPC, operator prover+discovery
+  configured AND reachable, funded Sepolia wallet ≥ 2 STRK) and skips with the exact reason
+  otherwise. No fake success.
+- Added `docs/STRK20_LIVE_ACCEPTANCE.md` documenting the funded acceptance procedure, the mocked
+  vs executed split, and which live operations were actually executed.
+
+#### 🔴 [BIG CHANGE] — Viewing-key V1 doc audit (no second derivation)
+
+**Detailed Technical Explanation.**
+- `src/wallet/privacy.ts` doc strengthened: `ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1` is now
+  explicitly described as **Orrange's wallet-level derivation, NOT a STRK20 protocol-mandated
+  KDF**, with exact input (master signing secret), domain/network separation, canonicalization,
+  recovery behavior, and compatibility implications. Changing it would orphan pool-registered
+  viewing keys; a migration requires a separate explicit design. No second derivation introduced.
+
+#### 🔴 [BIG CHANGE] — Serialization + recovery verified
+
+**Detailed Technical Explanation.**
+- Mutating privacy ops (register/shield/privateTransfer/withdraw) stay behind the single per-session
+  async mutex. Added regression tests proving: op A starts, op B cannot execute before A finishes
+  (including register vs shield), and **a failing op does not wedge the queue** (a later op still
+  executes).
+
+#### 🟢 [SMALL CHANGE] — Logging hygiene + nomenclature
+
+- Removed the last stale "Privy account" comment from the neutral allowance helper (now
+  "wallet account", wallet-generic) and "Privy lane only" from `ensureAllowance`. Dev-only logger
+  remains the only console path in the STRK20 adapter + allowance modules (source-level guarded).
+
+#### 🔴 [BIG CHANGE] — transfersCache + fee fallback audited (kept, bounded)
+
+**Detailed Technical Explanation.**
+- Cache key already includes `chainId|pool|prover|discovery|feeToken|address`; added regression
+  tests proving incompatible contexts produce different cache entries.
+- Fee fallback: real fee estimation preferred; PROOF0-only fallback documented as
+  **deployment-specific** (current Sepolia caps: L2 1_210_000_000, L1 1, L1-data 10_000, 2× price
+  headroom), not universal Starknet defaults. Tests cover register/shield/transfer/withdraw shapes,
+  success path, PROOF0 fallback path, and insufficient-resource failure (never swallowed).
+
+#### 🔴 [BIG CHANGE] — SDK alignment + discovery OHTTP audit (vendored revision)
+
+**Detailed Technical Explanation.**
+- Vendored SDK pinned and tested: `@starkware-libs/starknet-privacy-sdk` **0.14.3-rc.5**
+  (starknet.js 10.5.0 parity). A compatibility test asserts the app only imports SDK APIs that
+  exist in the vendored revision (`createPrivateTransfers`, `IndexerDiscoveryProvider`, `Open`).
+- **Discovery OHTTP IS available in the vendored revision at the provider-class level**
+  (`IndexerDiscoveryProvider` constructor accepts `{ ohttp }`), but the factory's
+  `DiscoveryProviderConfig` shorthand does not. Added a production-ready **config seam**:
+  `Strk20AdapterConfig.discoveryOhttp` / `WalletPrivacyConfig.discoveryOhttp`, plumbed through
+  the session, plus `NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP=true` env. When set, the adapter
+  constructs the SDK's `IndexerDiscoveryProvider` instance directly with OHTTP. **Disabled by
+  default** (direct HTTPS) until the operator supports it; no custom OHTTP protocol invented.
+- `PrivateIdentity` semantics remain honest (id = app namespace; shadow commitment = the privacy
+  primitive).
+
+#### 🔴 [BIG CHANGE] — Proving-chain maturity + private-balance sync semantics
+
+**Detailed Technical Explanation.**
+- `PrivacyCapability` gained honest `maturity` (`unknown`/`waiting`/`ready`),
+  `maturityReadyAtBlock`, `currentBlock`, and `syncing`. After a deployment, the state machine
+  already waits 10-block finality; the UI shows "Privacy setup waiting for chain confirmation"
+  (never a generic "Privacy failed") when the head is below the ready block, and `unknown` when the
+  deploy block is not known this session.
+- Private-balance discovery now returns the discovery snapshot block (`asOfBlock`); balances whose
+  snapshot lags the chain head are reported **syncing** with the balance still visible — never a
+  silent stale 0. UI shows a "indexer still syncing" note.
+
+#### 🔴 [BIG CHANGE] — Private-trade separation
+
+**Detailed Technical Explanation.**
+- Extracted launchpad BondingCurve/PrivateCurveExecutor logic OUT of the generic `Strk20Adapter`
+  into `src/privacy/strk20/privateCurve.ts` (`privateCurveTrade(adapter, user, params)`), composed
+  on the adapter's new generic `executeBuilder`. The generic adapter no longer owns
+  application-specific curve actions (architectural guard test). Legacy Privy lane updated to call
+  the standalone function; `PrivateCurveTradeParams` still exported from `@/privacy/strk20` /
+  `@/privacy/adapter`.
+
+#### 🟢 [SMALL CHANGE] — Network-reload stale isolation test
+
+- Added a test proving `reloadForNetwork` (triggered by wallet delete/network reload) invalidates
+  in-flight privacy results — completing the network-switch stale coverage.
+
+**Tests.** `walletStage3a.test.ts` (+8 → 35), `strk20AdapterHardening.test.ts` (+8 → 19),
+`walletCoreRealNetwork.test.ts` (+1 live acceptance, honest skip). Full suite:
+**659 passed, 1 skipped** (live acceptance skips honestly: operator discovery unreachable + no
+funded wallet in this environment). `npm run typecheck`, `npm test`, `npm run build` all pass.
+Browser verification: create → dashboard (PUBLIC/PRIVATE operations, wallet selector, no legacy
+Google/Ready/privy connect in the primary flow) → lock → unlock → dashboard.

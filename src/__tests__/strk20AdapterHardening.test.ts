@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 const POOL = "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
@@ -14,9 +16,13 @@ const POOL = "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91
 const sdkState = vi.hoisted(() => ({
   opsLog: [] as string[],
   createCalls: 0,
+  discoveryTimestamp: "0x0" as unknown,
+  ohttpDiscoveryOptions: null as unknown,
   reset() {
     this.opsLog.length = 0;
     this.createCalls = 0;
+    this.discoveryTimestamp = "0x0";
+    this.ohttpDiscoveryOptions = null;
   },
 }));
 
@@ -82,17 +88,32 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
   return {
     createPrivateTransfers: (params: Record<string, unknown>) => {
       sdkState.createCalls++;
+      const discovery = params.discoveryProvider as
+        | { ohttp?: unknown; options?: { ohttp?: unknown }; url?: string }
+        | undefined;
+      if (discovery && typeof discovery === "object") {
+        const ohttp = (discovery as { ohttp?: unknown }).ohttp ?? (discovery as { options?: { ohttp?: unknown } }).options?.ohttp;
+        if (ohttp !== undefined) sdkState.ohttpDiscoveryOptions = ohttp;
+      }
       void params;
       return {
         build: (opts: Record<string, unknown>) => makeBuilder(opts),
-        discoverNotes: async () => ({ notes: new Map() }),
+        discoverNotes: async () => ({ timestamp: sdkState.discoveryTimestamp, notes: new Map() }),
         discoverRequirement: async () => 2,
       };
+    },
+    Open: Symbol("Open"),
+    IndexerDiscoveryProvider: class {
+      constructor(
+        public apiUrl: string,
+        public contractAddress: string,
+        public options?: { ohttp?: boolean | { relayUrl?: string; publicKeyConfig?: Uint8Array } },
+      ) {}
     },
   };
 });
 
-import { Strk20Adapter, type Strk20User } from "../privacy/strk20";
+import { Strk20Adapter, privateCurveTrade, type Strk20User } from "../privacy/strk20";
 import { constants } from "starknet";
 
 function makeAccount(overrides: Record<string, unknown> = {}) {
@@ -282,5 +303,100 @@ describe("cache-context safety", () => {
     await b.getTransfers(user);
     // Different adapters/configs each built their own SDK context (no cross-contamination).
     expect(sdkState.createCalls).toBe(2);
+  });
+});
+
+describe("discovery OHTTP seam (vendored SDK mechanism, no custom protocol)", () => {
+  it("defaults to direct HTTPS via the factory { url } config", async () => {
+    const adapter = makeAdapter();
+    await adapter.getTransfers(makeUser());
+    expect(sdkState.ohttpDiscoveryOptions).toBeNull();
+  });
+
+  it("wires the SDK's IndexerDiscoveryProvider instance with OHTTP when requested", async () => {
+    const adapter = makeAdapter({ discoveryOhttp: { relayUrl: "https://relay.example", publicKeyConfig: new Uint8Array(4) } });
+    await adapter.getTransfers(makeUser());
+    expect(sdkState.ohttpDiscoveryOptions).toEqual({
+      relayUrl: "https://relay.example",
+      publicKeyConfig: new Uint8Array(4),
+    });
+  });
+});
+
+describe("private balance snapshot (honest sync semantics)", () => {
+  it("returns the balance plus the numeric discovery snapshot block", async () => {
+    sdkState.discoveryTimestamp = "0x1f4"; // 500
+    const adapter = makeAdapter();
+    const snap = await adapter.getPrivateBalanceSnapshot(makeUser(), STRK);
+    expect(snap.balance).toBe(0n);
+    expect(snap.asOfBlock).toBe(500);
+  });
+
+  it("returns a null asOfBlock when the discovery timestamp is not numeric", async () => {
+    sdkState.discoveryTimestamp = "latest";
+    const adapter = makeAdapter();
+    const snap = await adapter.getPrivateBalanceSnapshot(makeUser(), STRK);
+    expect(snap.asOfBlock).toBeNull();
+  });
+});
+
+describe("vendored SDK compatibility", () => {
+  it("pins the exact vendored SDK revision the application targets", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "..", "vendor", "starknet-privacy-sdk", "package.json"), "utf8"),
+    ) as { version: string; dependencies: Record<string, string> };
+    expect(pkg.version).toBe("0.14.3-rc.5");
+    // The vendored build pins the same starknet.js major the app pins — SDK/app parity.
+    expect(pkg.dependencies["starknet"]).toBe("10.5.0");
+  });
+
+  it("the application only targets APIs exported by the vendored SDK revision", () => {
+    const sdkIndex = readFileSync(
+      join(__dirname, "..", "..", "vendor", "starknet-privacy-sdk", "dist", "index.d.ts"),
+      "utf8",
+    );
+    expect(sdkIndex).toContain("createPrivateTransfers");
+    expect(sdkIndex).toContain("IndexerDiscoveryProvider");
+    // `Open` (the open-note symbol) is re-exported from interfaces.
+    const interfaces = readFileSync(
+      join(__dirname, "..", "..", "vendor", "starknet-privacy-sdk", "dist", "interfaces.d.ts"),
+      "utf8",
+    );
+    expect(interfaces).toMatch(/export declare const Open: unique symbol/);
+    // The app imports the SDK from the package root only (never deep paths into internals).
+    const adapter = readFileSync(join(__dirname, "..", "privacy", "strk20", "Strk20Adapter.ts"), "utf8");
+    expect(adapter).toMatch(/import\("@starkware-libs\/starknet-privacy-sdk"\)/);
+    const curve = readFileSync(join(__dirname, "..", "privacy", "strk20", "privateCurve.ts"), "utf8");
+    expect(curve).toMatch(/import\("@starkware-libs\/starknet-privacy-sdk"\)/);
+  });
+});
+
+describe("launchpad private-curve trade (application adapter on the generic adapter)", () => {
+  it("builds withdraw→transfer→privacy_invoke→surplusTo through the generic executeBuilder", async () => {
+    const adapter = makeAdapter();
+    const user = makeUser();
+    const receipt = await privateCurveTrade(adapter, user, {
+      operation: 0,
+      curveExecutor: "0xexecutor",
+      inputToken: STRK,
+      outputToken: "0xmemecoin",
+      amount: 7n,
+    });
+    expect(receipt.transactionHash).toBe("0xsubmit");
+    // The builder runs twice (simulate + execute); each pass is withdraw → transfer → invoke → surplusTo.
+    expect(sdkState.opsLog.filter((op) => op === "withdraw")).toHaveLength(2);
+    expect(sdkState.opsLog.filter((op) => op === "transfer")).toHaveLength(2);
+    expect(sdkState.opsLog.filter((op) => op === "invoke")).toHaveLength(2);
+    expect(sdkState.opsLog.filter((op) => op === "surplusTo")).toHaveLength(2);
+  });
+
+  it("the generic adapter no longer owns curve-specific logic (architectural guard)", () => {
+    const adapterSource = readFileSync(join(__dirname, "..", "privacy", "strk20", "Strk20Adapter.ts"), "utf8");
+    expect(adapterSource).not.toContain("privateTrade");
+    expect(adapterSource).not.toContain("PrivateCurveTradeParams");
+    expect(adapterSource).not.toContain("curveExecutor");
+    const curveSource = readFileSync(join(__dirname, "..", "privacy", "strk20", "privateCurve.ts"), "utf8");
+    expect(curveSource).toContain("privateCurveTrade");
+    expect(curveSource).toContain("privacy_invoke");
   });
 });
