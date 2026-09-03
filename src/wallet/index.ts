@@ -78,6 +78,7 @@ export {
   clearWalletById,
   migrateLegacyWallet,
   walletIdFor,
+  scopedWalletIdFor,
   clearWallet as clearWalletStorage,
   type WalletStorage,
   type PublicWalletState,

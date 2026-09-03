@@ -13,6 +13,17 @@
  * (`ShadowAccountsBuilder.partialCommitment` / `.commitment`). Only PUBLIC commitment values are
  * ever persisted; the viewing key is accepted transiently and NEVER stored or leaked.
  *
+ * NAMING — `id` vs STRK20 shadow commitment:
+ *   - `id` is the public, application-level identity identifier: poseidon(owner, purpose). It
+ *     names a purpose namespace for THIS app's records. It is NOT a cryptographic anonymity
+ *     primitive and carries no anonymity guarantee on its own.
+ *   - `partialCommitment` / `commitmentNonce0` are the actual STRK20 privacy primitives (the
+ *     shadow-account commitments) derived by the vendored SDK from owner + viewing key +
+ *     anonymizer + dapp name.
+ *   - `purpose` is metadata/namespacing for this app; it is not automatically a cryptographic
+ *     shadow-account domain unless the SDK inputs (dappName) make it so.
+ *   This stage does NOT claim identities are anonymous or unlinkable.
+ *
  * This is NOT cross-chain execution. It is the isolation primitive later stages build on.
  */
 import { createPrivateTransfers } from '@starkware-libs/starknet-privacy-sdk';
@@ -57,12 +68,33 @@ export interface PrivateIdentityStorage {
   removeItem(key: string): void;
 }
 
-function memoryStorage(): PrivateIdentityStorage {
-  const store = new Map<string, string>();
+/**
+ * Explicit ephemeral in-memory storage. Usable for tests or short-lived sessions, but it is NOT
+ * the default application path — callers must always pass storage explicitly.
+ */
+export function createMemoryPrivateIdentityStorage(backing?: Map<string, string>): PrivateIdentityStorage {
+  const store = backing ?? new Map<string, string>();
   return {
     getItem: (k) => store.get(k) ?? null,
     setItem: (k, v) => void store.set(k, v),
     removeItem: (k) => void store.delete(k),
+  };
+}
+
+/**
+ * Browser-persistent identity storage (localStorage-backed). This is the normal application path:
+ * identities created with this storage survive page reloads / re-opens.
+ */
+export function createBrowserPrivateIdentityStorage(): PrivateIdentityStorage {
+  const local = typeof localStorage !== 'undefined' ? localStorage : null;
+  return {
+    getItem: (k) => (local ? local.getItem(k) : null),
+    setItem: (k, v) => {
+      if (local) local.setItem(k, v);
+    },
+    removeItem: (k) => {
+      if (local) local.removeItem(k);
+    },
   };
 }
 
@@ -80,6 +112,34 @@ export function normalizePurpose(purpose: string): string {
   if (!trimmed) throw new Error('Private identity purpose is required.');
   if (trimmed.length > 64) throw new Error('Private identity purpose is too long.');
   return trimmed;
+}
+
+/**
+ * Validate a stored identity record. Returns an error string, or null when the record is a
+ * valid, tamper-consistent public identity record. Guards against malformed records and against
+ * any accidental serialization of secret material (e.g. a stray `viewingKey` field).
+ */
+export function validatePrivateIdentity(record: unknown): string | null {
+  const r = record as PrivateIdentity | null;
+  if (r === null || typeof r !== 'object') return 'record is not an object';
+  for (const key of ['id', 'owner', 'purpose', 'chain', 'partialCommitment', 'commitmentNonce0', 'status', 'createdAt'] as const) {
+    if (r[key] === undefined || r[key] === null) return `missing field: ${key}`;
+  }
+  // Defense in depth: never accept a record that carries secret material.
+  for (const secretKey of ['viewingKey', 'secret', 'privateKey', 'masterKey']) {
+    if ((r as unknown as Record<string, unknown>)[secretKey] !== undefined) return `record must not carry ${secretKey}`;
+  }
+  if (typeof r.id !== 'string' || !/^0x[0-9a-fA-F]+$/.test(r.id)) return 'malformed id';
+  if (typeof r.owner !== 'string' || !/^0x[0-9a-fA-F]+$/.test(r.owner)) return 'malformed owner';
+  if (typeof r.purpose !== 'string' || r.purpose.length === 0 || r.purpose.length > 64) return 'malformed purpose';
+  if (typeof r.chain !== 'string' || r.chain.length === 0 || r.chain.length > 32) return 'malformed chain';
+  if (r.status !== 'active' && r.status !== 'retired') return 'malformed status';
+  if (typeof r.createdAt !== 'number' || !Number.isFinite(r.createdAt) || r.createdAt <= 0) return 'malformed createdAt';
+  // The public id must be consistent with owner + purpose (detects mislabeled/tampered records).
+  if (privateIdentityId(r.owner, r.purpose).toLowerCase() !== r.id.toLowerCase()) {
+    return 'id does not match owner + purpose';
+  }
+  return null;
 }
 
 /**
@@ -117,7 +177,9 @@ export function readPrivateIdentities(
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as PrivateIdentity[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Drop malformed/tampered records (e.g. a stray viewingKey field) rather than surface them.
+    return parsed.filter((record) => validatePrivateIdentity(record) === null);
   } catch {
     return [];
   }
@@ -132,9 +194,14 @@ function writePrivateIdentities(
   storage.setItem(storageKey(chain, owner), JSON.stringify(identities));
 }
 
+/**
+ * Create a private identity. `storage` is REQUIRED and explicit: wallet identity state is never
+ * silently defaulted to ephemeral memory. Use `createBrowserPrivateIdentityStorage()` for the
+ * normal persistent application path, or an explicit memory store for tests.
+ */
 export async function createPrivateIdentity(
   input: CreatePrivateIdentityInput,
-  storage: PrivateIdentityStorage = memoryStorage(),
+  storage: PrivateIdentityStorage,
 ): Promise<PrivateIdentity> {
   const purpose = normalizePurpose(input.purpose);
   const id = privateIdentityId(input.owner, purpose);

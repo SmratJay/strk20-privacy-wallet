@@ -1349,3 +1349,36 @@ cross-chain, AI) were added.
 import, registry, Braavos, private-identity, real-network suites); `npm run build` succeeds.
 Real Starknet Sepolia integration tests verify Braavos class declaration, Ready counterfactual
 probing, and SRC-5 ownership rejection on a real deployed account with a throwaway key.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 10:18:00 IST
+
+### 🔴 [BIG CHANGE] — PRE-STAGE-3 HARDENING: Stage 2 final fixes
+
+**Context.** Final hardening of the frozen Stage 2 baseline. No Stage 3 features. Three fixes.
+
+**Detailed technical explanation.**
+
+- **FIX 1 — import bypass removed.** `importWallet()` no longer accepts `verify?: boolean`.
+  `ImportWalletOptions` has no disable option; `ImportResult.ownership` is now always present.
+  Ownership verification ALWAYS runs (a failure rejects before anything is persisted). Guards:
+  runtime test (no `verify` key on options), compile-time `@ts-expect-error` guard, spy test that
+  `verifyOwnership` is always invoked, and a test that a failed verification leaves the registry
+  and keystore empty.
+- **FIX 2 — explicit persistent identity storage.** `createPrivateIdentity(input, storage)` now
+  requires an explicit storage — no silent ephemeral default. Added
+  `createBrowserPrivateIdentityStorage()` (localStorage, the normal app path — identities survive
+  reloads) and `createMemoryPrivateIdentityStorage(backing?)` (explicit ephemeral/tests). Added
+  `validatePrivateIdentity()` integrity check (rejects records carrying `viewingKey`/secret
+  fields or an `id` inconsistent with owner+purpose); `readPrivateIdentities` drops invalid
+  records. Documented `id` (public app identifier) vs STRK20 shadow commitment semantics and the
+  explicit "not anonymous/unlinkable" disclaimer.
+- **FIX 3 — network-scoped keystore.** The Stage 2 keystore key now encodes the network:
+  `orrange_wallet_v2_keystore_<network>_<walletId>` (canonical storage identity
+  `scopedWalletIdFor(network, walletId) = "${network}:${walletId}"`). Same account address on two
+  networks can no longer share a keystore. `readWalletKeystore`/`writeWalletKeystore`/
+  `clearWalletById`/`migrateLegacyWallet` updated; wallet core writes/reads the network-scoped key.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 57 files / **550 tests** pass (12 new
+regression tests); `npm run build` succeeds. Real Sepolia integration tests still pass.

@@ -192,15 +192,21 @@ our wallet without changing their address, while gaining STRK20 privacy.
 3. Ready: derive the expected address; a user-provided address must match (reject otherwise);
    Braavos: the user's existing address is required;
 4. probe deployment (Ready: `deployed`/`new-counterfactual`; Braavos must already be deployed);
-5. verify ownership on-chain; mismatches REJECT — never silently repaired;
+5. **verify ownership on-chain — MANDATORY.** There is no `verify: false` and no other way to
+   disable verification; the public `ImportWalletOptions` has no bypass option. A verification
+   failure rejects the import before anything is persisted (compile-time + runtime guards);
 6. encrypt into the standard Wallet Core keystore (AES-GCM + PBKDF2) and persist;
 7. discard temporary input.
 
 ### 13c. Storage / multi-wallet
 
 `src/wallet/storage.ts` gained a registry scoped by **walletId (= canonical address) + network**:
-`orrange_wallet_v2_registry_<network>` entries + `orrange_wallet_v2_keystore_<walletId>`.
-Imported wallets can never overwrite another wallet. Legacy Stage 1 keys are preserved and
+`orrange_wallet_v2_registry_<network>` entries + **network-scoped** keystores
+`orrange_wallet_v2_keystore_<network>_<walletId>`. The NETWORK is encoded in the keystore key
+itself, so the same account address on two networks (e.g. Sepolia vs Mainnet) NEVER shares a
+keystore — `scopedWalletIdFor(network, walletId) = "${network}:${walletId}"` is the canonical
+storage identity. Imported wallets can never overwrite another wallet, and clearing one network's
+wallet leaves the other network's wallet untouched. Legacy Stage 1 keys are preserved and
 migrated into the registry on first use (`migrateLegacyWallet`).
 
 ### 13d. Private identity
@@ -211,6 +217,21 @@ REAL vendored STRK20 SDK shadow-account commitments (`ShadowAccountsBuilder.part
 `commitment(nonce)`), computed locally. The viewing key is accepted transiently and **never
 persisted or logged**; only public commitments are stored. Identities dedupe by (owner, purpose)
 and can be retired.
+
+**Explicit, persistent storage:** `createPrivateIdentity(input, storage)` requires an explicit
+storage argument — wallet identity state is never silently defaulted to ephemeral memory. The
+normal application path is `createBrowserPrivateIdentityStorage()` (localStorage-backed), so an
+identity created with it survives reloads/re-opens; `createMemoryPrivateIdentityStorage()` is the
+explicit ephemeral option for tests. Records are validated on read: malformed or tampered records
+(e.g. a stray `viewingKey`/secret field, or an `id` inconsistent with `owner`+`purpose`) are
+dropped, never surfaced.
+
+**Naming — `id` vs STRK20 shadow commitment:** `id` is the public application-level identity
+identifier (`poseidon(owner, purpose)`) and is NOT a cryptographic anonymity primitive.
+`partialCommitment`/`commitmentNonce0` are the actual STRK20 privacy primitives derived by the
+SDK from owner + viewing key + anonymizer + dapp name. `purpose` is metadata/namespacing for this
+app; it is not automatically a cryptographic shadow-account domain unless the SDK inputs
+(`dappName`) make it so. This stage does NOT claim identities are anonymous or unlinkable.
 
 Key hierarchy (never conflated):
 `MASTER WALLET KEY → controls Starknet account` · `STRK20 VIEWING KEY → discovers private notes` ·
@@ -224,7 +245,7 @@ STRK20 adapter's user from an imported wallet's account/signer:
 
 ### 13f. Stage 2 verification
 
-`npm run typecheck` clean; `npm test` → 57 files / 538 tests; `npm run build` succeeds.
+`npm run typecheck` clean; `npm test` → 57 files / 550 tests; `npm run build` succeeds.
 Includes real Starknet Sepolia integration tests (skip when the public RPC is unreachable):
 Braavos classes declared, Ready counterfactual probing, and SRC-5 ownership rejection against a
 real deployed account with a throwaway key.

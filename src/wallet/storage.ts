@@ -111,8 +111,10 @@ export function clearWallet(storage: WalletStorage, network: string): void {
 //
 // Storage is scoped by WALLET IDENTITY + NETWORK (not just network) so an imported Ready/Braavos
 // wallet can never overwrite another wallet. A wallet identity is its canonical account address
-// (unique per account). The encrypted keystore lives under `orrange_wallet_v2_keystore_<walletId>`.
-// The legacy single-wallet keys above are preserved for Stage 1 compatibility.
+// (unique per account). The encrypted keystore lives under
+// `orrange_wallet_v2_keystore_<network>_<walletId>` — the NETWORK is encoded in the storage key
+// itself, so the same account address on two networks (e.g. Sepolia vs Mainnet) NEVER shares a
+// keystore. The legacy single-wallet keys above are preserved for Stage 1 compatibility.
 // ────────────────────────────────────────────────────────────────────────────────────────────
 
 export const REGISTRY_PREFIX = "orrange_wallet_v2_registry";
@@ -121,6 +123,11 @@ export const WALLET_KEYSTORE_PREFIX = "orrange_wallet_v2_keystore";
 /** Wallet identity = canonical (lowercased, unpadded) account address. */
 export function walletIdFor(address: string): string {
   return "0x" + BigInt(address).toString(16);
+}
+
+/** Storage-scoped wallet identity: `network:walletId`. Encodes the network boundary explicitly. */
+export function scopedWalletIdFor(network: string, walletId: string): string {
+  return `${network}:${walletId}`;
 }
 
 export interface WalletRegistryEntry {
@@ -138,8 +145,8 @@ function registryKeyFor(network: string): string {
   return `${REGISTRY_PREFIX}_${network}`;
 }
 
-function walletKeystoreKeyFor(walletId: string): string {
-  return `${WALLET_KEYSTORE_PREFIX}_${walletId}`;
+function walletKeystoreKeyFor(network: string, walletId: string): string {
+  return `${WALLET_KEYSTORE_PREFIX}_${network}_${walletId}`;
 }
 
 export function readWalletRegistry(storage: WalletStorage, network: string): WalletRegistryEntry[] {
@@ -171,17 +178,17 @@ export function removeWalletRegistryEntry(storage: WalletStorage, network: strin
   writeWalletRegistry(storage, network, entries);
 }
 
-export function readWalletKeystore(storage: WalletStorage, walletId: string): string | null {
-  return storage.getItem(walletKeystoreKeyFor(walletId));
+export function readWalletKeystore(storage: WalletStorage, network: string, walletId: string): string | null {
+  return storage.getItem(walletKeystoreKeyFor(network, walletId));
 }
 
-export function writeWalletKeystore(storage: WalletStorage, walletId: string, keystoreJson: string): void {
-  storage.setItem(walletKeystoreKeyFor(walletId), keystoreJson);
+export function writeWalletKeystore(storage: WalletStorage, network: string, walletId: string, keystoreJson: string): void {
+  storage.setItem(walletKeystoreKeyFor(network, walletId), keystoreJson);
 }
 
 export function clearWalletById(storage: WalletStorage, network: string, walletId: string): void {
   removeWalletRegistryEntry(storage, network, walletId);
-  storage.removeItem(walletKeystoreKeyFor(walletId));
+  storage.removeItem(walletKeystoreKeyFor(network, walletId));
 }
 
 /**
@@ -196,7 +203,7 @@ export function migrateLegacyWallet(storage: WalletStorage, network: string): Wa
   const walletId = walletIdFor(legacyPublic.address);
   const registry = readWalletRegistry(storage, network);
   if (registry.some((e) => e.walletId === walletId)) return registry.find((e) => e.walletId === walletId) ?? null;
-  writeWalletKeystore(storage, walletId, legacyKeystore);
+  writeWalletKeystore(storage, network, walletId, legacyKeystore);
   const entry: WalletRegistryEntry = {
     walletId,
     accountType: legacyPublic.accountType,

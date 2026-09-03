@@ -196,7 +196,7 @@ function persist(storage: WalletStorage, network: WalletNetworkId, wallet: Unloc
   });
   writeKeystore(storage, network, serializeKeystore(wallet.keystore));
   // Stage 2 registry: scoped by wallet identity + network; never overwrites another wallet.
-  writeWalletKeystore(storage, wallet.walletId, serializeKeystore(wallet.keystore));
+  writeWalletKeystore(storage, wallet.network, wallet.walletId, serializeKeystore(wallet.keystore));
   const entry: WalletRegistryEntry = {
     walletId: wallet.walletId,
     accountType: wallet.accountType,
@@ -243,7 +243,7 @@ export async function createWallet(options: CreateWalletOptions): Promise<Unlock
 export async function unlockWallet(options: UnlockWalletOptions): Promise<UnlockedWallet> {
   const storage = options.storage ?? defaultStorage();
   const raw = options.walletId
-    ? readWalletKeystore(storage, options.walletId)
+    ? readWalletKeystore(storage, options.network, options.walletId)
     : readKeystore(storage, options.network);
   if (!raw) {
     throw new Error(
@@ -298,20 +298,21 @@ export interface ImportWalletOptions {
   storage?: WalletStorage;
   provider?: RpcProvider;
   adapterFactory?: (publicKey: string, address?: string) => AccountAdapter;
-  /** Run on-chain ownership verification (default true). */
-  verify?: boolean;
 }
 
 export interface ImportResult {
   wallet: UnlockedWallet;
   /** "existing" when the account is already deployed; "new-counterfactual" for an undeployed Ready account. */
   accountKind: "existing" | "new-counterfactual";
-  /** Result of ownership verification (null only when `verify` is disabled). */
-  ownership: OwnershipVerification | null;
+  /** Result of ownership verification. ALWAYS present — import cannot bypass verification. */
+  ownership: OwnershipVerification;
 }
 
 /**
  * Import an existing Starknet wallet (Ready / Braavos) without changing its address.
+ *
+ * Ownership verification is MANDATORY and cannot be disabled: there is no production path that
+ * imports a wallet without proving the key controls the account.
  *
  * Security properties:
  *  - the raw imported secret is validated and canonicalized locally, encrypted into the Wallet
@@ -354,16 +355,14 @@ export async function importWallet(options: ImportWalletOptions): Promise<Import
     );
   }
 
-  // Ownership verification — the definitive gate.
-  let ownership: OwnershipVerification | null = null;
-  if (options.verify !== false) {
-    const account = new Account({ provider, address: adapter.address, signer: new Signer(secret), cairoVersion: "1" });
-    ownership = await adapter.verifyOwnership(account, provider);
-    if (!ownership.verified) {
-      throw new Error(
-        `Import verification failed for ${options.accountType}: ${ownership.reason ?? "ownership could not be proven."}`,
-      );
-    }
+  // Ownership verification — the definitive gate. ALWAYS runs; a failure rejects the import
+  // before anything is persisted.
+  const account = new Account({ provider, address: adapter.address, signer: new Signer(secret), cairoVersion: "1" });
+  const ownership = await adapter.verifyOwnership(account, provider);
+  if (!ownership.verified) {
+    throw new Error(
+      `Import verification failed for ${options.accountType}: ${ownership.reason ?? "ownership could not be proven."}`,
+    );
   }
 
   // Encrypt into the same keystore model as newly-created wallets; discard the raw input.

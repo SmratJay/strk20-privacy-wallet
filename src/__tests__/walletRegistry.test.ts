@@ -8,8 +8,10 @@ import { describe, it, expect } from "vitest";
 import {
   createMemoryStorage,
   walletIdFor,
+  scopedWalletIdFor,
   readWalletRegistry,
   readWalletKeystore,
+  writeWalletKeystore,
   upsertWalletRegistryEntry,
   removeWalletRegistryEntry,
   clearWalletById,
@@ -81,14 +83,44 @@ describe("registry scoping", () => {
     const storage = createMemoryStorage();
     upsertWalletRegistryEntry(storage, "sepolia", entry({ walletId: "0xaaa" }));
     upsertWalletRegistryEntry(storage, "sepolia", entry({ walletId: "0xbbb" }));
-    storage.setItem("orrange_wallet_v2_keystore_0xaaa", "{}");
-    storage.setItem("orrange_wallet_v2_keystore_0xbbb", "{}");
+    storage.setItem("orrange_wallet_v2_keystore_sepolia_0xaaa", "{}");
+    storage.setItem("orrange_wallet_v2_keystore_sepolia_0xbbb", "{}");
 
     clearWalletById(storage, "sepolia", "0xaaa");
 
     expect(readWalletRegistry(storage, "sepolia")).toHaveLength(1);
-    expect(readWalletKeystore(storage, "0xaaa")).toBeNull();
-    expect(readWalletKeystore(storage, "0xbbb")).not.toBeNull();
+    expect(readWalletKeystore(storage, "sepolia", "0xaaa")).toBeNull();
+    expect(readWalletKeystore(storage, "sepolia", "0xbbb")).not.toBeNull();
+  });
+
+  it("same walletId on two networks produces independent keystore records", () => {
+    const storage = createMemoryStorage();
+    const walletId = walletIdFor("0xabc");
+    // Identical account address on two networks → identical walletId, but isolated keystores.
+    writeWalletKeystore(storage, "sepolia", walletId, '{"network":"sepolia"}');
+    writeWalletKeystore(storage, "mainnet", walletId, '{"network":"mainnet"}');
+
+    expect(readWalletKeystore(storage, "sepolia", walletId)).toBe('{"network":"sepolia"}');
+    expect(readWalletKeystore(storage, "mainnet", walletId)).toBe('{"network":"mainnet"}');
+    // Cross-network reads never leak into each other.
+    expect(storage.getItem("orrange_wallet_v2_keystore_sepolia_" + walletId)).not.toBe(
+      storage.getItem("orrange_wallet_v2_keystore_mainnet_" + walletId),
+    );
+  });
+
+  it("clearing one network's wallet leaves the other network's wallet untouched", () => {
+    const storage = createMemoryStorage();
+    const walletId = walletIdFor("0xabc");
+    writeWalletKeystore(storage, "sepolia", walletId, '{"network":"sepolia"}');
+    writeWalletKeystore(storage, "mainnet", walletId, '{"network":"mainnet"}');
+    upsertWalletRegistryEntry(storage, "sepolia", entry({ walletId, network: "sepolia" }));
+    upsertWalletRegistryEntry(storage, "mainnet", entry({ walletId, network: "mainnet" }));
+
+    clearWalletById(storage, "sepolia", walletId);
+
+    expect(readWalletKeystore(storage, "sepolia", walletId)).toBeNull();
+    expect(readWalletKeystore(storage, "mainnet", walletId)).not.toBeNull();
+    expect(readWalletRegistry(storage, "mainnet")).toHaveLength(1);
   });
 });
 
@@ -109,8 +141,8 @@ describe("legacy migration", () => {
     expect(migrated).not.toBeNull();
     expect(migrated?.walletId).toBe(walletIdFor("0xabc"));
     expect(readWalletRegistry(storage, "sepolia")).toHaveLength(1);
-    // The legacy keystore was copied to the walletId-scoped key.
-    expect(readWalletKeystore(storage, walletIdFor("0xabc"))).toBe('{"version":1}');
+    // The legacy keystore was copied to the network-scoped walletId keystore.
+    expect(readWalletKeystore(storage, "sepolia", walletIdFor("0xabc"))).toBe('{"version":1}');
     // Migration is idempotent.
     expect(migrateLegacyWallet(storage, "sepolia")).not.toBeNull();
     expect(readWalletRegistry(storage, "sepolia")).toHaveLength(1);
@@ -134,7 +166,7 @@ describe("create/import registry integration", () => {
 
     expect(created.walletId).not.toBe(imported.walletId);
     expect(readWalletRegistry(storage, "sepolia")).toHaveLength(2);
-    expect(readWalletKeystore(storage, created.walletId)).not.toBeNull();
-    expect(readWalletKeystore(storage, imported.walletId)).not.toBeNull();
+    expect(readWalletKeystore(storage, "sepolia", created.walletId)).not.toBeNull();
+    expect(readWalletKeystore(storage, "sepolia", imported.walletId)).not.toBeNull();
   });
 });

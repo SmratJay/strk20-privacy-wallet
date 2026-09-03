@@ -14,7 +14,9 @@ import {
   listWallets,
   lockWallet,
   unlockWallet,
+  ReadyAccountAdapter,
   READY_SEPOLIA_CLASS_HASH,
+  type ImportWalletOptions,
 } from "../wallet/index";
 import { buildStrk20User } from "../privacy/identity";
 import type { PrivyStrk20User } from "../privacy/adapter";
@@ -239,7 +241,7 @@ describe("import security + storage", () => {
       provider: mockProvider(),
     });
 
-    const keystoreJson = readWalletKeystore(storage, result.wallet.walletId)!;
+    const keystoreJson = readWalletKeystore(storage, "sepolia", result.wallet.walletId)!;
     expect(keystoreJson).not.toContain(secret);
     const registry = readWalletRegistry(storage, "sepolia");
     expect(JSON.stringify(registry)).not.toContain(secret);
@@ -303,5 +305,83 @@ describe("STRK20 signer consumption (PART J)", () => {
       message: { message: 1 },
     } as never);
     expect(sig).toBeDefined();
+  });
+});
+
+describe("import ownership verification is mandatory (FIX 1)", () => {
+  it("always calls ownership verification — there is no bypass", async () => {
+    const storage = createMemoryStorage();
+    const secret = canonicalizeSecret(generateSecretKey());
+    const pubKey = getPublicKey(secret);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    const verifySpy = vi
+      .spyOn(adapter, "verifyOwnership")
+      .mockResolvedValue({ verified: true, method: "is_valid_signature" });
+
+    const result = await importWallet({
+      network: "sepolia",
+      accountType: "ready-v0.4.0",
+      secret,
+      password: PASSWORD,
+      storage,
+      provider: mockProvider(),
+      adapterFactory: () => adapter,
+    });
+
+    expect(verifySpy).toHaveBeenCalledTimes(1);
+    expect(result.ownership.verified).toBe(true);
+  });
+
+  it("rejects import and persists nothing when ownership verification fails", async () => {
+    const storage = createMemoryStorage();
+    const secret = canonicalizeSecret(generateSecretKey());
+    const pubKey = getPublicKey(secret);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    vi.spyOn(adapter, "verifyOwnership").mockResolvedValue({
+      verified: false,
+      method: "is_valid_signature",
+      reason: "ownership rejected on-chain",
+    });
+
+    await expect(
+      importWallet({
+        network: "sepolia",
+        accountType: "ready-v0.4.0",
+        secret,
+        password: PASSWORD,
+        storage,
+        provider: mockProvider(),
+        adapterFactory: () => adapter,
+      }),
+    ).rejects.toThrow(/verification failed/i);
+
+    // Nothing persisted: registry empty, no network-scoped keystore.
+    expect(readWalletRegistry(storage, "sepolia")).toHaveLength(0);
+    expect(readWalletKeystore(storage, "sepolia", walletIdFor(adapter.address))).toBeNull();
+  });
+
+  it("does not expose a public option to disable verification", () => {
+    const options: ImportWalletOptions = {
+      network: "sepolia",
+      accountType: "ready-v0.4.0",
+      secret: "0x1",
+      password: "long-enough-password",
+    };
+    expect("verify" in options).toBe(false);
+    expect(Object.keys(options)).not.toContain("verify");
+  });
+
+  it("compiles only when `verify` is rejected as an import option", () => {
+    // Compile-time guard: `verify` must NOT be a valid option. If it is ever re-added, tsc
+    // reports an unused @ts-expect-error and the typecheck fails.
+    const opts: ImportWalletOptions = {
+      network: "sepolia",
+      accountType: "ready-v0.4.0",
+      secret: "0x1",
+      password: "long-enough-password",
+      // @ts-expect-error verify is not a production import option
+      verify: false,
+    };
+    void opts;
   });
 });
