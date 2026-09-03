@@ -2,7 +2,7 @@ import type { Call } from "starknet";
 import { RpcProvider } from "starknet";
 import { getNetworkConfig } from "@/config/networks";
 import type { TokenInfo } from "@/config/networks";
-import { privacyService } from "@/services/privacyService";
+import { chainBalances } from "@/chains/publicBalances";
 import {
   createWallet,
   importWallet,
@@ -568,7 +568,7 @@ export class WalletRuntime {
     }
     const guard = this.captureGuard();
     const networkConfig = getNetworkConfig(this.view.network);
-    const results = await privacyService.fetchBalances(session.address, undefined, networkConfig);
+    const results = await chainBalances.fetchBalances(session.address, networkConfig);
     // Ignore stale results (wallet/network switched or locked while awaiting).
     if (!this.isCurrent(guard)) return [];
     const rows: PublicBalanceRow[] = results.map((entry) => ({

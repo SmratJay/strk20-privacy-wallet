@@ -9,8 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "circuit:build": "bash circuits/build.sh",
-    "circuit:test": "vitest run tests/circuits"
+    "circuit:build": "bash circuits/build.sh"
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^4.2.0",

@@ -63,7 +63,7 @@ vi.mock("@/privacy/strk20", async (importOriginal) => {
   return { ...actual, Strk20Adapter: MockAdapter };
 });
 
-import { privacyService } from "@/services/privacyService";
+import { chainBalances } from "@/chains/publicBalances";
 
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
@@ -132,7 +132,7 @@ describe("runtime privacy capability", () => {
     process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
     process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
     mockState.reset();
-    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>)?.mockReset?.();
+    (chainBalances.fetchBalances as unknown as ReturnType<typeof vi.fn>)?.mockReset?.();
   });
 
   afterEach(() => {

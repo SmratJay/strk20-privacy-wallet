@@ -126,11 +126,10 @@ export default function DocsEnvironmentPage() {
       <h2 id="optional">Optional subsystems</h2>
       <p>
         The repository also ships a memecoin launchpad (<code>NEXT_PUBLIC_UMBRA_*</code>, Sepolia)
-        and an extended exchange integration (<code>NEXT_PUBLIC_EXTENDED_*</code>, mainnet) with
-        their own server-only credentials (<code>EXTENDED_API_KEY</code>,{' '}
-        <code>EXTENDED_STARK_PRIVATE_KEY</code>, …). These are documented in{' '}
-        <code>docs/UMBRA_LAUNCH.md</code> and are <em>not</em> required to run the core wallet or
-        the treasury copilot.
+        used by <code>/explore</code>. Launchpad create/trade and extended/perps trading are
+        currently gated pending a Wallet Core migration and are <em>not</em> required to run the
+        core wallet or the treasury copilot. Historical launchpad documentation lives in{' '}
+        <code>docs/UMBRA_LAUNCH.md</code>.
       </p>
     </DocsLayout>
   );

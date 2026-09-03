@@ -13,13 +13,12 @@ import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
 import type { UnlockedWallet } from "../wallet";
 
 // Mock the public-balance service so we can control when its promise resolves (stale timing).
-vi.mock("@/services/privacyService", () => ({
-  privacyService: {
+vi.mock("@/chains/publicBalances", () => ({
+  chainBalances: {
     fetchBalances: vi.fn(),
   },
 }));
-
-import { privacyService } from "@/services/privacyService";
+import { chainBalances } from "@/chains/publicBalances";
 
 const PASSWORD = "correct horse battery staple";
 const VALID_SRC5 = ["0x56614c4944"];
@@ -65,7 +64,7 @@ async function createWallet(runtime: WalletRuntime): Promise<void> {
 
 describe("stale async state protection", () => {
   beforeEach(() => {
-    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReset();
+    (chainBalances.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReset();
   });
 
   it("ignores a stale deployment result after lock", async () => {
@@ -117,7 +116,7 @@ describe("stale async state protection", () => {
     await createWallet(runtime);
 
     const d = deferred<unknown[]>();
-    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
+    (chainBalances.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
 
     const pending = runtime.refreshPublicBalances();
     runtime.lock();
@@ -142,7 +141,7 @@ describe("stale async state protection", () => {
     expect(runtime.getState().account?.walletId).toBe(runtime.getState().wallets[0]!.walletId);
 
     const d = deferred<unknown[]>();
-    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
+    (chainBalances.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
     const pending = runtime.refreshPublicBalances();
 
     runtime.lock();
@@ -173,7 +172,7 @@ describe("stale async state protection", () => {
     await createWallet(runtime);
 
     const d = deferred<unknown[]>();
-    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
+    (chainBalances.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
     const pending = runtime.refreshPublicBalances();
 
     // Only Sepolia is enabled today, so a real network switch is unreachable through the public
