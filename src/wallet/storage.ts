@@ -186,9 +186,27 @@ export function writeWalletKeystore(storage: WalletStorage, network: string, wal
   storage.setItem(walletKeystoreKeyFor(network, walletId), keystoreJson);
 }
 
+/**
+ * Delete a wallet from the AUTHORITATIVE v2 store (registry entry + network-scoped keystore).
+ *
+ * Legacy mirror handling: if the deleted wallet IS the legacy Stage 1 primary, its legacy mirror
+ * is cleared too, so a deleted wallet never leaves behind a misleading active copy. If the deleted
+ * wallet is NOT the primary, the legacy mirror is left untouched. Deleting a wallet never mutates
+ * any other wallet. Deleting a nonexistent wallet is idempotent (no-op).
+ */
 export function clearWalletById(storage: WalletStorage, network: string, walletId: string): void {
   removeWalletRegistryEntry(storage, network, walletId);
   storage.removeItem(walletKeystoreKeyFor(network, walletId));
+  // If the deleted wallet was the legacy primary, clear its compatibility mirror too.
+  const legacyPublic = readPublicState(storage, network);
+  if (legacyPublic && walletIdFor(legacyPublic.address) === walletId) {
+    clearLegacyPrimary(storage, network);
+  }
+}
+
+function clearLegacyPrimary(storage: WalletStorage, network: string): void {
+  storage.removeItem(publicKeyFor(network));
+  storage.removeItem(keystoreKeyFor(network));
 }
 
 /**

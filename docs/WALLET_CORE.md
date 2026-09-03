@@ -198,16 +198,42 @@ our wallet without changing their address, while gaining STRK20 privacy.
 6. encrypt into the standard Wallet Core keystore (AES-GCM + PBKDF2) and persist;
 7. discard temporary input.
 
-### 13c. Storage / multi-wallet
+### 13c. Storage / multi-wallet — AUTHORITY MODEL
 
-`src/wallet/storage.ts` gained a registry scoped by **walletId (= canonical address) + network**:
-`orrange_wallet_v2_registry_<network>` entries + **network-scoped** keystores
-`orrange_wallet_v2_keystore_<network>_<walletId>`. The NETWORK is encoded in the keystore key
-itself, so the same account address on two networks (e.g. Sepolia vs Mainnet) NEVER shares a
-keystore — `scopedWalletIdFor(network, walletId) = "${network}:${walletId}"` is the canonical
-storage identity. Imported wallets can never overwrite another wallet, and clearing one network's
-wallet leaves the other network's wallet untouched. Legacy Stage 1 keys are preserved and
-migrated into the registry on first use (`migrateLegacyWallet`).
+**The v2 registry + network-scoped keystore is the authoritative Stage 2 wallet store:**
+
+```text
+                 V2 AUTHORITATIVE
+                       │
+        ┌──────────────┴──────────────┐
+        │                             │
+ registry(network)             keystore(network, walletId)
+        │
+        └──────── exact wallet ───────┘
+
+LEGACY
+  ↓
+compatibility / migration only
+  ↓
+never allowed to silently overwrite V2
+```
+
+- `orrange_wallet_v2_registry_<network>` entries + **network-scoped** keystores
+  `orrange_wallet_v2_keystore_<network>_<walletId>`. The NETWORK is encoded in the keystore key
+  itself, so the same account address on two networks (e.g. Sepolia vs Mainnet) NEVER shares a
+  keystore — `scopedWalletIdFor(network, walletId) = "${network}:${walletId}"` is the canonical
+  storage identity.
+- **Legacy Stage 1 keys are compatibility-only.** `create`/`import` bootstrap them ONCE (when no
+  legacy primary exists) so the first wallet keeps the legacy path working; ordinary create/import
+  of additional wallets NEVER rotates the legacy primary.
+- `unlockWallet({ network, walletId, password })` loads the EXACT requested wallet from v2. The
+  `unlockWallet({ network, password })` no-walletId path is a COMPATIBILITY-ONLY path (reads the
+  legacy primary); new application code must pass `walletId`.
+- `clearWalletById(network, walletId)` deletes from v2 AND clears the legacy mirror when the
+  deleted wallet IS the legacy primary — a deleted wallet never leaves a misleading active copy.
+  Deleting one wallet never mutates another; deleting a nonexistent wallet is a safe no-op.
+- Legacy Stage 1 keys are migrated into the registry on first use (`migrateLegacyWallet`); the
+  migrated legacy primary is not silently replaced by later creates/imports.
 
 ### 13d. Private identity
 
@@ -233,6 +259,13 @@ SDK from owner + viewing key + anonymizer + dapp name. `purpose` is metadata/nam
 app; it is not automatically a cryptographic shadow-account domain unless the SDK inputs
 (`dappName`) make it so. This stage does NOT claim identities are anonymous or unlinkable.
 
+**Dedupe semantics (explicit):** there is at most one record per `(owner, purpose)` — re-creating
+with the same `(owner, purpose)` REPLACES the record (including a retired one), and the
+commitment fields always correspond to the most recently created record. Records are validated on
+read: malformed/tampered records are dropped, and a record is only surfaced under its OWN
+namespace — `record.owner` must equal the queried owner and `record.chain` must equal the queried
+chain (the storage key alone is never trusted).
+
 Key hierarchy (never conflated):
 `MASTER WALLET KEY → controls Starknet account` · `STRK20 VIEWING KEY → discovers private notes` ·
 `PRIVATE EXECUTION ID → isolates one privacy context`.
@@ -245,7 +278,7 @@ STRK20 adapter's user from an imported wallet's account/signer:
 
 ### 13f. Stage 2 verification
 
-`npm run typecheck` clean; `npm test` → 57 files / 550 tests; `npm run build` succeeds.
+`npm run typecheck` clean; `npm test` → 57 files / 563 tests; `npm run build` succeeds.
 Includes real Starknet Sepolia integration tests (skip when the public RPC is unreachable):
 Braavos classes declared, Ready counterfactual probing, and SRC-5 ownership rejection against a
 real deployed account with a throwaway key.

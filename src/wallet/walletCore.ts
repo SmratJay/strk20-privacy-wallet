@@ -18,6 +18,7 @@ import {
   defaultStorage,
   migrateLegacyWallet,
   readKeystore,
+  readPublicState,
   readWalletKeystore,
   readWalletRegistry,
   updateDeploymentStatus,
@@ -184,18 +185,18 @@ function buildUnlocked(
   };
 }
 
+/**
+ * Persist a wallet into the AUTHORITATIVE Stage 2 store: the network-scoped v2 registry plus the
+ * network-scoped walletId keystore.
+ *
+ * The legacy Stage 1 keys (`orrange_wallet_public_<network>` / `orrange_wallet_keystore_<network>`)
+ * are COMPATIBILITY-ONLY. They are written here ONLY as a deterministic bootstrap when no legacy
+ * primary exists yet — so the FIRST wallet keeps the legacy `unlockWallet({ network, password })`
+ * path working. Ordinary create/import of additional wallets NEVER rotates the legacy primary.
+ * After this bootstrap, only `migrateLegacyWallet()`/`clearWalletById()` touch the legacy keys.
+ */
 function persist(storage: WalletStorage, network: WalletNetworkId, wallet: UnlockedWallet, source: "created" | "imported"): void {
-  // Legacy Stage 1 mirror (primary wallet) for backward compatibility.
-  writePublicState(storage, network, {
-    accountType: wallet.accountType,
-    address: wallet.address,
-    publicKey: wallet.publicKey,
-    network,
-    deploymentStatus: "unknown",
-    createdAt: wallet.keystore.createdAt,
-  });
-  writeKeystore(storage, network, serializeKeystore(wallet.keystore));
-  // Stage 2 registry: scoped by wallet identity + network; never overwrites another wallet.
+  // Stage 2 authoritative store.
   writeWalletKeystore(storage, wallet.network, wallet.walletId, serializeKeystore(wallet.keystore));
   const entry: WalletRegistryEntry = {
     walletId: wallet.walletId,
@@ -208,6 +209,20 @@ function persist(storage: WalletStorage, network: WalletNetworkId, wallet: Unloc
     source,
   };
   upsertWalletRegistryEntry(storage, network, entry);
+
+  // Legacy compatibility bootstrap (once): only if no legacy primary exists yet.
+  const hasLegacyPrimary = readPublicState(storage, network) !== null || readKeystore(storage, network) !== null;
+  if (!hasLegacyPrimary) {
+    writePublicState(storage, network, {
+      accountType: wallet.accountType,
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+      network,
+      deploymentStatus: "unknown",
+      createdAt: wallet.keystore.createdAt,
+    });
+    writeKeystore(storage, network, serializeKeystore(wallet.keystore));
+  }
 }
 
 /**
@@ -237,8 +252,12 @@ export async function createWallet(options: CreateWalletOptions): Promise<Unlock
 /**
  * Load / unlock an existing wallet from the encrypted keystore. Reconstructs the signer and
  * account from the decrypted secret and verifies the address/public-key relationship. Throws
- * on a wrong password or a tampered keystore. Resolves the Stage 2 registry (by walletId) or the
- * legacy Stage 1 primary wallet.
+ * on a wrong password or a tampered keystore.
+ *
+ * AUTHORITY: passing `walletId` loads the EXACT requested wallet from the authoritative v2
+ * registry keystore (`orrange_wallet_v2_keystore_<network>_<walletId>`). Omitting `walletId`
+ * falls back to the legacy Stage 1 primary key — this is a COMPATIBILITY-ONLY path for existing
+ * callers; new application code must always pass `walletId`.
  */
 export async function unlockWallet(options: UnlockWalletOptions): Promise<UnlockedWallet> {
   const storage = options.storage ?? defaultStorage();
@@ -296,8 +315,17 @@ export interface ImportWalletOptions {
    */
   address?: string;
   storage?: WalletStorage;
-  provider?: RpcProvider;
+  /**
+   * TEST SEAM ONLY. Injects a deterministic account adapter so tests can exercise the full import
+   * pipeline without network access. It NEVER disables ownership verification — `importWallet()`
+   * always calls `adapter.verifyOwnership(...)` regardless of which adapter is supplied.
+   */
   adapterFactory?: (publicKey: string, address?: string) => AccountAdapter;
+  /**
+   * TEST SEAM ONLY. Injects a provider for deterministic on-chain probing in tests. It does NOT
+   * weaken or bypass ownership verification.
+   */
+  provider?: RpcProvider;
 }
 
 export interface ImportResult {

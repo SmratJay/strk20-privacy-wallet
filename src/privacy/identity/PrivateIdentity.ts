@@ -102,6 +102,11 @@ function toFelt(value: bigint | string): string {
   return typeof value === 'string' && /^0x/i.test(value) ? value : '0x' + BigInt(value).toString(16);
 }
 
+/** Canonical felt for comparisons: `0x` + lowercase unpadded hex. */
+function canonicalFelt(value: bigint | string): string {
+  return '0x' + BigInt(value).toString(16);
+}
+
 /** Stable, public identity id — never derived from the viewing key. */
 export function privateIdentityId(owner: string, purpose: string): string {
   return hash.computePoseidonHash(BigInt(owner), hash.starknetKeccak(purpose));
@@ -178,8 +183,14 @@ export function readPrivateIdentities(
   try {
     const parsed = JSON.parse(raw) as PrivateIdentity[];
     if (!Array.isArray(parsed)) return [];
-    // Drop malformed/tampered records (e.g. a stray viewingKey field) rather than surface them.
-    return parsed.filter((record) => validatePrivateIdentity(record) === null);
+    return parsed.filter((record) => {
+      if (validatePrivateIdentity(record) !== null) return false;
+      // The record must belong to THIS query namespace: never surface a record that claims a
+      // different owner or a different chain, even if it sat in this storage key (tampering).
+      if (canonicalFelt(record.owner) !== canonicalFelt(owner)) return false;
+      if (record.chain !== chain) return false;
+      return true;
+    });
   } catch {
     return [];
   }
@@ -198,6 +209,14 @@ function writePrivateIdentities(
  * Create a private identity. `storage` is REQUIRED and explicit: wallet identity state is never
  * silently defaulted to ephemeral memory. Use `createBrowserPrivateIdentityStorage()` for the
  * normal persistent application path, or an explicit memory store for tests.
+ *
+ * DEDUPE SEMANTICS (explicit): the identity `id` is `poseidon(owner, purpose)` — an
+ * application-level namespace identifier. Re-creating with the same `(owner, purpose)` REPLACES
+ * the existing record (including a retired one), so there is never more than one record per
+ * (owner, purpose) and the commitment fields always correspond to the MOST RECENTLY created
+ * record. The underlying STRK20 shadow commitment depends on (owner, viewingKey, anonymizer,
+ * poolContractAddress, dappName); `purpose` is metadata/namespacing for this app and is NOT
+ * claimed to cryptographically isolate shadow accounts on its own.
  */
 export async function createPrivateIdentity(
   input: CreatePrivateIdentityInput,

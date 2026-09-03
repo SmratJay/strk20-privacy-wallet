@@ -1382,3 +1382,44 @@ probing, and SRC-5 ownership rejection on a real deployed account with a throwaw
 
 **Verification.** `npm run typecheck` clean; `npm test` → 57 files / **550 tests** pass (12 new
 regression tests); `npm run build` succeeds. Real Sepolia integration tests still pass.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 10:28:11 IST
+
+### 🔴 [BIG CHANGE] — FINAL STAGE 2 HARDENING: storage authority, delete semantics, identity integrity
+
+**Context.** Last Stage 2 cleanup before Stage 3. No Stage 3 features. Final authority model.
+
+**Detailed technical explanation.**
+
+- **FIX 1 — v2 registry is authoritative.** `persist()` no longer rotates the legacy Stage 1
+  primary on every create/import. It writes the v2 registry + network-scoped walletId keystore and
+  bootstraps the legacy keys ONLY once (when no legacy primary exists), so the first wallet keeps
+  the legacy `unlockWallet({ network, password })` path. Creating/importing further wallets never
+  changes the legacy primary. `unlockWallet({ network, walletId, password })` always loads the
+  exact wallet; the no-walletId path is documented as compatibility-only.
+- **FIX 2 — unambiguous delete semantics.** `clearWalletById(network, walletId)` deletes from v2
+  and, when the deleted wallet IS the legacy primary, clears its legacy mirror too — a deleted
+  wallet never leaves a misleading active copy. Deleting a secondary leaves the primary (and its
+  legacy mirror) untouched. Deleting a nonexistent wallet is a safe no-op. Deleting Wallet A never
+  mutates Wallet B.
+- **FIX 3 — legacy never overwrites v2.** `persist`, `unlockWallet`, `migrateLegacyWallet`,
+  `clearWallet`, `clearWalletById`, `readPublicState`, `readKeystore` reviewed: legacy is
+  compatibility/migration only and is never silently written over the v2 store.
+- **FIX 4 — identity owner/chain namespace.** `readPrivateIdentities` now requires
+  `record.owner === queried owner` AND `record.chain === queried chain` (in addition to
+  `validatePrivateIdentity`), so a tampered/corrupt record placed under the wrong owner's storage
+  key is never surfaced under another owner's namespace.
+- **FIX 5 — dedupe semantics explicit.** Documented + tested: `createPrivateIdentity` with the
+  same `(owner, purpose)` REPLACES the record (including a retired one); at most one record per
+  (owner, purpose); commitment fields always reflect the most recent creation. `purpose` is NOT
+  claimed to cryptographically isolate shadow accounts.
+- **FIX 6 — import test seams documented.** `adapterFactory`/`provider` are marked TEST SEAM ONLY
+  and never disable ownership verification (regression test proves even with an injected adapter,
+  a failed `verifyOwnership` rejects and persists nothing).
+- **FIX 7 — docs.** `docs/WALLET_CORE.md` updated to the final authority model; legacy
+  no-walletId unlock documented as compatibility-only.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 57 files / **563 tests** pass (13 new);
+`npm run build` succeeds. Real Sepolia integration tests still pass.

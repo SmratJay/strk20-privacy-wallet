@@ -246,4 +246,115 @@ describe("identity record integrity (optional hardening)", () => {
     expect(validatePrivateIdentity(validRecord({ status: "bogus" }))).toMatch(/status/i);
     expect(validatePrivateIdentity(null)).toMatch(/not an object/);
   });
+
+  it("drops a record whose owner does not match the query namespace (FIX 4)", async () => {
+    const storage = memoryStorage();
+    // A record that belongs to OTHER_OWNER sits under OWNER's storage key (tampered/corrupt).
+    storage.setItem(
+      identityKey("sepolia", OWNER),
+      JSON.stringify([
+        {
+          id: privateIdentityId(OTHER_OWNER, "treasury"),
+          owner: OTHER_OWNER,
+          purpose: "treasury",
+          chain: "sepolia",
+          partialCommitment: "1",
+          commitmentNonce0: "2",
+          status: "active",
+          createdAt: 1,
+        },
+      ]),
+    );
+    // It must not be surfaced under OWNER's namespace (owner ≠ query owner).
+    expect(listPrivateIdentities(storage, "sepolia", OWNER)).toHaveLength(0);
+    // It is also not reachable under OTHER_OWNER's namespace (it was stored in the wrong key).
+    expect(listPrivateIdentities(storage, "sepolia", OTHER_OWNER)).toHaveLength(0);
+  });
+
+  it("drops a record whose chain does not match the query chain (FIX 4)", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      identityKey("sepolia", OWNER),
+      JSON.stringify([
+        {
+          id: privateIdentityId(OWNER, "treasury"),
+          owner: OWNER,
+          purpose: "treasury",
+          chain: "mainnet",
+          partialCommitment: "1",
+          commitmentNonce0: "2",
+          status: "active",
+          createdAt: 1,
+        },
+      ]),
+    );
+    expect(listPrivateIdentities(storage, "sepolia", OWNER)).toHaveLength(0);
+  });
+
+  it("accepts a valid owner + chain record (FIX 4)", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      identityKey("sepolia", OWNER),
+      JSON.stringify([validRecord()]),
+    );
+    const listed = listPrivateIdentities(storage, "sepolia", OWNER);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].id).toBe(privateIdentityId(OWNER, "treasury"));
+  });
+});
+
+describe("identity dedupe semantics (FIX 5)", () => {
+  it("re-creating (owner, purpose) replaces the record; commitment reflects the latest viewing key", async () => {
+    const storage = memoryStorage();
+    const first = await createPrivateIdentity({
+      owner: OWNER,
+      purpose: "treasury",
+      chain: "sepolia",
+      viewingKey: 1n,
+      anonymizerAddress: ANONYMIZER,
+      poolContractAddress: POOL,
+    }, storage);
+    const second = await createPrivateIdentity({
+      owner: OWNER,
+      purpose: "treasury",
+      chain: "sepolia",
+      viewingKey: 2n,
+      anonymizerAddress: ANONYMIZER,
+      poolContractAddress: POOL,
+    }, storage);
+
+    const listed = listPrivateIdentities(storage, "sepolia", OWNER);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].id).toBe(first.id);
+    // The commitment is re-derived from the newest viewing key — no stale record remains.
+    expect(listed[0].commitmentNonce0).toBe(second.commitmentNonce0);
+    expect(listed[0].commitmentNonce0).not.toBe(first.commitmentNonce0);
+  });
+
+  it("a retired identity is cleanly replaced (no ambiguous duplicates) on re-create", async () => {
+    const storage = memoryStorage();
+    const identity = await createPrivateIdentity({
+      owner: OWNER,
+      purpose: "launchpad",
+      chain: "sepolia",
+      viewingKey: VIEWING_KEY,
+      anonymizerAddress: ANONYMIZER,
+      poolContractAddress: POOL,
+    }, storage);
+    retirePrivateIdentity(storage, "sepolia", OWNER, identity.id);
+
+    const recreated = await createPrivateIdentity({
+      owner: OWNER,
+      purpose: "launchpad",
+      chain: "sepolia",
+      viewingKey: VIEWING_KEY,
+      anonymizerAddress: ANONYMIZER,
+      poolContractAddress: POOL,
+    }, storage);
+
+    const listed = listPrivateIdentities(storage, "sepolia", OWNER);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].status).toBe("active");
+    expect(listed[0].id).toBe(recreated.id);
+  });
 });

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { canonicalizeSecret, generateSecretKey, getPublicKey } from "../wallet/crypto";
-import { createMemoryStorage, readWalletKeystore, readWalletRegistry, walletIdFor } from "../wallet/storage";
+import { createMemoryStorage, readWalletKeystore, readWalletRegistry, readPublicState, clearWalletById, walletIdFor } from "../wallet/storage";
 import {
   createWallet,
   importWallet,
@@ -383,5 +383,83 @@ describe("import ownership verification is mandatory (FIX 1)", () => {
       verify: false,
     };
     void opts;
+  });
+
+  it("a test seam (adapterFactory) still cannot bypass ownership verification", async () => {
+    const storage = createMemoryStorage();
+    const secret = canonicalizeSecret(generateSecretKey());
+    const pubKey = getPublicKey(secret);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    const verifySpy = vi.spyOn(adapter, "verifyOwnership").mockResolvedValue({
+      verified: false,
+      method: "is_valid_signature",
+      reason: "on-chain rejection",
+    });
+
+    await expect(
+      importWallet({
+        network: "sepolia",
+        accountType: "ready-v0.4.0",
+        secret,
+        password: PASSWORD,
+        storage,
+        provider: mockProvider(),
+        adapterFactory: () => adapter,
+      }),
+    ).rejects.toThrow(/verification failed/i);
+
+    expect(verifySpy).toHaveBeenCalledTimes(1);
+    expect(readWalletRegistry(storage, "sepolia")).toHaveLength(0);
+  });
+});
+
+describe("deleted wallets cannot be unlocked; legacy primary stays stable (FIX 2)", () => {
+  it("a deleted walletId cannot be unlocked through v2 storage", async () => {
+    const storage = createMemoryStorage();
+    const walletA = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    const secretB = canonicalizeSecret(generateSecretKey());
+    const walletB = (
+      await importWallet({
+        network: "sepolia",
+        accountType: "ready-v0.4.0",
+        secret: secretB,
+        password: PASSWORD,
+        storage,
+        provider: mockProvider(),
+      })
+    ).wallet;
+
+    clearWalletById(storage, "sepolia", walletB.walletId);
+
+    await expect(
+      unlockWallet({ network: "sepolia", password: PASSWORD, walletId: walletB.walletId, storage }),
+    ).rejects.toThrow(/No wallet exists for identity/i);
+    // Wallet A is untouched and still unlocks.
+    const a = await unlockWallet({ network: "sepolia", password: PASSWORD, walletId: walletA.walletId, storage });
+    expect(a.walletId).toBe(walletA.walletId);
+  });
+
+  it("legacy primary remains stable when an unrelated wallet is imported then deleted", async () => {
+    const storage = createMemoryStorage();
+    const walletA = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    const walletB = (
+      await importWallet({
+        network: "sepolia",
+        accountType: "ready-v0.4.0",
+        secret: canonicalizeSecret(generateSecretKey()),
+        password: PASSWORD,
+        storage,
+        provider: mockProvider(),
+      })
+    ).wallet;
+
+    // The legacy primary is A; delete the secondary B.
+    expect(walletIdFor(readPublicState(storage, "sepolia")!.address)).toBe(walletA.walletId);
+    clearWalletById(storage, "sepolia", walletB.walletId);
+
+    // Legacy compat unlock still resolves A.
+    const viaLegacy = await unlockWallet({ network: "sepolia", password: PASSWORD, storage });
+    expect(viaLegacy.walletId).toBe(walletA.walletId);
+    expect(readWalletRegistry(storage, "sepolia").map((e) => e.walletId)).toEqual([walletA.walletId]);
   });
 });
