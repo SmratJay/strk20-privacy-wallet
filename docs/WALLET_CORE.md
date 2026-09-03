@@ -119,11 +119,33 @@ changes STRK20 flows.
 
 ## 10. Tests
 
-`src/__tests__/walletCore.test.ts` — 28 tests covering all 12 required areas (key gen,
-deterministic derivation, address derivation, encryption/decryption, wrong-password rejection,
-reload, valid signatures, adapter-without-Privy, deployment flow, signing/submission, no-plaintext
-persistence, no-Privy dependency). Full suite: `npm test` (482 tests), `npm run typecheck`, and
-`npm run build` all pass.
+`src/__tests__/walletCore.test.ts` — 46 tests covering all 12 required areas plus the Stage 1
+audit regression fixes (lock invalidation, network-aware account config, tri-state deployment
+probe, wrong-class-hash rejection, malformed-keystore rejection, exact amount parsing). Full
+suite: `npm test` (500 tests), `npm run typecheck`, and `npm run build` all pass.
+
+## 10a. Stage 1 audit fixes (72b77bb follow-up)
+
+- **P0 lockWallet** — `lockWallet()` now revokes the active signing session: it swaps in a
+  `LockedSigner` (overrides `signRaw`/`getPubKey` to throw) for both `wallet.signer` and
+  `account.signer`, and blanks the in-memory secret. Regression-tested (sign → lock → sign fails).
+- **P0 network-aware account config** — `READY_ACCOUNT_CONFIG` maps each `WalletNetworkId` to a
+  verified class hash. Mainnet is `supported: false` (not verified), so `createWallet` /
+  `unlockWallet` fail closed on Mainnet and `/own-wallet` disables the Mainnet toggle. A
+  network-agnostic class-hash default is never used by the core.
+- **P1 deployment probe** — `probeAccountDeployment()` returns `deployed | not_deployed |
+  unknown`. RPC failures and wrong-class-hash mismatches map to `unknown`, which the core treats
+  as "refuse to deploy" (never authorizes a deployment on a failed read). Class hash is verified,
+  not just any non-zero hash.
+- **P1 finality state** — `deployAccount()` never writes `deployed` unless finality is reached OR
+  a post-timeout chain re-probe verifies the class hash; otherwise it stays `finalizing`/`unknown`.
+- **P1 keystore hardening** — `deserializeKeystore()` validates version, KDF/cipher names,
+  bounded PBKDF2 iterations, exact salt/IV lengths, ciphertext presence, public key, address,
+  network, account type, and timestamp — all before any PBKDF2 work.
+- **P1 exact amount parsing** — `parseAmountToBase()` converts decimal strings to base units with
+  integer-only math (no `Number * 10**decimals`), rejecting over-precision and negatives.
+- **P2 export UX** — `/own-wallet` export is a confirm-gated, warning-based flow with a dedicated
+  reveal panel; the raw secret is never dumped into the generic notice banner.
 
 ## 11. Remaining Stage 1 security gaps (documented, not faked)
 

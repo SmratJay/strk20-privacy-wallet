@@ -29,6 +29,9 @@ import {
   computeReadyAccountAddress,
   deployReadyAccount,
   isAccountDeployed,
+  probeAccountDeployment,
+  READY_ACCOUNT_CONFIG,
+  READY_SEPOLIA_CLASS_HASH,
   ReadyAccountAdapter,
 } from "../wallet/account";
 import {
@@ -36,11 +39,13 @@ import {
   readKeystore,
   readPublicState,
 } from "../wallet/storage";
+import { parseAmountToBase } from "../wallet/amount";
 import {
   createWallet,
   deployAccount,
   getDeploymentStatus,
   sendTransaction,
+  lockWallet,
   unlockWallet,
   exportSecret,
 } from "../wallet/walletCore";
@@ -123,7 +128,7 @@ describe("3. account address derivation", () => {
 
   it("matches the ReadyAccountAdapter address", () => {
     const pk = getPublicKey(generateSecretKey());
-    const adapter = new ReadyAccountAdapter(pk);
+    const adapter = new ReadyAccountAdapter(pk, READY_SEPOLIA_CLASS_HASH);
     expect(adapter.address.toLowerCase()).toBe(computeReadyAccountAddress(pk).toLowerCase());
     expect(adapter.publicKey.toLowerCase()).toBe(pk.toLowerCase());
     expect(adapter.type).toMatch(/^ready/);
@@ -204,8 +209,8 @@ describe("6. wallet reload (create → unlock)", () => {
     await createWallet({ network: "sepolia", password: PASSWORD, storage });
     const raw = readKeystore(storage, "sepolia")!;
     const keystore = deserializeKeystore(raw);
-    // Tamper with the recorded address → unlock must fail.
-    keystore.address = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    // Tamper with the recorded address (a valid but DIFFERENT address) → unlock must fail.
+    keystore.address = "0x1234567890abcdef";
     const { writeKeystore } = await import("../wallet/storage");
     writeKeystore(storage, "sepolia", serializeKeystore(keystore));
     await expect(
@@ -215,7 +220,7 @@ describe("6. wallet reload (create → unlock)", () => {
 
   it("fails to unlock when no wallet exists", async () => {
     await expect(
-      unlockWallet({ network: "mainnet", password: PASSWORD, storage: createMemoryStorage() }),
+      unlockWallet({ network: "sepolia", password: PASSWORD, storage: createMemoryStorage() }),
     ).rejects.toThrow(/Create one first/);
   });
 });
@@ -298,22 +303,82 @@ describe("9. deployment flow", () => {
   it("returns early when already deployed", async () => {
     const storage = createMemoryStorage();
     const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
-    wallet.provider.getClassHashAt = vi.fn(async () => "0x123") as any;
+    // The adapter verifies the EXPECTED class hash — return it so the probe reports deployed.
+    wallet.provider.getClassHashAt = vi.fn(async () => READY_SEPOLIA_CLASS_HASH) as any;
     wallet.account.deploySelf = vi.fn() as any;
     const result = await deployAccount(wallet, storage);
     expect(result.transactionHash).toBe("");
     expect(wallet.account.deploySelf).not.toHaveBeenCalled();
+    expect(readPublicState(storage, "sepolia")?.deploymentStatus).toBe("deployed");
+  });
+
+  it("refuses to deploy when on-chain state is unknown", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    // Generic RPC failure → probe "unknown" → deployment must NOT be authorized.
+    wallet.provider.getClassHashAt = vi.fn(async () => {
+      throw new Error("502 Bad Gateway");
+    }) as any;
+    wallet.account.deploySelf = vi.fn() as any;
+    await expect(deployAccount(wallet, storage)).rejects.toThrow(/refusing to deploy/i);
+    expect(wallet.account.deploySelf).not.toHaveBeenCalled();
+    expect(readPublicState(storage, "sepolia")?.deploymentStatus).toBe("unknown");
+  });
+
+  it("refuses to deploy when the address hosts a different account class", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    // A nonzero class hash that is NOT the expected Ready class → "unknown", never deploy.
+    wallet.provider.getClassHashAt = vi.fn(async () => "0x123") as any;
+    wallet.account.deploySelf = vi.fn() as any;
+    await expect(deployAccount(wallet, storage)).rejects.toThrow(/refusing to deploy/i);
+    expect(wallet.account.deploySelf).not.toHaveBeenCalled();
+  });
+
+  it("does not mark deployed when finality times out — reconciles with the chain", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+
+    wallet.provider.getClassHashAt = vi.fn(async () => {
+      throw new Error("Requested contract address is not deployed");
+    }) as any;
+    const deploySelf = vi.fn(async (_payload: unknown) => ({
+      transaction_hash: "0xtxdeploy",
+      contract_address: wallet.address,
+    }));
+    wallet.account.deploySelf = deploySelf as any;
+    wallet.provider.waitForTransaction = vi.fn(async () => ({
+      execution_status: "SUCCEEDED",
+      status: "ACCEPTED_ON_L2",
+      block_number: 123,
+    })) as any;
+    // Finality never arrives: the tip never reaches deployedAtBlock + 10.
+    wallet.provider.getBlockNumber = vi.fn(async () => 125) as any;
+
+    await expect(
+      deployAccount(wallet, storage, { finalityPollMs: 5, finalityTimeoutMs: 100 }),
+    ).rejects.toThrow(/finality/i);
+    // After the timeout the core re-probes the chain. Here the account is still not deployed,
+    // so status must reflect "still finalizing" — NEVER "deployed".
+    const status = readPublicState(storage, "sepolia")?.deploymentStatus;
+    expect(status).toBe("finalizing");
+    expect(status).not.toBe("deployed");
   });
 
   it("getDeploymentStatus reconciles against the chain", async () => {
     const storage = createMemoryStorage();
     const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
-    wallet.provider.getClassHashAt = vi.fn(async () => "0x123") as any;
+    wallet.provider.getClassHashAt = vi.fn(async () => READY_SEPOLIA_CLASS_HASH) as any;
     expect(await getDeploymentStatus(wallet, storage)).toBe("deployed");
     wallet.provider.getClassHashAt = vi.fn(async () => {
       throw new Error("not deployed");
     }) as any;
     expect(await getDeploymentStatus(wallet, storage)).toBe("not_deployed");
+    // RPC failure → unknown, never a wrong "not_deployed" that would authorize a deploy.
+    wallet.provider.getClassHashAt = vi.fn(async () => {
+      throw new Error("502 Bad Gateway");
+    }) as any;
+    expect(await getDeploymentStatus(wallet, storage)).toBe("unknown");
   });
 });
 
@@ -359,6 +424,177 @@ describe("11. secrets are not persisted in plaintext", () => {
     // The ciphertext must be opaque (encrypted), never the plaintext secret.
     const keystore = deserializeKeystore(keystoreJson);
     expect(keystore.cipher.ciphertext).not.toContain(wallet.secret);
+  });
+});
+
+describe("13. lockWallet invalidates the signing session", () => {
+  it("signing succeeds before lock and fails after lock", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+
+    // Signing works while unlocked.
+    const before = await signMessage(wallet.signer, wallet.address);
+    expect(verifySignature(before.msgHash, before.signature, wallet.publicKey)).toBe(true);
+
+    lockWallet(wallet);
+
+    // The in-memory secret is gone AND the signer is revoked.
+    expect(wallet.secret).toBe("");
+    await expect(signMessage(wallet.signer, wallet.address)).rejects.toThrow(/locked/i);
+    await expect(wallet.signer.getPubKey()).rejects.toThrow(/locked/i);
+  });
+
+  it("the Account's signer is revoked too (no hidden signing path)", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    lockWallet(wallet);
+    // starknet.js Account signs through `account.signer` — it must be the revoked signer.
+    const accountSigner = wallet.account.signer as unknown as Signer;
+    await expect(signMessage(accountSigner, wallet.address)).rejects.toThrow(/locked/i);
+  });
+});
+
+describe("14. network-specific account configuration", () => {
+  it("exposes per-network Ready config (Sepolia verified, Mainnet not)", () => {
+    expect(READY_ACCOUNT_CONFIG.sepolia.supported).toBe(true);
+    expect(READY_ACCOUNT_CONFIG.sepolia.classHash).toMatch(/^0x/);
+    expect(READY_ACCOUNT_CONFIG.mainnet.supported).toBe(false);
+    expect(READY_ACCOUNT_CONFIG.mainnet.classHash).toBe("");
+  });
+
+  it("refuses to create a wallet on an unsupported network", async () => {
+    const storage = createMemoryStorage();
+    await expect(
+      createWallet({ network: "mainnet", password: PASSWORD, storage }),
+    ).rejects.toThrow(/not available on mainnet/i);
+    // Nothing should have been persisted for mainnet.
+    expect(readPublicState(storage, "mainnet")).toBeNull();
+    expect(readKeystore(storage, "mainnet")).toBeNull();
+  });
+
+  it("never derives a Mainnet account with the Sepolia class hash", async () => {
+    const pk = getPublicKey(generateSecretKey());
+    const sepoliaConfig = READY_ACCOUNT_CONFIG.sepolia;
+    const adapter = new ReadyAccountAdapter(pk, sepoliaConfig.classHash);
+    expect(adapter.address.toLowerCase()).toBe(
+      computeReadyAccountAddress(pk, sepoliaConfig.classHash).toLowerCase(),
+    );
+    // The class-hash used must be the network's own, not a silent Sepolia default.
+    expect(sepoliaConfig.classHash).toBe(READY_SEPOLIA_CLASS_HASH);
+  });
+
+  it("unlock on an unsupported network fails fast", async () => {
+    const storage = createMemoryStorage();
+    await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    await expect(
+      unlockWallet({ network: "mainnet", password: PASSWORD, storage }),
+    ).rejects.toThrow(/not available on mainnet/i);
+  });
+});
+
+describe("15. deployment probe tri-state semantics", () => {
+  it("returns deployed only when the expected class hash matches", async () => {
+    const provider = { getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH) };
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("deployed");
+  });
+
+  it("returns unknown on a wrong class hash (different account at the address)", async () => {
+    const provider = { getClassHashAt: vi.fn(async () => "0x123") };
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("unknown");
+  });
+
+  it("returns unknown on a generic RPC failure (never authorizes deployment)", async () => {
+    const provider = {
+      getClassHashAt: vi.fn(async () => {
+        throw new Error("502 Bad Gateway");
+      }),
+    };
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("unknown");
+  });
+
+  it("returns not_deployed on a definitive contract-not-found error", async () => {
+    const provider = {
+      getClassHashAt: vi.fn(async () => {
+        throw new Error("Requested contract address is not deployed");
+      }),
+    };
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("not_deployed");
+  });
+
+  it("legacy boolean isAccountDeployed is false on unknown (RPC failure)", async () => {
+    const provider = {
+      getClassHashAt: vi.fn(async () => {
+        throw new Error("502 Bad Gateway");
+      }),
+    };
+    expect(await isAccountDeployed(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe(false);
+  });
+});
+
+describe("16. keystore metadata hardening", () => {
+  it("rejects malformed/tampered metadata before any KDF work", async () => {
+    const secret = generateSecretKey();
+    const good = await encryptSecret(secret, PASSWORD, {
+      publicKey: getPublicKey(secret),
+      address: "0xabc",
+      network: "sepolia",
+      accountType: "ready-v0.4.0",
+    });
+
+    const cases: Record<string, unknown> = {
+      "wrong version": { ...good, version: 999 },
+      "wrong kdf name": { ...good, kdf: { ...good.kdf, name: "SCRYPT" } },
+      "wrong kdf hash": { ...good, kdf: { ...good.kdf, hash: "SHA-1" } },
+      "iterations too low": { ...good, kdf: { ...good.kdf, iterations: 1_000 } },
+      "iterations too high": { ...good, kdf: { ...good.kdf, iterations: 100_000_000 } },
+      "iterations not integer": { ...good, kdf: { ...good.kdf, iterations: 250000.5 } },
+      "wrong salt length": { ...good, kdf: { ...good.kdf, salt: good.kdf.salt.slice(0, 4) } },
+      "malformed salt": { ...good, kdf: { ...good.kdf, salt: "###not-base64###" } },
+      "wrong cipher name": { ...good, cipher: { ...good.cipher, name: "AES-CBC" } },
+      "wrong iv length": { ...good, cipher: { ...good.cipher, iv: good.cipher.iv.slice(0, 4) } },
+      "missing ciphertext": { ...good, cipher: { ...good.cipher, ciphertext: "" } },
+      "malformed public key": { ...good, publicKey: "not-a-hex" },
+      "malformed address": { ...good, address: "0xzzz" },
+      "empty network": { ...good, network: "" },
+      "empty accountType": { ...good, accountType: "" },
+      "invalid createdAt": { ...good, createdAt: -1 },
+    };
+
+    for (const [name, mutated] of Object.entries(cases)) {
+      expect(() => deserializeKeystore(JSON.stringify(mutated)), name).toThrow();
+    }
+  });
+
+  it("round-trips a valid keystore through deserializeKeystore", async () => {
+    const secret = generateSecretKey();
+    const good = await encryptSecret(secret, PASSWORD, {
+      publicKey: getPublicKey(secret),
+      address: "0xabc",
+      network: "sepolia",
+      accountType: "ready-v0.4.0",
+    });
+    const restored = deserializeKeystore(serializeKeystore(good));
+    expect(restored).toEqual(good);
+    expect(await decryptSecret(restored, PASSWORD)).toBe(secret);
+  });
+});
+
+describe("17. exact token amount parsing", () => {
+  it("converts decimal strings to exact base units", () => {
+    expect(parseAmountToBase("0.001", 18)).toBe(1_000_000_000_000_000n);
+    expect(parseAmountToBase("1", 6)).toBe(1_000_000n);
+    expect(parseAmountToBase("0.1", 18)).toBe(100_000_000_000_000_000n);
+    expect(parseAmountToBase("0.000001", 6)).toBe(1n);
+    expect(parseAmountToBase("123.456", 3)).toBe(123_456n);
+    expect(parseAmountToBase("1000", 0)).toBe(1000n);
+  });
+
+  it("rejects malformed / over-precision / negative amounts", () => {
+    expect(() => parseAmountToBase("", 18)).toThrow(/invalid amount/i);
+    expect(() => parseAmountToBase("abc", 18)).toThrow(/invalid amount/i);
+    expect(() => parseAmountToBase("-1.5", 18)).toThrow(/invalid amount/i);
+    expect(() => parseAmountToBase("1.0000000000000000001", 18)).toThrow(/decimal places/i);
+    expect(() => parseAmountToBase("1.2.3", 18)).toThrow(/invalid amount/i);
   });
 });
 

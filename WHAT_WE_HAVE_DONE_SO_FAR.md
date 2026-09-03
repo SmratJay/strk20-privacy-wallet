@@ -1262,3 +1262,43 @@ not deleted.
 
 **Verification.** `npm run typecheck` clean; `npm test` → 52 files / 482 tests pass; `npm run
 build` succeeds (adds static `/own-wallet` route). STRK20 flows untouched and passing.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 09:36:06 IST
+
+### 🔴 [BIG CHANGE] — STAGE 1 AUDIT FIXES (Wallet Core)
+
+**Context.** Audit findings on the Stage 1 Wallet Core were fixed. Only Wallet Core issues were
+addressed; no Stage 2 features were added.
+
+**Detailed technical explanation.**
+
+- **P0 — `lockWallet()` invalidates the signing session.** Previously it only blanked
+  `wallet.secret` while the starknet.js `Signer`/`Account` retained signing ability. Now it swaps
+  in a `LockedSigner` (overrides `signRaw` + `getPubKey` to throw) for both `wallet.signer` and
+  `account.signer`, and blanks the secret. Regression test: sign succeeds → lock → signing fails
+  on both the wallet signer and the account signer.
+- **P0 — network-aware Ready account configuration.** Added `READY_ACCOUNT_CONFIG` (keyed by
+  `WalletNetworkId`) and shared `src/wallet/types.ts`. Sepolia is verified; Mainnet is
+  `supported: false`. `createWallet`/`unlockWallet` fail closed on Mainnet, and the `/own-wallet`
+  Mainnet toggle is disabled. The core always resolves the class hash from the network config —
+  never a network-agnostic default.
+- **P1 — tri-state deployment probe.** `probeAccountDeployment()` returns
+  `deployed | not_deployed | unknown`. Generic RPC failures and wrong-class-hash mismatches →
+  `unknown`, which refuses to deploy. `deployAccount()`/`getDeploymentStatus()` use the probe;
+  `isAccountDeployed()` (legacy boolean) is now a thin wrapper that is false on `unknown`.
+- **P1 — deployment finality state.** `deployAccount()` no longer writes `deployed` on a finality
+  timeout; it re-probes the chain and writes `finalizing`/`unknown` unless the class hash is
+  verifiably deployed. Added injectable finality-wait opts for testability.
+- **P1 — keystore hardening.** `deserializeKeystore()`/`validateKeystore()` validate version, KDF
+  and cipher names, bounded PBKDF2 iterations, exact salt/IV byte lengths, ciphertext presence,
+  public key, address, network, account type, and timestamp — all before expensive PBKDF2 work.
+- **P1 — exact amount parsing.** New `src/wallet/amount.ts` `parseAmountToBase()` (integer-only
+  math, rejects over-precision/negatives); `/own-wallet` uses it instead of `Number*10**decimals`.
+- **P2 — export-secret UX.** `/own-wallet` export is now a confirm-gated, warning-based flow with
+  a dedicated reveal panel; the raw secret is never dumped into the generic notice banner.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 52 files / 500 tests pass (Wallet Core
+suite grew from 28 → 46 tests including all new regression tests); `npm run build` succeeds.
+Legacy tests preserved and passing.

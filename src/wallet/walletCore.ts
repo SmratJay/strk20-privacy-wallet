@@ -24,10 +24,14 @@ import {
   type WalletStorage,
 } from "./storage";
 import {
+  READY_ACCOUNT_CONFIG,
   ReadyAccountAdapter,
+  isReadyAccountSupported,
   waitForDeploymentFinality,
   type AccountAdapter,
+  type AccountDeploymentProbe,
 } from "./account";
+import type { WalletNetworkId } from "./types";
 
 /**
  * Wallet Core — the self-custodial Starknet wallet facade.
@@ -43,7 +47,7 @@ import {
  * interface.
  */
 
-export type WalletNetworkId = "mainnet" | "sepolia";
+export type { WalletNetworkId } from "./types";
 export type WalletDeploymentStatus = PublicWalletState["deploymentStatus"];
 
 export interface UnlockedWallet {
@@ -81,13 +85,27 @@ export interface DeployAccountResult {
   contractAddress: string;
 }
 
+export interface DeployAccountOptions {
+  /** Finality-wait tuning (primarily for tests; production uses the module defaults). */
+  finalityPollMs?: number;
+  finalityTimeoutMs?: number;
+}
+
 function makeProvider(network: WalletNetworkId): RpcProvider {
   return new RpcProvider({ nodeUrl: getNetworkConfig(network).rpcUrls[0] });
 }
 
 function makeAdapter(network: WalletNetworkId, publicKey: string, factory?: (pk: string) => AccountAdapter): AccountAdapter {
   if (factory) return factory(publicKey);
-  return new ReadyAccountAdapter(publicKey);
+  // Network-aware account configuration: never derive an account using a network-agnostic
+  // default class hash. Unsupported networks fail closed.
+  const config = READY_ACCOUNT_CONFIG[network];
+  if (!config?.supported) {
+    throw new Error(
+      `Account contract is not available on ${network}. Only networks with a verified Ready account configuration are supported.`,
+    );
+  }
+  return new ReadyAccountAdapter(publicKey, config.classHash);
 }
 
 function buildUnlocked(
@@ -162,6 +180,12 @@ export async function createWallet(options: CreateWalletOptions): Promise<Unlock
  */
 export async function unlockWallet(options: UnlockWalletOptions): Promise<UnlockedWallet> {
   const storage = options.storage ?? defaultStorage();
+  // Fail fast on unsupported networks before spending PBKDF2 work on decrypt.
+  if (!options.adapterFactory && !isReadyAccountSupported(options.network)) {
+    throw new Error(
+      `Account contract is not available on ${options.network}. Only networks with a verified Ready account configuration are supported.`,
+    );
+  }
   const raw = readKeystore(storage, options.network);
   if (!raw) {
     throw new Error(`No wallet exists on ${options.network}. Create one first.`);
@@ -182,17 +206,32 @@ export async function unlockWallet(options: UnlockWalletOptions): Promise<Unlock
 
 /**
  * Deploy the wallet's account contract (DEPLOY_ACCOUNT) with the LOCAL signer, then wait for
- * finality. Tracks deployment state in the public store. Idempotent: returns early when the
- * account is already deployed on-chain.
+ * finality. Tracks deployment state in the public store. Idempotent and safe:
+ *  - "deployed"     → returns early.
+ *  - "unknown"      → refuses to deploy (RPC failure or class-hash mismatch must never
+ *                     authorize a deployment).
+ *  - "not_deployed" → submits DEPLOY_ACCOUNT and waits for on-chain finality.
  */
 export async function deployAccount(
   wallet: UnlockedWallet,
   storage?: WalletStorage,
+  options?: DeployAccountOptions,
 ): Promise<DeployAccountResult> {
   const store = storage ?? defaultStorage();
-  if (await wallet.adapter.isDeployed(wallet.provider)) {
+  const finalityOpts =
+    options?.finalityPollMs !== undefined || options?.finalityTimeoutMs !== undefined
+      ? { pollMs: options.finalityPollMs, timeoutMs: options.finalityTimeoutMs }
+      : undefined;
+  const probe = await wallet.adapter.probeDeployment(wallet.provider);
+  if (probe === "deployed") {
     updateDeploymentStatus(store, wallet.network, "deployed");
     return { transactionHash: "", contractAddress: wallet.address };
+  }
+  if (probe === "unknown") {
+    updateDeploymentStatus(store, wallet.network, "unknown");
+    throw new Error(
+      "Could not verify on-chain account state; refusing to deploy. Check the RPC and retry.",
+    );
   }
   updateDeploymentStatus(store, wallet.network, "pending");
   const deployment = await wallet.adapter.deploy(wallet.account);
@@ -209,23 +248,33 @@ export async function deployAccount(
   const deployedAtBlock = Number((receipt as { block_number?: unknown })?.block_number ?? 0);
   updateDeploymentStatus(store, wallet.network, "finalizing");
   try {
-    await waitForDeploymentFinality(wallet.provider, deployedAtBlock);
+    await waitForDeploymentFinality(wallet.provider, deployedAtBlock, undefined, finalityOpts);
     updateDeploymentStatus(store, wallet.network, "deployed");
   } catch (err) {
-    updateDeploymentStatus(store, wallet.network, "deployed");
+    // Finality was not confirmed. Reconcile with the chain and NEVER claim deployed unless the
+    // on-chain probe actually verifies the class hash.
+    const recheck = await wallet.adapter.probeDeployment(wallet.provider).catch(
+      () => "unknown" as AccountDeploymentProbe,
+    );
+    if (recheck === "deployed") {
+      updateDeploymentStatus(store, wallet.network, "deployed");
+    } else {
+      updateDeploymentStatus(store, wallet.network, recheck === "not_deployed" ? "finalizing" : "unknown");
+    }
     throw err;
   }
   return deployment;
 }
 
-/** Reconcile the on-chain deployment status (class hash present) against the store. */
+/** Reconcile the on-chain deployment status against the store. Never guesses. */
 export async function getDeploymentStatus(
   wallet: UnlockedWallet,
   storage?: WalletStorage,
 ): Promise<WalletDeploymentStatus> {
   const store = storage ?? defaultStorage();
-  const deployed = await wallet.adapter.isDeployed(wallet.provider);
-  const status: WalletDeploymentStatus = deployed ? "deployed" : "not_deployed";
+  const probe = await wallet.adapter.probeDeployment(wallet.provider);
+  const status: WalletDeploymentStatus =
+    probe === "deployed" ? "deployed" : probe === "not_deployed" ? "not_deployed" : "unknown";
   updateDeploymentStatus(store, wallet.network, status);
   return status;
 }
@@ -273,8 +322,29 @@ export function clearWallet(network: WalletNetworkId, storage?: WalletStorage): 
   return hadKeystore;
 }
 
-/** Best-effort in-memory wipe of the signing secret on a locked wallet object. */
+/**
+ * A signer that has been revoked. Every signing path in starknet.js routes through `signRaw`,
+ * so overriding it to throw invalidates the whole signing session. `getPubKey` is revoked too
+ * so a locked wallet cannot even claim a key.
+ */
+class LockedSigner extends Signer {
+  protected override async signRaw(_msgHash: string): Promise<Signature> {
+    throw new Error("Wallet is locked. Unlock it to sign transactions.");
+  }
+
+  override async getPubKey(): Promise<string> {
+    throw new Error("Wallet is locked.");
+  }
+}
+
+/**
+ * Lock an unlocked wallet: invalidate the active signing session. The in-memory secret is
+ * blanked AND both the wallet's signer and the Account's signer are replaced with a revoked
+ * signer so no signing operation can succeed until the wallet is unlocked again.
+ */
 export function lockWallet(wallet: UnlockedWallet): void {
-  // The secret lives in a mutable field; blank it. Other fields are public/safe.
+  const locked = new LockedSigner();
+  wallet.signer = locked;
+  (wallet.account as { signer?: unknown }).signer = locked;
   (wallet as { secret?: string }).secret = "";
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { CallData, num } from "starknet";
+import { CallData } from "starknet";
 import {
   createWallet,
   unlockWallet,
@@ -10,6 +10,9 @@ import {
   sendTransaction,
   exportSecret,
   clearWallet,
+  lockWallet,
+  parseAmountToBase,
+  isReadyAccountSupported,
   defaultStorage,
   readPublicState,
   type UnlockedWallet,
@@ -34,6 +37,10 @@ export default function OwnWalletPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Export / recovery is an explicit, warning-gated flow — never a generic banner.
+  const [exportStage, setExportStage] = useState<"idle" | "confirm" | "revealed">("idle");
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+
   // Recipient + amount for the single test transaction flow.
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("0.001");
@@ -47,6 +54,8 @@ export default function OwnWalletPage() {
     setWallet(null);
     setError(null);
     setNotice(null);
+    setExportStage("idle");
+    setRevealedSecret(null);
   }, [network]);
 
   const handleCreate = useCallback(async () => {
@@ -59,7 +68,6 @@ export default function OwnWalletPage() {
       setView("wallet");
       setStatus("not_deployed");
       setNotice("Wallet created. Keys are stored in an encrypted keystore protected by your password.");
-      // Reconcile on-chain deployment state.
       void getDeploymentStatus(w).then(setStatus).catch(() => setStatus("unknown"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Wallet creation failed.");
@@ -99,10 +107,10 @@ export default function OwnWalletPage() {
           : "Account was already deployed.",
       );
     } catch (err) {
-      setStatus("error");
+      setStatus("unknown");
       setError(
         err instanceof Error
-          ? `Deployment failed: ${err.message} (fund the account with Sepolia STRK first).`
+          ? `Deployment failed: ${err.message}`
           : "Deployment failed.",
       );
     } finally {
@@ -118,9 +126,9 @@ export default function OwnWalletPage() {
     try {
       const strk = getNetworkConfig(network).tokens.find((t) => t.symbol === "STRK");
       if (!strk) throw new Error("STRK token is not configured for this network.");
-      const amountBase = num.toBigInt(
-        BigInt(Math.round(Number(amount) * 10 ** strk.decimals)),
-      );
+      // Exact decimal → base-unit conversion. Never float math for money.
+      const amountBase = parseAmountToBase(amount, strk.decimals);
+      if (amountBase <= 0n) throw new Error("Amount must be greater than zero.");
       const call = {
         contractAddress: strk.address,
         entrypoint: "transfer",
@@ -135,23 +143,39 @@ export default function OwnWalletPage() {
     }
   }, [wallet, network, recipient, amount]);
 
-  const handleExport = useCallback(async () => {
+  // Export flow: first click → confirm warning; second (Reveal) → decrypt with password.
+  const handleExportStart = useCallback(() => {
+    setError(null);
+    setRevealedSecret(null);
+    setExportStage("confirm");
+  }, []);
+
+  const handleExportReveal = useCallback(async () => {
     if (!wallet) return;
     setError(null);
     try {
       const secret = await exportSecret(wallet, password);
-      setNotice(`Recovery secret: ${secret}`);
+      setRevealedSecret(secret);
+      setExportStage("revealed");
     } catch {
       setError("Password did not match this wallet.");
     }
   }, [wallet, password]);
 
+  const handleExportCancel = useCallback(() => {
+    setExportStage("idle");
+    setRevealedSecret(null);
+  }, []);
+
   const handleLock = useCallback(() => {
+    if (wallet) lockWallet(wallet);
     setWallet(null);
     setPassword("");
-    setNotice(null);
+    setNotice("Wallet locked. Unlock with your password to sign again.");
+    setExportStage("idle");
+    setRevealedSecret(null);
     setView("unlock");
-  }, []);
+  }, [wallet]);
 
   const handleDelete = useCallback(() => {
     clearWallet(network, storage);
@@ -176,19 +200,29 @@ export default function OwnWalletPage() {
         <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 mb-4">
           <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-400">Network</span>
-            {(["sepolia", "mainnet"] as const).map((n) => (
-              <button
-                key={n}
-                onClick={() => setNetwork(n)}
-                className={`px-3 py-1 rounded-md text-sm border ${
-                  network === n
-                    ? "border-orange-500 text-orange-400"
-                    : "border-zinc-800 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                {n}
-              </button>
-            ))}
+            {(["sepolia", "mainnet"] as const).map((n) => {
+              const supported = isReadyAccountSupported(n);
+              return (
+                <button
+                  key={n}
+                  onClick={() => supported && setNetwork(n)}
+                  disabled={!supported}
+                  title={supported ? undefined : "Ready account not verified on this network yet"}
+                  className={`px-3 py-1 rounded-md text-sm border ${
+                    network === n
+                      ? "border-orange-500 text-orange-400"
+                      : supported
+                        ? "border-zinc-800 text-zinc-400 hover:border-zinc-600"
+                        : "border-zinc-800 text-zinc-600 opacity-50 cursor-not-allowed"
+                  }`}
+                >
+                  {n}
+                </button>
+              );
+            })}
+            {network === "mainnet" && (
+              <span className="text-xs text-amber-500">Ready account not verified on Mainnet — disabled.</span>
+            )}
           </div>
         </section>
 
@@ -269,9 +303,9 @@ export default function OwnWalletPage() {
                   {status === "deployed" ? "Deployed" : busy ? "Deploying…" : "Deploy account"}
                 </button>
                 <button
-                  onClick={handleExport}
+                  onClick={handleExportStart}
                   disabled={busy}
-                  className="rounded-md border border-zinc-700 px-3 py-2 text-sm"
+                  className="rounded-md border border-amber-700 px-3 py-2 text-sm text-amber-300"
                 >
                   Export recovery secret
                 </button>
@@ -282,6 +316,51 @@ export default function OwnWalletPage() {
                   Delete local state
                 </button>
               </div>
+
+              {exportStage === "confirm" && (
+                <div className="mt-4 rounded-md border border-amber-800 bg-amber-950/30 p-4">
+                  <h3 className="text-sm font-medium text-amber-300 mb-2">Export recovery secret?</h3>
+                  <p className="text-xs text-amber-200/80 mb-3">
+                    This reveals your raw signing key. <strong>Anyone with it controls the
+                    account.</strong> Store it offline and never share it. You will need your
+                    password to reveal it.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleExportReveal}
+                      disabled={busy || !password}
+                      className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+                    >
+                      Reveal secret
+                    </button>
+                    <button
+                      onClick={handleExportCancel}
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {exportStage === "revealed" && revealedSecret && (
+                <div className="mt-4 rounded-md border border-red-900 bg-red-950/30 p-4">
+                  <h3 className="text-sm font-medium text-red-300 mb-2">Recovery secret (handle with care)</h3>
+                  <p className="text-xs text-red-200/80 mb-2">
+                    Copy it now and store it offline. Do not paste it into chats, support tickets,
+                    or any website.
+                  </p>
+                  <pre className="font-mono text-xs bg-black/40 rounded p-3 break-all whitespace-pre-wrap border border-red-900/50">
+                    {revealedSecret}
+                  </pre>
+                  <button
+                    onClick={handleExportCancel}
+                    className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-sm"
+                  >
+                    Hide
+                  </button>
+                </div>
+              )}
             </section>
 
             <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">

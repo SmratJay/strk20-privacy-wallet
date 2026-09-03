@@ -19,6 +19,10 @@ export const PBKDF2_ITERATIONS = 250_000;
 export const SALT_BYTES = 16;
 export const IV_BYTES = 12;
 
+/** Acceptable PBKDF2 iteration band. Bounds reject absurd/tampered values before KDF work. */
+export const MIN_PBKDF2_ITERATIONS = 100_000;
+export const MAX_PBKDF2_ITERATIONS = 10_000_000;
+
 export interface EncryptedKeystore {
   version: number;
   kdf: {
@@ -115,6 +119,79 @@ export async function encryptSecret(
   };
 }
 
+const HEX_RE = /^0x[0-9a-fA-F]+$/;
+
+function isHex(value: unknown): value is string {
+  return typeof value === "string" && HEX_RE.test(value);
+}
+
+/** Decode base64 strictly (atob throws on malformed input). Returns null on failure. */
+function tryDecodeBase64(value: unknown, expectedLength: number): Uint8Array | null {
+  if (typeof value !== "string" || value === "") return null;
+  try {
+    const bytes = fromBase64(value);
+    if (bytes.length !== expectedLength) return null;
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate every field of a keystore BEFORE any expensive PBKDF2 work. Rejects malformed or
+ * tampered metadata (wrong version, wrong KDF/cipher names, out-of-band iterations, wrong
+ * salt/IV lengths, missing ciphertext, malformed public key / address / network / account type).
+ */
+export function validateKeystore(parsed: unknown): asserts parsed is EncryptedKeystore {
+  const k = parsed as EncryptedKeystore | null;
+  if (k === null || typeof k !== "object") {
+    throw new Error("Keystore is not an object.");
+  }
+  if (k.version !== KEYSTORE_VERSION) {
+    throw new Error(`Unsupported wallet keystore version: ${String(k.version)}.`);
+  }
+  if (k.kdf?.name !== "PBKDF2" || k.kdf?.hash !== "SHA-256") {
+    throw new Error("Keystore uses an unsupported KDF configuration.");
+  }
+  if (
+    typeof k.kdf.iterations !== "number" ||
+    !Number.isInteger(k.kdf.iterations) ||
+    k.kdf.iterations < MIN_PBKDF2_ITERATIONS ||
+    k.kdf.iterations > MAX_PBKDF2_ITERATIONS
+  ) {
+    throw new Error(
+      `Keystore PBKDF2 iterations out of allowed range [${MIN_PBKDF2_ITERATIONS}, ${MAX_PBKDF2_ITERATIONS}].`,
+    );
+  }
+  if (tryDecodeBase64(k.kdf.salt, SALT_BYTES) === null) {
+    throw new Error(`Keystore salt must be a base64 value of exactly ${SALT_BYTES} bytes.`);
+  }
+  if (k.cipher?.name !== "AES-GCM") {
+    throw new Error("Keystore uses an unsupported cipher.");
+  }
+  if (tryDecodeBase64(k.cipher.iv, IV_BYTES) === null) {
+    throw new Error(`Keystore IV must be a base64 value of exactly ${IV_BYTES} bytes.`);
+  }
+  if (typeof k.cipher.ciphertext !== "string" || k.cipher.ciphertext.length < 8) {
+    throw new Error("Keystore is missing an encrypted payload.");
+  }
+  if (!isHex(k.publicKey) || BigInt(k.publicKey) <= 0n) {
+    throw new Error("Keystore has a malformed public key.");
+  }
+  if (!isHex(k.address) || BigInt(k.address) <= 0n) {
+    throw new Error("Keystore has a malformed account address.");
+  }
+  if (typeof k.network !== "string" || k.network.length === 0 || k.network.length > 32) {
+    throw new Error("Keystore has a malformed network.");
+  }
+  if (typeof k.accountType !== "string" || k.accountType.length === 0 || k.accountType.length > 64) {
+    throw new Error("Keystore has a malformed account type.");
+  }
+  if (typeof k.createdAt !== "number" || !Number.isFinite(k.createdAt) || k.createdAt <= 0) {
+    throw new Error("Keystore has a malformed creation timestamp.");
+  }
+}
+
 /**
  * Decrypt a keystore with the user password. Returns the signing secret.
  *
@@ -122,12 +199,12 @@ export async function encryptSecret(
  * caller must treat any throw here as "wrong password or tampered keystore".
  */
 export async function decryptSecret(keystore: EncryptedKeystore, password: string): Promise<string> {
-  if (keystore.version !== KEYSTORE_VERSION) {
-    throw new Error(`Unsupported wallet keystore version: ${keystore.version}.`);
-  }
-  const key = await deriveEncryptionKey(password, fromBase64(keystore.kdf.salt), keystore.kdf.iterations);
+  validateKeystore(keystore);
+  const salt = fromBase64(keystore.kdf.salt);
+  const iv = fromBase64(keystore.cipher.iv);
+  const key = await deriveEncryptionKey(password, salt, keystore.kdf.iterations);
   const plain = await subtle().decrypt(
-    { name: "AES-GCM", iv: fromBase64(keystore.cipher.iv) as unknown as BufferSource },
+    { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
     fromBase64(keystore.cipher.ciphertext) as unknown as BufferSource,
   );
@@ -145,18 +222,14 @@ export function serializeKeystore(keystore: EncryptedKeystore): string {
   return JSON.stringify(keystore);
 }
 
-/** Parse a serialized keystore. Throws when the shape is invalid. */
+/** Parse + validate a serialized keystore. Throws before any KDF work when the shape is invalid. */
 export function deserializeKeystore(json: string): EncryptedKeystore {
-  const parsed = JSON.parse(json) as EncryptedKeystore;
-  if (
-    parsed?.version !== KEYSTORE_VERSION ||
-    !parsed?.cipher?.ciphertext ||
-    !parsed?.cipher?.iv ||
-    !parsed?.kdf?.salt ||
-    !parsed?.publicKey ||
-    !parsed?.address
-  ) {
-    throw new Error("Keystore is corrupt or not a wallet keystore.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("Keystore is not valid JSON.");
   }
+  validateKeystore(parsed);
   return parsed;
 }

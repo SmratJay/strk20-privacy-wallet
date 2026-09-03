@@ -13,6 +13,16 @@ export interface AccountDeployment {
   contractAddress: string;
 }
 
+/**
+ * On-chain deployment state of an account address.
+ *
+ *  - "deployed":     the address hosts the EXPECTED account class (class hash verified).
+ *  - "not_deployed": the address has no contract (RPC definitively says so).
+ *  - "unknown":      cannot be determined safely (RPC failure, or the address hosts a DIFFERENT
+ *                    class than expected). `unknown` must NEVER authorize a deployment.
+ */
+export type AccountDeploymentProbe = "deployed" | "not_deployed" | "unknown";
+
 export interface AccountAdapter {
   /** Stable account-contract identifier, e.g. `"ready-v0.4.0"`. Stored in wallet state. */
   readonly type: string;
@@ -21,7 +31,13 @@ export interface AccountAdapter {
   /** The STARK public key the account is configured to accept as owner. */
   readonly publicKey: string;
 
-  /** True when the account contract is deployed on-chain (class hash present). */
+  /**
+   * Probe on-chain deployment state, verifying the expected account class hash.
+   * `unknown` (RPC failure or class-hash mismatch) must never authorize a deployment.
+   */
+  probeDeployment(provider: Pick<RpcProvider, "getClassHashAt">): Promise<AccountDeploymentProbe>;
+
+  /** Convenience: true ONLY when `probeDeployment` is exactly "deployed". */
   isDeployed(provider: Pick<RpcProvider, "getClassHashAt">): Promise<boolean>;
 
   /**
