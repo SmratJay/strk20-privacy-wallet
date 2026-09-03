@@ -22,12 +22,12 @@ const PHASE_LABEL: Record<PrivateExecutionOpState['phase'], string> = {
 const ACTIVE_PHASES: PrivateExecutionOpState['phase'][] = ['preparing', 'proving', 'submitted', 'pending'];
 
 /**
- * Wallet Core private execution — the Phase 1 minimal surface. It shows the private balance,
- * lets the user pick a shadow identity, an amount, and an application target, then runs
- * `runtime.executePrivate(intent)`. The UI only ever sees the safe `executionOp` lifecycle and a
- * transaction hash — never the viewing key, proofs, notes, or secret material.
- *
- * This is intentionally ONE small panel, not a dashboard redesign and not a cross-chain surface.
+ * Wallet Core private execution — REAL STRK20 shadow-account surface. It shows the private
+ * balance, lets the user pick/derive a shadow identity (appName + nonce), an amount, and a target
+ * application, then runs `runtime.executePrivate(intent)`. The shadow account (not the wallet)
+ * calls the application, and the outer transaction is relayed through the private paymaster.
+ * The UI only ever sees the safe `executionOp` lifecycle + tx hash — never the viewing key,
+ * proofs, notes, or secret material.
  */
 export const WalletCorePrivateExecute: React.FC = () => {
   const { runtime, state } = useWalletRuntime();
@@ -37,12 +37,12 @@ export const WalletCorePrivateExecute: React.FC = () => {
     process.env.NEXT_PUBLIC_STRK20_EXECUTION_PROBE_SEPOLIA?.trim() || networkConfig.poolAddress;
 
   const [amount, setAmount] = useState('');
+  const [appName, setAppName] = useState('');
+  const [nonce, setNonce] = useState('0');
   const [target, setTarget] = useState(defaultTarget);
-  const [purpose, setPurpose] = useState('');
-  const [selectedIdentity, setSelectedIdentity] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [identities, setIdentities] = useState<{ id: string; purpose: string }[]>([]);
+  const [identities, setIdentities] = useState<{ appName: string; nonce: string; shadowAddress: string }[]>([]);
 
   const activePhase = ACTIVE_PHASES.includes(state.executionOp.phase);
   const disabled = busy || activePhase;
@@ -53,32 +53,41 @@ export const WalletCorePrivateExecute: React.FC = () => {
     const safe = runtime
       .listPrivateIdentities()
       .filter((i) => i.status === 'active')
-      .map((i) => ({ id: i.id, purpose: i.purpose }));
+      .map((i) => ({ appName: i.appName, nonce: i.nonce, shadowAddress: i.shadowAddress }));
     setIdentities(safe);
-    if (!safe.some((i) => i.id === selectedIdentity)) {
-      setSelectedIdentity(safe[0]?.id ?? '');
+    if (!safe.some((i) => i.appName === appName.trim() && BigInt(i.nonce) === BigInt(nonce || '0'))) {
+      // keep the current form values; do not overwrite the user's in-progress entry
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.account?.walletId, state.network]);
 
   const handleCreateIdentity = useCallback(async () => {
     setError(null);
-    if (!purpose.trim()) {
-      setError('Identity purpose is required.');
+    if (!appName.trim()) {
+      setError('appName is required.');
+      return;
+    }
+    let nonceBig: bigint;
+    try {
+      nonceBig = BigInt(nonce.trim() || '0');
+      if (nonceBig < 0n) throw new Error('negative');
+    } catch {
+      setError('nonce must be a non-negative integer.');
       return;
     }
     setBusy(true);
     try {
-      const identity = await runtime.createPrivateIdentity(purpose.trim());
-      setIdentities((prev) => [...prev.filter((i) => i.id !== identity.id), { id: identity.id, purpose: identity.purpose }]);
-      setSelectedIdentity(identity.id);
-      setPurpose('');
+      const identity = await runtime.createShadowIdentity(appName.trim(), nonceBig);
+      setIdentities((prev) => [
+        ...prev.filter((i) => !(i.appName === identity.appName && BigInt(i.nonce) === BigInt(identity.nonce))),
+        { appName: identity.appName, nonce: identity.nonce, shadowAddress: identity.shadowAddress },
+      ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Private identity creation failed.');
+      setError(err instanceof Error ? err.message : 'Shadow identity creation failed.');
     } finally {
       setBusy(false);
     }
-  }, [runtime, purpose]);
+  }, [runtime, appName, nonce]);
 
   const handleExecute = useCallback(async () => {
     setError(null);
@@ -87,8 +96,16 @@ export const WalletCorePrivateExecute: React.FC = () => {
       setError('Amount must be greater than zero.');
       return;
     }
-    if (!selectedIdentity) {
-      setError('Create or select a private identity first.');
+    if (!appName.trim()) {
+      setError('appName is required (create or select a shadow identity first).');
+      return;
+    }
+    let nonceBig: bigint;
+    try {
+      nonceBig = BigInt(nonce.trim() || '0');
+      if (nonceBig < 0n) throw new Error('negative');
+    } catch {
+      setError('nonce must be a non-negative integer.');
       return;
     }
     if (!target?.trim()) {
@@ -97,12 +114,14 @@ export const WalletCorePrivateExecute: React.FC = () => {
     }
     setBusy(true);
     try {
+      const amountHex = '0x' + amountBase.toString(16);
       await runtime.executePrivate({
-        action: 'application.invoke',
+        action: 'shadow.invoke',
+        appName: appName.trim(),
+        nonce: nonceBig,
         token: strk.address,
         amount: amountBase,
-        targetContract: target.trim(),
-        identity: selectedIdentity,
+        calls: [{ contractAddress: target.trim(), entrypoint: 'record', calldata: [amountHex] }],
       });
       setAmount('');
     } catch (err) {
@@ -110,7 +129,7 @@ export const WalletCorePrivateExecute: React.FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [runtime, strk, amount, target, selectedIdentity]);
+  }, [runtime, strk, amount, target, appName, nonce]);
 
   if (!state.privacy.available) {
     return (
@@ -129,13 +148,12 @@ export const WalletCorePrivateExecute: React.FC = () => {
         <h2 className="text-sm font-semibold text-zinc-200">Private execute</h2>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-800 px-2.5 py-0.5 text-[11px] text-violet-300">
           <Zap className="w-3 h-3" />
-          application action
+          real shadow account
         </span>
       </div>
       <p className="text-xs text-zinc-500 mb-4">
-        Spend a private STRK20 balance to trigger an action on an external Starknet application.
-        Executed through the privacy layer — the application only sees your private execution
-        identity, never your wallet.
+        Spend a private STRK20 balance through a REAL shadow account: the shadow account (not your
+        wallet) calls the application, and the outer transaction is relayed by a private paymaster.
       </p>
 
       <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-4">
@@ -152,52 +170,80 @@ export const WalletCorePrivateExecute: React.FC = () => {
 
       {state.executionOp.phase !== 'idle' && (
         <div className="rounded-md border border-violet-900 bg-violet-950/30 text-violet-200 text-xs p-3 mb-4 flex items-start gap-2">
-          {activePhase ? <Loader2 className="w-3.5 h-3.5 animate-spin mt-0.5" /> : state.executionOp.phase === 'success' ? <CircleCheck className="w-3.5 h-3.5 mt-0.5" /> : <TriangleAlert className="w-3.5 h-3.5 mt-0.5" />}
+          {activePhase ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin mt-0.5" />
+          ) : state.executionOp.phase === 'success' ? (
+            <CircleCheck className="w-3.5 h-3.5 mt-0.5" />
+          ) : (
+            <TriangleAlert className="w-3.5 h-3.5 mt-0.5" />
+          )}
           <span className="min-w-0">
-            {state.executionOp.action ? `${state.executionOp.action}` : ''} — {PHASE_LABEL[state.executionOp.phase]}
-            {state.executionOp.amount !== null ? ` · ${(Number(state.executionOp.amount) / 10 ** (strk?.decimals ?? 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${state.executionOp.tokenSymbol ?? ''}` : ''}
-            {state.executionOp.targetContract ? ` · ${state.executionOp.targetContract.slice(0, 10)}…` : ''}
+            {state.executionOp.action ?? ''} — {PHASE_LABEL[state.executionOp.phase]}
+            {state.executionOp.appName ? ` · ${state.executionOp.appName}:${state.executionOp.nonce ?? '0'}` : ''}
+            {state.executionOp.amount !== null
+              ? ` · ${(Number(state.executionOp.amount) / 10 ** (strk?.decimals ?? 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${state.executionOp.tokenSymbol ?? ''}`
+              : ''}
+            {state.executionOp.shadowAddress ? ` · shadow ${state.executionOp.shadowAddress.slice(0, 10)}…` : ''}
             {state.executionOp.transactionHash ? ` · ${state.executionOp.transactionHash.slice(0, 14)}…` : ''}
             {state.executionOp.message ? ` — ${state.executionOp.message}` : ''}
           </span>
         </div>
       )}
 
-      <label className="block text-sm text-zinc-400 mb-1">Identity (shadow execution identity)</label>
+      <label className="block text-sm text-zinc-400 mb-1">Shadow identity (appName · nonce)</label>
       {identities.length > 0 ? (
-        <select
-          value={selectedIdentity}
-          onChange={(e) => setSelectedIdentity(e.target.value)}
-          disabled={disabled}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3 disabled:opacity-40"
-        >
-          {identities.map((i) => (
-            <option key={i.id} value={i.id}>
-              {i.purpose} · {i.id.slice(0, 10)}…
-            </option>
-          ))}
-        </select>
+        <div className="flex gap-2 mb-2">
+          <select
+            value=""
+            onChange={(e) => {
+              const sel = identities[Number(e.target.value)];
+              if (sel) {
+                setAppName(sel.appName);
+                setNonce(sel.nonce);
+              }
+            }}
+            disabled={disabled}
+            className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-40"
+          >
+            <option value="">Use existing…</option>
+            {identities.map((i, idx) => (
+              <option key={`${i.appName}-${i.nonce}`} value={idx}>
+                {i.appName} · {i.nonce} · shadow {i.shadowAddress.slice(0, 8)}…
+              </option>
+            ))}
+          </select>
+        </div>
       ) : (
-        <p className="text-xs text-zinc-500 mb-3">No private identity yet — create one below.</p>
+        <p className="text-xs text-zinc-500 mb-2">No shadow identity yet — create one below.</p>
       )}
       <div className="flex gap-2 mb-4">
         <input
-          value={purpose}
-          onChange={(e) => setPurpose(e.target.value)}
-          placeholder="identity purpose (e.g. acceptance)"
+          value={appName}
+          onChange={(e) => setAppName(e.target.value)}
+          placeholder="appName (e.g. orrange)"
           disabled={disabled}
           className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-40"
         />
+        <input
+          value={nonce}
+          onChange={(e) => setNonce(e.target.value)}
+          placeholder="nonce"
+          disabled={disabled}
+          className="w-20 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-40"
+        />
         <button
           onClick={handleCreateIdentity}
-          disabled={disabled || !purpose.trim()}
+          disabled={disabled || !appName.trim()}
           className="rounded-md border border-violet-800 px-3 py-2 text-sm text-violet-300 disabled:opacity-40"
         >
           Create identity
         </button>
       </div>
+      <p className="text-[11px] text-zinc-600 mb-4">
+        Same appName + nonce → same shadow address. A new nonce → a fresh shadow address.
+      </p>
 
-      <label className="block text-sm text-zinc-400 mb-1">Target application (privacy_invoke contract)</label>
+      <label className="block text-sm text-zinc-400 mb-1">Target application (the shadow calls it)</label>
       <input
         value={target}
         onChange={(e) => setTarget(e.target.value)}
@@ -206,7 +252,7 @@ export const WalletCorePrivateExecute: React.FC = () => {
         className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-4 disabled:opacity-40"
       />
 
-      <label className="block text-sm text-zinc-400 mb-1">Amount ({strk?.symbol ?? ''})</label>
+      <label className="block text-sm text-zinc-400 mb-1">Amount routed into the shadow ({strk?.symbol ?? ''})</label>
       <input
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
@@ -217,17 +263,17 @@ export const WalletCorePrivateExecute: React.FC = () => {
 
       <button
         onClick={handleExecute}
-        disabled={disabled || !amount || !selectedIdentity || !target?.trim()}
+        disabled={disabled || !amount || !appName.trim() || !target?.trim()}
         className="inline-flex items-center gap-2 rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
       >
         {disabled ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-        Execute privately
+        Execute through shadow account
       </button>
 
       <p className="text-[11px] text-zinc-600 mt-3 flex items-center gap-1">
         <Lock className="w-3 h-3" />
         The wallet core signs the private proof. The viewing key, notes, and proofs never leave the
-        privacy session.
+        privacy session; the paymaster relays the outer tx.
       </p>
     </section>
   );

@@ -1,22 +1,16 @@
-# Private Execution — Phase 1
+# Private Execution — REAL STRK20 Shadow Accounts
 
 ## Why `PrivateExecutor` exists
 
-The Wallet Core already proves the privacy foundation end to end: self-custodial custody,
-wallet-native STRK20 registration, shield, private balance discovery, private transfer, and
-unshield. What it cannot yet do is cause an **external Starknet application action** from a
-private balance — every existing operation either moves tokens inside the privacy pool or
-withdraws to public.
-
-`PrivateExecutor` is the new layer that connects a private STRK20 balance to an external
-Starknet application while keeping the application on the privacy side of the wallet:
+The Wallet Core proves the privacy foundation end to end: self-custodial custody, wallet-native
+STRK20 registration, shield, private balance discovery, private transfer, and unshield. The
+missing layer is **private application execution through a REAL STRK20 shadow account** — a
+deterministic, anonymizer-derived execution identity that calls a Starknet application while the
+user's root wallet is neither the application caller nor the outer transaction sender.
 
 ```
-Wallet Core → STRK20 privacy → PrivateExecutor → Starknet application
+Wallet Core → STRK20 privacy → PrivateExecutor (shadow account) → Starknet application
 ```
-
-It is deliberately minimal and application-agnostic. It is **not** NEAR Intents, not a TEE, not a
-cross-chain system, not a solver, not a swap protocol.
 
 ## The four boundaries (never conflated)
 
@@ -24,142 +18,124 @@ cross-chain system, not a solver, not a swap protocol.
 |---|---|---|
 | **Wallet Core** | **Custody** | keys, keystore, Ready/Braavos account, local signer, WalletRuntime |
 | **STRK20** | **Privacy** | viewing key, notes, proofs, pool ops — `WalletPrivacySession` → `Strk20Adapter` → vendored SDK |
-| **PrivateExecutor** | **Application execution** | turning a `PrivateExecutionIntent` into a safe `PrivateExecutionReceipt` |
+| **PrivateExecutor** | **Application execution** | real shadow-account execution (this module) |
 | **NEAR** | Future routing layer | NOT built here |
 
 `Wallet Core = custody` · `STRK20 = privacy` · `PrivateExecutor = application execution` ·
 `NEAR = future routing layer`.
 
+## The shadow-account flow (real RC5 `shadowAccounts()`)
+
+```
+MASTER WALLET (Wallet Core authority, signs the proof invocation)
+  → STRK20 private balance (mature shielded notes)
+  → shadowAccounts(appName).commitment(nonce)   (deterministic shadow identity)
+  → shadow address (counterfactual, anonymizer-derived)
+  → private STRK withdrawn to the shadow address
+  → shadow.invoke(nonce, { calls })             (the SHADOW ACCOUNT calls the application)
+  → private paymaster relays the proof          (outer tx sender ≠ root wallet)
+  → Starknet application sees the SHADOW ACCOUNT as caller
+```
+
+- The user's Wallet Core account signs the PROOF INVOCATION (the SDK builds it with the wallet's
+  signer — this authorizes the private-note spending). The OUTER transaction is relayed through
+  the AVNU private paymaster, so the root wallet is never the on-chain tx sender.
+- `appName` scopes the shadow identity; `nonce` selects it. Same `appName + nonce` → same
+  shadow address (linkable). A new `nonce` → a fresh, unlinkable shadow address.
+- This **replaces** the earlier `privacy_invoke(identity, amount)` prototype, which was NOT a
+  real shadow account (the application saw the pool + a passed commitment, not a shadow account).
+
+## Pinned Sepolia shadow-account stack (verified live)
+
+| Component | Address / value |
+|---|---|
+| Privacy pool | `0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91` |
+| Shadow-account anonymizer | `0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f` |
+| Shadow-account class | `0x038489bd44c93ee2eb8604d3a15db60781145951ebdebe356fc824b4a0385a5c` |
+| Primer class (address formula) | `0x00123e6bc1c14ae9934e933d3f64916a6116dd6b036a922b2b1f0815e0d1d300` |
+| Operator discovery | `https://discovery-service.alpha-sepolia.sw-dev.io` |
+| Operator prover | `https://transaction-prover.alpha-sepolia.sw-dev.io/` |
+| Private paymaster | `https://sepolia.paymaster.avnu.fi` (`default` mode, credential-free) |
+| SDK / starknet.js | `@starkware-libs/starknet-privacy-sdk` `0.14.3-rc.5` / `starknet` `10.5.0` |
+
+The shadow address is `calculateContractAddressFromHash(commitment, PRIMER, [], anonymizer)`.
+The reference starter (`starkience/strk20-shadow-account-starter`) independently verified the same
+pinned stack. Orrange keeps the master key in Wallet Core (browser) — the starter's trusted-server
+key pattern is NOT adopted.
+
 ## Wallet Core boundary
 
-Wallet Core **does not know about applications, solvers, swaps, or anything application-level.**
-The only new Wallet Core surface is `runtime.executePrivate(intent)` (plus safe identity listing
-and the existing `createPrivateIdentity`). The runtime:
+Wallet Core does not know about applications or swaps. The only new Wallet Core surface is
+`runtime.executePrivate(intent)` (shadow execution) + `createShadowIdentity(appName, nonce)`.
+The runtime:
 
 - requires an unlocked Wallet Core wallet and a live `WalletPrivacySession`;
 - captures and validates the existing `(walletId, network, generation)` guard — stale/locked
   executions are refused;
-- runs through `StarknetPrivateExecutor` → `WalletPrivacySession` → `Strk20Adapter` → SDK;
+- runs through `StarknetPrivateExecutor` → `WalletPrivacySession.executeShadowApplication` →
+  `Strk20Adapter` → the SDK `shadowAccounts()` builder → the private paymaster;
 - appends safe activity metadata and returns a `PrivateExecutionReceipt`.
 
-No Wallet Core internals (secret, signer, account) reach React. The raw `UnlockedWallet` is
-consumed by the executor only to assert identity ownership against the active session.
+No Wallet Core internals (secret, signer, account) reach React.
 
 ## STRK20 boundary
 
-Everything private stays inside `WalletPrivacySession` / `Strk20Adapter`:
-
-- the **viewing key** is derived in-memory and never leaves the session;
-- the executor never receives or forwards the viewing key, notes, or proofs;
-- the SDK's **stateless / full-refresh model** is preserved — `autoDiscover: { notes: "refresh",
-  channels: "refresh" }` refreshes discovery before execution, and the private registry remains
-  session state, never durable protocol state;
-- the **10-block proving safety margin** (`PROVING_SAFETY_MARGIN`) is respected (the adapter
-  proves against a block safely behind the chain head);
-- mutating ops (including private execution) are serialized through the session mutex;
-- cache isolation (per address + full STRK20 context) is unchanged.
+- The viewing key stays inside `WalletPrivacySession`; it never leaves the session.
+- The SDK's stateless model is used; discovery is refreshed before execution.
+- The 10-block proving margin (`PROVING_SAFETY_MARGIN`) and note maturity (10 blocks) are
+  respected: `selectMatureNotes` only spends notes that predate the proving block by 10 blocks.
+- Mutating ops (including shadow execution) are serialized through the session mutex.
+- Cache isolation (per address + full STRK20 context) is unchanged.
+- Known operator quirk (worked around): a freshly-opened self-channel is returned by the
+  discovery indexer as "precomputed" until confirmed, so a separate `register()` followed
+  immediately by a `shield()` makes the SDK re-open the channel and the pool reverts with
+  `NON_ZERO_VALUE`. The acceptance therefore lets the FIRST SHIELD auto-register + auto-setup in
+  one proof (no separate register). `register()` stays minimal (viewing key only).
 
 ## `PrivateIdentity` / shadow-account role
 
-The execution identity is the existing `PrivateIdentity` primitive, resolved **scoped to the
-active wallet + network** (never a caller-injected commitment). The `PrivateIdentity` carries the
-real SDK shadow-account commitments (`partialCommitment`, `commitmentNonce0`).
-
-Shadow-account model preserved:
-
-```
-Master Wallet → PrivateIdentity → Shadow Account → Private App Execution
-```
-
-- **Master Wallet** = Wallet Core authority (signs the STRK20 proof via the local signer).
-- **PrivateIdentity** = the SDK-computed shadow commitment (the execution identity).
-- **Shadow Account** = the identity the application executes under. The application only ever
-  sees the public shadow commitment passed as `privacy_invoke` calldata and the privacy pool as
-  the caller — never the master wallet address. It is an **execution identity**, NOT another
-  master wallet and NOT another custody system.
-- **Private App Execution** = the external contract's `privacy_invoke(identity, amount)`.
-
-Wallet Core remains the ultimate user authority: every execution is a Wallet Core-signed STRK20
-proof transaction.
-
-## Exact SDK primitives used
-
-All from the vendored `@starkware-libs/starknet-privacy-sdk` `0.14.3-rc.5`:
-
-- `createPrivateTransfers(...)` — the SDK context (account/signer, viewing-key provider, prover,
-  discovery, pool).
-- `build({ autoSetup, autoDiscover: { notes: "refresh", channels: "refresh" },
-  autoSelectNotes: "naive" })` — stateless builder with note/channel discovery refresh.
-- `.with(token).withdraw({ recipient, amount })` — spend a private note to the application
-  on-chain (the pool pays the application).
-- `.invoke(callBuilder)` — queue a `privacy_invoke` call on the target application that runs
-  after the private ops in the same `apply_actions` proof transaction.
-- `.surplusTo(recipient)` — return any note surplus to the user's own private balance.
-- `simulate({ node })` / `execute({ provingBlockId })` — the adapter's fee-estimate → execute →
-  submit pipeline with the safe proving block.
-- The `privateApplication` application adapter mirrors the `privateCurve` pattern (an application
-  adapter on the generic `Strk20Adapter`) so application logic never leaks into the generic
-  adapter.
-
-The RC5 `shadowAccounts(...)` / `ShadowAccountsBuilder` primitives are the SDK's full
-shadow-account anonymizer path and remain the documented next step — they require a deployed
-`shadow_account_anonymizer` + shadow-account class hash, which are not configured in this build.
+`PrivateIdentity` now models a real shadow identity: `owner`, `chain`, `appName`, `nonce`,
+`anonymizerAddress`, `partialCommitment`, `commitment`, `shadowAddress`, `status`. Records are
+wallet + network scoped (a Sepolia identity can never be reused on mainnet, nor wallet A's by
+wallet B). The viewing key is consumed transiently and never persisted.
 
 ## What is and is not private
 
-**Private:** the master-wallet → application linkage. The application sees the shadow commitment,
-not the wallet. The spend is a private-note proof (STRK20), signed locally, with notes/proofs
-never exposed.
+**Private:** the master-wallet → application linkage. The application sees the shadow account,
+never the wallet. The spend is a private-note proof (STRK20), signed locally, with notes/proofs
+never exposed. The outer transaction is relayed by the paymaster (root is not the sender).
 
 **Not private (honest limits):**
-- The application action itself (`privacy_invoke` calldata) is public on-chain; the application
-  records the shadow commitment and amount.
-- The privacy pool's caller identity and the `apply_actions` transaction are public on-chain.
-- Discovery traffic to the indexer is direct HTTPS by default (OHTTP is a config seam).
-- The Phase 1 identity is a commitment derived from owner + viewing key + anonymizer namespace +
-  dapp name. When the real anonymizer is deployed, the same commitment maps to a real shadow
-  account; until then it is an execution identity, not a deployed shadow account.
+- The shadow address, its calls, target, amounts, application state, and timing are public.
+- The initial shield exposes the root account, token, amount, and timing.
+- The configured prover and discovery services process the private requests.
+- This is not an anonymity guarantee.
 
 ## Current limitation
 
-- The only supported action is `application.invoke` against a contract implementing
-  `privacy_invoke(identity, amount)`.
-- The acceptance target is a tiny test-only helper contract (`PrivateExecutionProbe`) — a real
-  app integration would follow the same path.
-- The RC5 `shadowAccounts()` anonymizer path is not wired (anonymizer not configured).
-- The live gate needs the operator prover + discovery services reachable and a funded Sepolia
-  wallet with an existing private balance.
+- The only supported action is `shadow.invoke` against a validated application call. The
+  acceptance target is a tiny `ShadowExecutionProbe` contract that records the shadow caller.
+- The paymaster `default` mode is credential-free but charges a relay fee (~17 STRK on Sepolia),
+  paid from the private balance. `sponsored_private` mode (server-side API key) is supported by
+  the paymaster client but not wired.
+- `register()` is intentionally minimal; a fresh wallet's first shield auto-registers.
 
-## Acceptance result
+## Acceptance result (live Sepolia, verified on-chain)
 
-**Live Sepolia run (2026-09-03) — honest status:**
+On 2026-09-03 a REAL shadow-account execution passed end to end:
 
-- `PrivateExecutionProbe` **deployed and verified on Sepolia**:
-  - address `0x7874ab24a8f46969e124f6fe388ae36f8ce6c05b13a2c46ba1a9adcc6e90e84`
-  - deploy tx `0x9a07c9d36851335b5ce9e766053cbb27824e222bdd4f9ddfd7ac53d2ad93c7` — `SUCCEEDED`
-  - on-chain `get_privacy_pool` returns the Sepolia pool; `get_execution_count` = 0.
-- A fresh Wallet Core wallet (funded by the repo's deployer) was created, funded, deployed, and
-  reached 10-block proving maturity. Its **real STRK20 register transaction SUCCEEDED on-chain**:
-  - tx `0x40bd11e5658689fcb4688cf5ef2b639876c6776530e7986d6a415beeab8e5a0` — `SUCCEEDED` /
-    `ACCEPTED_ON_L2` — the wallet's wallet-native viewing key is registered in the STRK20 pool.
-- The shield and the private execution transaction were **blocked before submission by the
-  operator discovery indexer**: the official `discovery-service:PRIVACY-0.14.3-RC.2` image's
-  indexer cannot process current Starknet Sepolia new-head WebSocket events (its bundled
-  starknet-rust parser drops the block-header subscription events), so it never tracks an indexed
-  head and the SDK's `outgoing_state`/`incoming_state` calls return `503 "No indexed head
-  available yet"`. The repo's operator infrastructure uses a custom **patched** discovery image
-  (built on the operator's EC2, not in this repo) for exactly this reason; the public
-  `discovery.orrange.xyz` endpoint is unreachable from this environment.
-- **No success was claimed for the private execution tx** — per the phase rule, the execution tx
-  did not actually succeed, so it is NOT reported as live.
+- Fresh Wallet Core wallet `0x6af30f7806e01761bf045d347948cef6ab608cb84d1d97c50cb739b7a36439d`
+  funded + deployed + reaching proving maturity.
+- Shield (auto-register) tx `0x43908c66a57e47d1aba58ffad27c6ccc87c5ea6d1dcbe76f80369dcb92d4871` →
+  private STRK balance 30 STRK.
+- Shadow identity `(appName="orrange", nonce=0)`:
+  commitment `0x4d37bee335403078cb96f4fc03b37a7be0f07063c2486651b7b911a6b1678ce`,
+  shadow address `0x2201cdc500333ac6517c6b44f955ce21c749a0faf74aa07ea6f7cc6ee0b668f`.
+- **Shadow execution tx `0x4b05bbd17f2648d9adea2a443c5179520c5eb372199e678462394e8c0e3f1b7`** —
+  `SUCCEEDED` / `ACCEPTED_ON_L2`, block `14507476`.
+- Verified on-chain: the probe's execution count for the shadow address is `1`, the recorded
+  caller is the shadow address (NOT the root wallet), the recorded amount is `0.2 STRK`, the
+  outer tx sender `0x4ab1f891…` differs from the root wallet, and the shadow address runs the
+  pinned shadow-account class `0x038489bd44c93ee2eb8604d3a15db60781145951ebdebe356fc824b4a0385a5c`.
 
-A reviewer with a working (patched) discovery service can run the full gate:
-
-```bash
-export NEXT_PUBLIC_STRK20_PROVER_URL=...   # reachable prover
-export NEXT_PUBLIC_STRK20_DISCOVERY_URL=... # working discovery indexer
-export NEXT_PUBLIC_STRK20_EXECUTION_PROBE_SEPOLIA=0x7874ab24a8f46969e124f6fe388ae36f8ce6c05b13a2c46ba1a9adcc6e90e84
-export NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA=0x7874ab24a8f46969e124f6fe388ae36f8ce6c05b13a2c46ba1a9adcc6e90e84
-export RUN_LIVE_ACCEPTANCE=1
-npx vitest run src/__tests__/privateExecutionLiveAcceptance.test.ts
-```
+**PRIVATE STRK → REAL SHADOW ACCOUNT → REAL STARKNET APPLICATION CALL** — verified live.

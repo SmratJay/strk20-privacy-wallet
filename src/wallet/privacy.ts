@@ -3,8 +3,9 @@ import { getNetworkConfig } from "@/config/networks";
 import {
   Strk20Adapter,
   STRK_TOKEN_ADDRESS,
-  privateApplicationInvoke,
-  type PrivateApplicationInvokeParams,
+  shadowAccountInvoke,
+  type ShadowAccountInvokeParams,
+  type ShadowCallLike,
   type Strk20User,
   type Strk20ExecuteReceipt,
 } from "@/privacy/strk20";
@@ -96,6 +97,8 @@ export interface WalletPrivacyConfig {
   proverUrl: string;
   discoveryUrl: string;
   feeTokenAddress?: string;
+  /** RC5 shadow-account anonymizer (network-scoped PUBLIC config). Required for shadow execution. */
+  shadowAccountAnonymizerAddress: string;
   /**
    * Optional discovery OHTTP seam (RFC 9458) forwarded to the STRK20 adapter. Disabled by default;
    * only set when the operator's discovery/relay infrastructure supports it. See Strk20Adapter.
@@ -125,11 +128,13 @@ export function resolveWalletPrivacyConfig(
     ""
   ).trim();
   const pool = getNetworkConfig(network).poolAddress;
+  const anonymizer = getNetworkConfig(network).shadowAccountAnonymizerAddress.trim();
   return {
     poolContractAddress: pool,
     proverUrl: proverUrl.replace(/\/+$/, ""),
     discoveryUrl: discoveryUrl.replace(/\/+$/, ""),
     feeTokenAddress: STRK_TOKEN_ADDRESS,
+    shadowAccountAnonymizerAddress: anonymizer,
     // Enable discovery OHTTP ONLY when the operator supports it ("true"); defaults to direct HTTPS.
     discoveryOhttp: ohttpRaw === "true" ? true : undefined,
   };
@@ -186,6 +191,7 @@ export class WalletPrivacySession {
       proverUrl: config.proverUrl,
       discoveryUrl: config.discoveryUrl,
       feeTokenAddress: config.feeTokenAddress,
+      shadowAccountAnonymizerAddress: config.shadowAccountAnonymizerAddress,
       discoveryOhttp: config.discoveryOhttp,
       onApprovalStatus: (status) => this.onApprovalStatus?.(status),
     });
@@ -268,53 +274,53 @@ export class WalletPrivacySession {
   }
 
   /**
-   * Resolve an ACTIVE PrivateIdentity for this wallet on this network. The identity MUST belong
-   * to the session wallet + network (never a cross-wallet/cross-network identity) and MUST be
-   * active. Throws otherwise. Returns only the public identity record.
+   * Resolve an ACTIVE shadow identity for this wallet on this network by (appName, nonce). The
+   * identity MUST belong to the session wallet + network (never cross-wallet/cross-network) and
+   * MUST be active. Throws otherwise. Returns only the public identity record.
    */
-  getPrivateIdentity(id: string, owner?: string): PrivateIdentity {
+  getShadowIdentity(appName: string, nonce: bigint, owner?: string): PrivateIdentity {
     const expectedOwner = owner?.trim() ? owner : this.wallet.address;
     if (BigInt(expectedOwner).toString(16) !== BigInt(this.wallet.address).toString(16)) {
-      throw new Error("Private identity owner does not match the active wallet.");
+      throw new Error("Shadow identity owner does not match the active wallet.");
     }
     const identity = listPrivateIdentities(this.storage, this.network, expectedOwner).find(
-      (i) => i.id.toLowerCase() === id.toLowerCase() && i.status === "active",
+      (i) => i.appName === appName && BigInt(i.nonce) === nonce && i.status === "active",
     );
     if (!identity) {
-      throw new Error(`No active private identity ${id} for this wallet on ${this.network}.`);
+      throw new Error(`No active shadow identity (${appName}, nonce ${nonce}) for this wallet on ${this.network}.`);
     }
     return identity;
   }
 
   /**
-   * Private application execution (serialized like every mutating pool op).
+   * REAL STRK20 shadow-account execution (serialized like every mutating pool op).
    *
-   * Consumes a private STRK20 balance and causes an external Starknet application action through
-   * the SDK private-invoke pipeline (withdraw → privacy_invoke → surplus), signed by the Wallet
-   * Core local signer. The application executes under the passed shadow identity commitment —
-   * never the master wallet. The viewing key stays inside this session.
+   * Spends a private STRK20 balance through the SDK's RC5 `shadowAccounts()` primitive: the
+   * anonymizer derives the shadow account for (appName, nonce), the private funds are withdrawn
+   * to the shadow address, and the shadow account executes the application `calls` (so the
+   * application sees the SHADOW ACCOUNT as caller — never the root wallet). The proof is relayed
+   * through the private paymaster so the root is also not the outer tx sender. The viewing key
+   * stays inside this session; the master key never leaves Wallet Core.
    */
-  executePrivateApplication(params: PrivateApplicationInvokeParams): Promise<PrivacyOperationResult> {
-    return this.serialize(async () => {
-      const receipt = await privateApplicationInvoke(this.adapter, this.user(), params);
-      return toSafeResult(receipt);
-    });
+  executeShadowApplication(params: ShadowAccountInvokeParams): Promise<import("@/privacy/strk20").ShadowAccountInvokeResult> {
+    return this.serialize(async () => shadowAccountInvoke(this.adapter, this.user(), params));
   }
 
-  /** Create a PrivateIdentity for this wallet. The viewing key is consumed transiently, never stored. */
-  async createPrivateIdentity(
-    purpose: string,
-    opts: { anonymizerAddress: string; poolContractAddress: string; dappName?: string },
+  /** Create a shadow identity for this wallet. The viewing key is consumed transiently, never stored. */
+  async createShadowIdentity(
+    appName: string,
+    nonce: bigint,
+    opts: { anonymizerAddress: string; poolContractAddress: string },
   ): Promise<PrivateIdentity> {
     return createPrivateIdentity(
       {
         owner: this.wallet.address,
-        purpose,
         chain: this.network,
+        appName,
+        nonce,
         viewingKey: this.viewingKeyInternal,
         anonymizerAddress: opts.anonymizerAddress,
         poolContractAddress: opts.poolContractAddress,
-        dappName: opts.dappName,
       },
       this.storage,
     );

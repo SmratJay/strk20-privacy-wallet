@@ -9,4 +9,4 @@ pub mod stwo_verifier;
 pub mod groth16_verifier;
 pub mod pel_perps_core;
 pub mod pel_perps_strk20_bridge;
-pub mod private_execution_probe;
+pub mod shadow_execution_probe;

@@ -45,13 +45,21 @@
       "status": "CONFIRMED"
     },
     {
-      "name": "PrivateExecutionProbe",
+      "name": "ShadowExecutionProbe",
       "network": "sepolia",
-      "address": "0x7874ab24a8f46969e124f6fe388ae36f8ce6c05b13a2c46ba1a9adcc6e90e84",
-      "classHash": "0x6a3babc558b1d26dcbf3349a41d4250aaba479041fd365998d4d1c13294b9f6",
+      "address": "0x14f757293347d1611817f9617a9a3a6d3f9a895e994e31d4e35986d5d533a43",
+      "classHash": "0x4782a2d2c10e8ee911e039256f744f88a5a125d06cf8e9ea9742b33bc273bb5",
       "status": "DEPLOYED_AND_VERIFIED",
-      "txHash": "0x9a07c9d36851335b5ce9e766053cbb27824e222bdd4f9ddfd7ac53d2ad93c7",
-      "note": "Phase 1 private-execution acceptance probe (privacy_invoke(identity, amount))."
+      "txHash": "0x696c6d7ff54b9d158bf6f0f1f5542403df18002ce2ece5d0a4c17f42e2aefb8",
+      "note": "Phase 2 shadow-account acceptance application: the shadow account calls record(amount); the probe stores the shadow caller."
+    },
+    {
+      "name": "ShadowAccountAnonymizer",
+      "network": "sepolia",
+      "address": "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f",
+      "classHash": "0x0536d72fdbd1674cabc20df594694f634ab33a8ab93fd13c7acbc200c997cc5",
+      "status": "CONFIRMED",
+      "note": "RC5 shadow-account anonymizer (verified live by the reference starter; finalized)."
     }
   ],
   "transactions": [
@@ -69,21 +77,24 @@
     },
     {
       "network": "sepolia",
-      "type": "PRIVATE_EXECUTION_PROBE_DEPLOY",
-      "txHash": "0x9a07c9d36851335b5ce9e766053cbb27824e222bdd4f9ddfd7ac53d2ad93c7",
+      "type": "SHADOW_EXECUTION_PROBE_DEPLOY",
+      "txHash": "0x696c6d7ff54b9d158bf6f0f1f5542403df18002ce2ece5d0a4c17f42e2aefb8",
       "status": "SUCCEEDED"
     },
     {
       "network": "sepolia",
-      "type": "STRK20_REGISTER_WALLET_NATIVE_VK",
-      "txHash": "0x40bd11e5658689fcb4688cf5ef2b639876c6776530e7986d6a415beeab8e5a0",
-      "wallet": "0x68b2d02ae8602ca7a1f75070c979efe7a504da2e393e54db9ab1656022c2e14",
+      "type": "REAL_SHADOW_ACCOUNT_EXECUTION",
+      "txHash": "0x4b05bbd17f2648d9adea2a443c5179520c5eb372199e678462394e8c0e3f1b7",
       "status": "SUCCEEDED",
-      "note": "Real STRK20 registration of a fresh Wallet Core wallet's wallet-native viewing key (Phase 1 acceptance path; private execution tx itself blocked by the discovery indexer, see docs/PRIVATE_EXECUTION.md)."
+      "shadowAddress": "0x2201cdc500333ac6517c6b44f955ce21c749a0faf74aa07ea6f7cc6ee0b668f",
+      "commitment": "0x4d37bee335403078cb96f4fc03b37a7be0f07063c2486651b7b911a6b1678ce",
+      "appName": "orrange",
+      "nonce": "0x0",
+      "outerSender": "0x4ab1f891119bf79805a22318cbefca7aedaa442fff667074aa5dcf6bfe89e79",
+      "note": "REAL STRK20 shadow-account execution: private STRK \u2192 shadow account \u2192 ShadowExecutionProbe.record(0.2 STRK). The shadow account was the application caller; the outer tx sender was the private paymaster, not the root wallet. See docs/PRIVATE_EXECUTION.md."
     }
   ],
   "pending": {
-    "shieldSepolia": "PENDING_OPERATOR_SERVICES",
     "openPerpSepolia": "PENDING_OPERATOR_SERVICES",
     "closePerpSepolia": "PENDING_OPERATOR_SERVICES",
     "unshieldSepolia": "PENDING_OPERATOR_SERVICES",

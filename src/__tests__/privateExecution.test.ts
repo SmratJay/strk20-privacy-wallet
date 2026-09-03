@@ -1,15 +1,14 @@
 /**
  * @file privateExecution.test.ts
- * @description Phase 1 — Wallet Core private execution primitive. Behavior-first coverage of the
- *   `PrivateExecutor` domain layer + `WalletRuntime.executePrivate` surface:
- *   intent validation, unlocked-wallet + privacy-session requirements, stale rejection, the
- *   official SDK path (withdraw → privacy_invoke → surplus), wallet/network-scoped shadow
- *   identity selection, success/revert/failure lifecycle, serialization, and no-secret exposure.
+ * @description Stage 3B — Wallet Core REAL STRK20 shadow-account execution. Behavior-first
+ *   coverage of the `PrivateExecutor` + `WalletRuntime.executePrivate` surface:
+ *   intent validation, unlocked/privacy/stale guards, the real SDK shadow-account path
+ *   (shadowAccounts(appName) → commitment(nonce) → withdraw to shadow → invoke → paymaster relay),
+ *   wallet/network-scoped identity, root-wallet-not-outer-sender, success/revert/failure
+ *   lifecycle, serialization, and no-secret exposure.
  *
- *   The vendored STRK20 SDK is STUBBED (like strk20AdapterHardening.test.ts) so no real prover,
- *   discovery, or network is touched; the executor, session, and adapter code are real. The
- *   wallet account is patched after creation (the established repo pattern) because starknet.js
- *   replaces a plain-object provider with a real RpcProvider in `new Account(...)`.
+ *   The vendored STRK20 SDK is STUBBED (like strk20AdapterHardening.test.ts); the paymaster relay
+ *   is a stubbed fetch. No real prover, discovery, or network is touched.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -19,35 +18,29 @@ import { join } from "node:path";
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 const POOL = "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
 const PROBE = "0x05a6e9d2e6c1b3f4a8d7e6f5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5";
-const ANONYMIZER = "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
+const ANONYMIZER = "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f";
 
-// The network config module reads the anonymizer env var at MODULE LOAD (NETWORKS is a module
-// constant), so it must be set before any import executes. vi.hoisted runs first.
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA =
-    "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
+    "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f";
   process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
   process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
 });
 
-// Hoisted state so the SDK stub can record which private-transfer ops were built and how the
-// account executed them.
 const sdkState = vi.hoisted(() => ({
   opsLog: [] as string[],
   buildOpts: [] as Record<string, unknown>[],
-  invokeCalls: [] as { contractAddress: string; entrypoint: string; calldata: unknown[] }[],
+  invokeCalls: [] as { nonce: bigint; calls: unknown[]; collectPolicy: unknown }[],
   withdrawCalls: [] as unknown[],
   createCalls: 0,
   privateBalance: 500n,
-  /** Overrides the shadow commitment values the SDK stub returns for identity derivation. */
   partialCommitment: 111n,
-  commitmentNonce0: 222n,
-  /** When set, builder.execute awaits this gate (used to force in-flight overlap). */
+  commitment: 222n,
   executeGate: null as Promise<void> | null,
-  /** When true, builder.execute throws (used to exercise the failed lifecycle). */
   failExecute: false,
   activeExecutions: 0,
   maxConcurrentExecutions: 0,
+  paymasterExecutions: 0,
   reset() {
     this.opsLog.length = 0;
     this.buildOpts.length = 0;
@@ -56,11 +49,12 @@ const sdkState = vi.hoisted(() => ({
     this.createCalls = 0;
     this.privateBalance = 500n;
     this.partialCommitment = 111n;
-    this.commitmentNonce0 = 222n;
+    this.commitment = 222n;
     this.executeGate = null;
     this.failExecute = false;
     this.activeExecutions = 0;
     this.maxConcurrentExecutions = 0;
+    this.paymasterExecutions = 0;
   },
 }));
 
@@ -92,9 +86,10 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
     sdkState.buildOpts.push({ ...opts });
     const shadowBuilder = {
       partialCommitment: async () => sdkState.partialCommitment,
-      commitment: async () => sdkState.commitmentNonce0,
-      invoke: () => {
+      commitment: async () => sdkState.commitment,
+      invoke: (nonce: bigint, options: { calls: unknown[]; collectPolicy: unknown }) => {
         sdkState.opsLog.push("shadowInvoke");
+        sdkState.invokeCalls.push({ nonce, calls: options.calls, collectPolicy: options.collectPolicy });
         return builder;
       },
     };
@@ -111,18 +106,8 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
         sdkState.opsLog.push("surplusTo");
         return builder;
       },
-      invoke: (callBuilder: (args: { openNotes: { noteId: bigint }[]; withdrawals: unknown[]; poolAddress: bigint }) => unknown) => {
+      invoke: () => {
         sdkState.opsLog.push("invoke");
-        const call = callBuilder({ openNotes: [], withdrawals: [], poolAddress: 0n }) as {
-          contractAddress: string;
-          entrypoint: string;
-          calldata: unknown[];
-        };
-        sdkState.invokeCalls.push({
-          contractAddress: call.contractAddress,
-          entrypoint: call.entrypoint,
-          calldata: call.calldata,
-        });
         return builder;
       },
       shadowAccounts: () => shadowBuilder,
@@ -158,7 +143,8 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
         build: (opts: Record<string, unknown>) => makeBuilder(opts),
         discoverNotes: async () => {
           const notes = new Map();
-          notes.set(BigInt(STRK), [{ amount: sdkState.privateBalance }]);
+          // created well before the proving block so the note is mature.
+          notes.set(BigInt(STRK), [{ amount: sdkState.privateBalance, created: 900_000 }]);
           return { timestamp: "0x1f4", notes };
         },
         discoverRequirement: async () => 3,
@@ -181,6 +167,13 @@ import { generateSecretKey, canonicalizeSecret } from "../wallet/crypto";
 import { deriveWalletViewingKey } from "../wallet/privacy";
 import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
 import { validatePrivateExecutionIntent, StarknetPrivateExecutor } from "../privacy/execution";
+import {
+  shadowAccountInvoke,
+  shadowAddressFromCommitment,
+  selectMatureNotes,
+  Strk20Paymaster,
+  type ShadowAccountInvokeParams,
+} from "../privacy/strk20";
 import type { PrivateExecutionIntent } from "../privacy/execution";
 
 const PASSWORD = "correct horse battery staple";
@@ -198,9 +191,7 @@ function makeProvider(finality?: { execution_status: string }) {
 
 /** Replace the wallet account's real RpcProvider with a deterministic mock (starknet.js replaces
  * a plain-object provider in `new Account(...)`, so patching after creation is the repo pattern). */
-function patchWalletAccount(wallet: {
-  account: { provider: unknown; execute: unknown; estimateInvokeFee: unknown };
-}) {
+function patchWalletAccount(wallet: { account: { provider: unknown; execute: unknown; estimateInvokeFee: unknown } }) {
   const provider = {
     callContract: vi.fn(async (call: { entrypoint?: string }) => {
       if (call?.entrypoint === "get_fee_amount") return ["0x" + (2n * 10n ** 18n).toString(16)];
@@ -223,7 +214,7 @@ function patchWalletAccount(wallet: {
       l1_data_gas: { max_amount: 3n, max_price_per_unit: 3n },
     },
   }));
-  (wallet.account as { execute: unknown }).execute = vi.fn(async () => ({ transaction_hash: "0xsubmit" }));
+  (wallet.account as { execute: unknown }).execute = vi.fn(async () => ({ transaction_hash: "0xroot-submitted" }));
 }
 
 function makeRuntime(finality?: { execution_status: string }) {
@@ -239,56 +230,93 @@ async function createdWallet(runtime: WalletRuntime) {
   return wallet;
 }
 
-function validIntent(identityId: string, amount = 100n): PrivateExecutionIntent {
+function validIntent(appName = "orrange", nonce = 0n, amount = 100n): PrivateExecutionIntent {
   return {
-    action: "application.invoke",
+    action: "shadow.invoke",
+    appName,
+    nonce,
     token: STRK,
     amount,
-    targetContract: PROBE,
-    identity: identityId,
+    calls: [{ contractAddress: PROBE, entrypoint: "record", calldata: ["0x64"] }],
   };
+}
+
+/** Stub the AVNU private-paymaster relay so the proof tx is "relayed" without a real network. */
+function stubPaymaster() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: { body?: string }) => {
+      void url;
+      const body = JSON.parse(init?.body ?? "{}") as { method?: string };
+      if (body.method === "paymaster_buildTransaction") {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              type: "apply_action",
+              parameters: { version: "0x1", fee_mode: { mode: "default", gas_token: STRK } },
+              fee_action: { type: "withdraw", token: STRK, recipient: "0x1234", amount: "0x1" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (body.method === "paymaster_executeTransaction") {
+        sdkState.paymasterExecutions++;
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { transaction_hash: "0x1234", tracking_id: "0x1" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected paymaster method ${body.method}`);
+    }),
+  );
 }
 
 beforeEach(() => {
   sdkState.reset();
-  // Re-establish the operator env for every test (afterEach deletes them; resolveWalletPrivacyConfig
-  // reads them at runtime). The anonymizer is a module-load constant and needs no re-set.
   process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
   process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
+  stubPaymaster();
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
   delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
   delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
 });
 
 describe("intent validation", () => {
-  it("accepts a well-formed application.invoke intent", () => {
-    expect(validatePrivateExecutionIntent(validIntent("0x1"))).toBeNull();
+  it("accepts a well-formed shadow.invoke intent", () => {
+    expect(validatePrivateExecutionIntent(validIntent())).toBeNull();
   });
 
   it("rejects malformed intents BEFORE execution", () => {
     expect(validatePrivateExecutionIntent(null)).not.toBeNull();
     expect(validatePrivateExecutionIntent({})).not.toBeNull();
-    expect(validatePrivateExecutionIntent(validIntent("0x1", 0n))).not.toBeNull();
-    expect(validatePrivateExecutionIntent(validIntent("0x1", -5n))).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), action: "swap" })).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), token: "not-an-address" })).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), targetContract: "0xzz" })).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), identity: "abc" })).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), destination: "nope" })).not.toBeNull();
-    expect(validatePrivateExecutionIntent({ ...validIntent("0x1"), expiry: Date.now() - 1 })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), action: "application.invoke" })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), appName: "x".repeat(32) })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), nonce: -1n })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), amount: 0n })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), calls: [] })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), calls: [{ contractAddress: "zz", entrypoint: "record", calldata: [] }] })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), calls: [{ contractAddress: PROBE, entrypoint: "record", calldata: ["not-a-felt"] }] })).not.toBeNull();
+    expect(validatePrivateExecutionIntent({ ...validIntent(), expiry: Date.now() - 1 })).not.toBeNull();
   });
 
   it("rejects an expired intent at execution time (no SDK call)", async () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    const intent = { ...validIntent(identity.id), expiry: Date.now() - 1000 };
+    await runtime.createShadowIdentity("orrange", 0n);
+    const intent = { ...validIntent(), expiry: Date.now() - 1000 };
     const before = sdkState.createCalls;
     await expect(runtime.executePrivate(intent)).rejects.toThrow(/expired/i);
-    // No SDK context was even built — the malformed/expired intent is rejected first.
     expect(sdkState.createCalls).toBe(before);
   });
 });
@@ -298,7 +326,7 @@ describe("runtime guards", () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
     runtime.lock();
-    await expect(runtime.executePrivate(validIntent("0x1"))).rejects.toThrow(/locked/i);
+    await expect(runtime.executePrivate(validIntent())).rejects.toThrow(/locked/i);
   });
 
   it("refuses private execution when the privacy session is unavailable", async () => {
@@ -306,85 +334,87 @@ describe("runtime guards", () => {
     delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
-    await expect(runtime.executePrivate(validIntent("0x1"))).rejects.toThrow(/privacy is unavailable/i);
+    await expect(runtime.executePrivate(validIntent())).rejects.toThrow(/privacy is unavailable/i);
   });
 
   it("stale execution (locked mid-flight) is refused — state is never updated", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    // Force the SDK execute to stay in-flight until we lock the wallet.
+    await runtime.createShadowIdentity("orrange", 0n);
     let release!: () => void;
     sdkState.executeGate = new Promise<void>((res) => {
       release = res;
     });
-    const p = runtime.executePrivate(validIntent(identity.id));
-    // Let the execution reach the SDK stage before locking.
+    const p = runtime.executePrivate(validIntent());
     await new Promise((r) => setTimeout(r, 20));
     runtime.lock();
     release();
     const receipt = await p;
-    expect(receipt.transactionHash).toBe("0xsubmit");
-    // Lock resets executionOp to idle and the stale update is ignored.
+    expect(receipt.transactionHash).toBe("0x1234");
     expect(runtime.getState().executionOp.phase).toBe("idle");
     expect(runtime.getState().isUnlocked).toBe(false);
     void wallet;
   });
 });
 
-describe("private execution calls the official STRK20 SDK path", () => {
-  it("runs withdraw → privacy_invoke → surplusTo with the shadow identity commitment", async () => {
+describe("real shadow-account SDK path", () => {
+  it("builds shadowAccounts(appName).commitment(nonce) + withdraw-to-shadow + invoke, relayed by the paymaster", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    expect(BigInt(identity.commitmentNonce0)).toBe(BigInt(sdkState.commitmentNonce0));
+    const identity = await runtime.createShadowIdentity("orrange", 0n);
+    expect(BigInt(identity.commitment)).toBe(BigInt(sdkState.commitment));
 
-    const receipt = await runtime.executePrivate(validIntent(identity.id, 100n));
+    const receipt = await runtime.executePrivate(validIntent());
 
-    expect(receipt.transactionHash).toBe("0xsubmit");
-    expect(receipt.status).toBe("PENDING");
-    expect(receipt.action).toBe("application.invoke");
-    expect(receipt.token).toBe(STRK);
-    expect(receipt.amount).toBe(100n);
+    expect(receipt.transactionHash).toBe("0x1234");
+    expect(receipt.action).toBe("shadow.invoke");
+    expect(receipt.appName).toBe("orrange");
+    expect(BigInt(receipt.nonce)).toBe(0n);
+    expect(receipt.commitment).toBe(identity.commitment);
+    expect(receipt.shadowAddress).toBe(identity.shadowAddress);
     expect(receipt.targetContract).toBe(PROBE);
-    expect(receipt.identityId).toBe(identity.id);
-    expect(receipt.executionId).toBe(identity.commitmentNonce0);
 
-    // The SDK builder ran twice (simulate + execute); each pass is withdraw → invoke → surplusTo.
-    expect(sdkState.opsLog.filter((op) => op === "withdraw")).toHaveLength(2);
-    expect(sdkState.opsLog.filter((op) => op === "invoke")).toHaveLength(2);
-    expect(sdkState.opsLog.filter((op) => op === "surplusTo")).toHaveLength(2);
-    // The invoke targets the application contract's privacy_invoke selector with the shadow
-    // identity commitment as the first calldata felt — never the master wallet.
-    const invoke = sdkState.invokeCalls[0];
-    expect(invoke.contractAddress).toBe(PROBE);
-    expect(invoke.entrypoint).toBe("privacy_invoke");
-    expect(BigInt(invoke.calldata[0] as string)).toBe(BigInt(identity.commitmentNonce0));
-    // The withdraw pays the application (the private balance "causes" the app action).
+    // The SDK builder ran the shadow flow: shadowAccounts → invoke with the application calls.
+    expect(sdkState.opsLog).toContain("shadowInvoke");
+    expect(sdkState.invokeCalls[0].nonce).toBe(0n);
+    expect(sdkState.invokeCalls[0].calls).toEqual([{ contractAddress: PROBE, entrypoint: "record", calldata: ["0x64"] }]);
+    // The withdraw pays the shadow address (the counterfactual shadow account).
     const withdraw = sdkState.withdrawCalls[0] as unknown[];
-    expect(withdraw[0]).toMatchObject({ recipient: PROBE, amount: 100n });
+    expect(withdraw[0]).toMatchObject({ recipient: identity.shadowAddress.toLowerCase(), amount: 100n });
+    // The proof was relayed through the paymaster — NOT submitted with the root account.
+    expect(sdkState.paymasterExecutions).toBe(1);
     void wallet;
+  });
+
+  it("the OUTER tx is relayed by the paymaster, never the root wallet (root != outer sender)", async () => {
+    const { runtime } = makeRuntime();
+    const wallet = await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    await runtime.executePrivate(validIntent());
+    // account.execute (the root wallet submission path) was never reached for the outer tx.
+    const execute = (wallet.account as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
+    expect(execute).not.toHaveBeenCalled();
+    expect(sdkState.paymasterExecutions).toBe(1);
   });
 
   it("the execution lifecycle reaches success after on-chain reconciliation", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    await runtime.executePrivate(validIntent(identity.id));
+    const identity = await runtime.createShadowIdentity("orrange", 0n);
+    await runtime.executePrivate(validIntent());
     const op = runtime.getState().executionOp;
     expect(op.phase).toBe("success");
-    expect(op.transactionHash).toBe("0xsubmit");
-    expect(op.action).toBe("application.invoke");
-    expect(op.targetContract).toBe(PROBE);
-    expect(op.identityId).toBe(identity.id);
+    expect(op.transactionHash).toBe("0x1234");
+    expect(op.appName).toBe("orrange");
+    expect(op.shadowAddress).toBe(identity.shadowAddress);
     void wallet;
   });
 
   it("reverted on-chain execution is reported as reverted (never success)", async () => {
     const { runtime } = makeRuntime({ execution_status: "REVERTED" });
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    await runtime.executePrivate(validIntent(identity.id));
+    await runtime.createShadowIdentity("orrange", 0n);
+    await runtime.executePrivate(validIntent());
     expect(runtime.getState().executionOp.phase).toBe("reverted");
     void wallet;
   });
@@ -392,24 +422,10 @@ describe("private execution calls the official STRK20 SDK path", () => {
   it("failed (thrown) execution reports failed", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
+    await runtime.createShadowIdentity("orrange", 0n);
     sdkState.failExecute = true;
-    await expect(runtime.executePrivate(validIntent(identity.id))).rejects.toThrow(/prover rejected/i);
+    await expect(runtime.executePrivate(validIntent())).rejects.toThrow(/prover rejected/i);
     expect(runtime.getState().executionOp.phase).toBe("failed");
-    void wallet;
-  });
-
-  it("never falls back to a public Wallet Core transaction path", async () => {
-    const { runtime } = makeRuntime();
-    const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    await runtime.executePrivate(validIntent(identity.id));
-    // The ONLY SDK contexts created are STRK20 private-transfers contexts (identity + execute);
-    // the wallet's public `send()` path was never used (account.execute is only reached by the
-    // STRK20 adapter submit), and the activity is labeled as a private op, never public.
-    expect(sdkState.createCalls).toBeGreaterThanOrEqual(2);
-    const kinds = runtime.getState().recentTransactions.map((t) => t.kind);
-    expect(kinds).not.toContain("public");
     void wallet;
   });
 });
@@ -418,50 +434,35 @@ describe("shadow identity selection is wallet/network scoped", () => {
   it("rejects an identity that does not belong to the active wallet", async () => {
     const { runtime } = makeRuntime();
     const walletA = await createdWallet(runtime);
-    const identityA = await runtime.createPrivateIdentity("acceptance");
+    await runtime.createShadowIdentity("orrange", 0n);
 
-    // Import a second wallet and switch to it; the execution must be refused because identityA
-    // belongs to walletA, not the active wallet.
     const secretB = canonicalizeSecret(generateSecretKey());
     const imported = await runtime.import({ accountType: "ready-v0.4.0", secret: secretB, password: PASSWORD });
     patchWalletAccount(imported);
     expect(runtime.getState().account?.walletId).not.toBe(walletA.walletId);
 
-    await expect(runtime.executePrivate(validIntent(identityA.id))).rejects.toThrow(/no active private identity/i);
+    await expect(runtime.executePrivate(validIntent())).rejects.toThrow(/no active shadow identity/i);
   });
 
-  it("rejects an unknown/inactive identity id", async () => {
+  it("rejects an unknown (appName, nonce) combination", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    await runtime.createPrivateIdentity("acceptance");
-    await expect(runtime.executePrivate(validIntent("0x9999999999999999999999999999999999999999999999999999999999999999"))).rejects.toThrow(
-      /no active private identity/i,
-    );
-    void wallet;
-  });
-
-  it("the executor resolves the identity scoped to the session wallet + network", async () => {
-    const { runtime } = makeRuntime();
-    const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    const receipt = await runtime.executePrivate(validIntent(identity.id));
-    // The app received the wallet/network-scoped shadow commitment.
-    expect(receipt.executionId).toBe(identity.commitmentNonce0);
+    await runtime.createShadowIdentity("orrange", 0n);
+    await expect(runtime.executePrivate(validIntent("orrange", 9n))).rejects.toThrow(/no active shadow identity/i);
     void wallet;
   });
 });
 
 describe("repeated execution serialization", () => {
-  it("serializes concurrent private executions (one in-flight at a time)", async () => {
+  it("serializes concurrent shadow executions (one in-flight at a time)", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    const p1 = runtime.executePrivate(validIntent(identity.id, 1n));
-    const p2 = runtime.executePrivate(validIntent(identity.id, 2n));
+    await runtime.createShadowIdentity("orrange", 0n);
+    const p1 = runtime.executePrivate(validIntent("orrange", 0n, 1n));
+    const p2 = runtime.executePrivate(validIntent("orrange", 0n, 2n));
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.transactionHash).toBe("0xsubmit");
-    expect(r2.transactionHash).toBe("0xsubmit");
-    // The session mutex means the SDK execute never overlaps.
+    expect(r1.transactionHash).toBe("0x1234");
+    expect(r2.transactionHash).toBe("0x1234");
     expect(sdkState.maxConcurrentExecutions).toBe(1);
     void wallet;
   });
@@ -471,8 +472,8 @@ describe("no secret / viewing-key exposure", () => {
   it("the receipt and runtime state never contain the viewing key", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    const receipt = await runtime.executePrivate(validIntent(identity.id));
+    const identity = await runtime.createShadowIdentity("orrange", 0n);
+    const receipt = await runtime.executePrivate(validIntent());
 
     const json = (v: unknown) => JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val));
     const viewingKey = deriveWalletViewingKey(wallet.secret, "sepolia");
@@ -482,13 +483,64 @@ describe("no secret / viewing-key exposure", () => {
     void identity;
   });
 
-  it("the executor never exposes the unlocked session", async () => {
-    // Architectural: the executor + application module must not import wallet custody internals.
+  it("the executor never exposes the unlocked session or a public fallback", async () => {
     const executorSource = readFileSync(join(__dirname, "..", "privacy", "execution", "StarknetPrivateExecutor.ts"), "utf8");
     expect(executorSource).not.toMatch(/sendTransaction|unlockWallet|exportSecret|getViewingKey/i);
     expect(executorSource).toMatch(/WalletPrivacySession/i);
-    const appSource = readFileSync(join(__dirname, "..", "privacy", "strk20", "privateApplication.ts"), "utf8");
-    expect(appSource).not.toMatch(/getViewingKey|viewingKey\s*[:=]/i);
+    const shadowSource = readFileSync(join(__dirname, "..", "privacy", "strk20", "shadowAccount.ts"), "utf8");
+    expect(shadowSource).toMatch(/shadowAccounts\(/i);
+    expect(shadowSource).toMatch(/paymaster\.execute/i);
+    expect(shadowSource).not.toMatch(/getViewingKey|viewingKey\s*[:=]/i);
+  });
+});
+
+describe("shadow-account unit (deterministic identity + maturity)", () => {
+  it("derives a deterministic shadow address from a commitment", () => {
+    const commitment = 222n;
+    const address = shadowAddressFromCommitment(commitment, BigInt(ANONYMIZER));
+    expect(address).toMatch(/^0x/);
+    expect(shadowAddressFromCommitment(commitment, BigInt(ANONYMIZER))).toBe(address);
+    expect(shadowAddressFromCommitment(commitment + 1n, BigInt(ANONYMIZER))).not.toBe(address);
+  });
+
+  it("selectMatureNotes only spends notes mature at the proving block", () => {
+    const notes = [
+      { amount: 10n, created: 1_000_000 }, // too recent
+      { amount: 50n, created: 900_000 }, // mature
+      { amount: 100n }, // no created → not spendable
+      { amount: 40n, created: 800_000, open: true }, // open → not spendable
+    ];
+    const selection = selectMatureNotes(notes, 40n, 1_000_000, 10);
+    expect(selection.selectedAmount).toBe(50n);
+    expect(selection.matureBalance).toBe(50n);
+    expect(selection.privateBalance).toBe(200n);
+    expect(() => selectMatureNotes(notes, 60n, 1_000_000, 10)).toThrow(/Not enough mature/);
+  });
+
+  it("shadowAccountInvoke routes private STRK to the derived shadow address and relays via the paymaster", async () => {
+    const { runtime } = makeRuntime();
+    const wallet = await createdWallet(runtime);
+    const identity = await runtime.createShadowIdentity("orrange", 0n);
+
+    const fakePaymaster = {
+      build: vi.fn(async () => ({
+        parameters: { version: "0x1" as const, fee_mode: { mode: "default" as const, gas_token: STRK } },
+        fee: { token: STRK, recipient: "0x1234", amount: 1n },
+      })),
+      execute: vi.fn(async () => ({ transactionHash: "0x1234", trackingId: "0x1" })),
+    };
+    const privacy = (runtime as unknown as { privacySession: unknown }).privacySession as import("@/wallet/privacy").WalletPrivacySession;
+    const adapter = (privacy as unknown as { adapter: unknown }).adapter as import("@/privacy/strk20").Strk20Adapter;
+    const result = await shadowAccountInvoke(
+      adapter,
+      { account: wallet.account, address: wallet.address, viewingKey: deriveWalletViewingKey(wallet.secret, "sepolia") },
+      { appName: "orrange", nonce: 0n, token: STRK, amount: 100n, calls: [{ contractAddress: PROBE, entrypoint: "record", calldata: ["0x64"] }] } satisfies ShadowAccountInvokeParams,
+      { paymaster: fakePaymaster as unknown as Strk20Paymaster },
+    );
+    expect(result.transactionHash).toBe("0x1234");
+    expect(result.shadowAddress).toBe(identity.shadowAddress);
+    expect(fakePaymaster.build).toHaveBeenCalledTimes(1);
+    expect(fakePaymaster.execute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -500,7 +552,7 @@ describe("StarknetPrivateExecutor (domain unit)", () => {
     const executor = new StarknetPrivateExecutor({ wallet, privacySession: privacy });
     const before = sdkState.createCalls;
     await expect(
-      executor.execute({ action: "swap" as never, token: STRK, amount: 1n, targetContract: PROBE, identity: "0x1" }),
+      executor.execute({ action: "swap" as never, appName: "orrange", nonce: 0n, token: STRK, amount: 1n, calls: [] }),
     ).rejects.toThrow(/unsupported action/i);
     expect(sdkState.createCalls).toBe(before);
   });

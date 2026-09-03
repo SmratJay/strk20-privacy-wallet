@@ -813,14 +813,14 @@ describe("shadow-account anonymizer config", () => {
     }
   });
 
-  it("createPrivateIdentity is explicitly unavailable when the active network has no anonymizer", async () => {
+  it("createShadowIdentity is explicitly unavailable when the active network has no anonymizer", async () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
     delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
-    await expect(runtime.createPrivateIdentity("treasury")).rejects.toThrow(/no shadow-account anonymizer is configured for sepolia/i);
+    await expect(runtime.createShadowIdentity("treasury", 0n)).rejects.toThrow(/no shadow-account anonymizer is configured for sepolia/i);
   });
 
-  it("createPrivateIdentity uses the network-scoped anonymizer when configured", async () => {
+  it("createShadowIdentity uses the network-scoped anonymizer when configured", async () => {
     vi.resetModules();
     delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
     delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
@@ -839,10 +839,12 @@ describe("shadow-account anonymizer config", () => {
       } as never;
       const runtime = new WalletRuntime({ storage: createMemoryStorage(), providerFactory: () => provider });
       const wallet = await runtime.create(PASSWORD);
-      const identity = await runtime.createPrivateIdentity("treasury");
-      expect(identity.purpose).toBe("treasury");
+      const identity = await runtime.createShadowIdentity("treasury", 0n);
+      expect(identity.appName).toBe("treasury");
+      expect(BigInt(identity.nonce)).toBe(0n);
       expect(identity.owner.toLowerCase()).toBe(wallet.address.toLowerCase());
       expect(identity.partialCommitment).toBeTruthy();
+      expect(identity.shadowAddress).toMatch(/^0x/);
     } finally {
       delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
       delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;

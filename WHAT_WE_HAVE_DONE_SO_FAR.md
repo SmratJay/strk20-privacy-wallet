@@ -158,3 +158,73 @@ Authoritative docs: `docs/WALLET_CORE.md` (architecture), `docs/STRK20_COMPATIBI
 (SDK/operator compatibility), `docs/STRK20_LIVE_ACCEPTANCE.md` (live procedure),
 `docs/PRIVATE_EXECUTION.md` (Phase 1 private execution), `docs/archive/` (historical
 perps/privy/planning records).
+
+---
+
+## REAL STRK20 Shadow Accounts (Phase 2) — 2026-09-04
+
+#### 🔴 [BIG CHANGE] — Real RC5 `shadowAccounts()` execution replaces the `privacy_invoke` prototype
+
+**What:** the Phase 1 private-execution prototype (`privacy_invoke(identity, amount)` on the
+target) is **replaced** by REAL STRK20 shadow-account execution using the vendored SDK's RC5
+`shadowAccounts(appName)` primitive. The full chain is now:
+
+```
+MASTER WALLET (Wallet Core authority, signs the proof invocation)
+  → STRK20 private balance (mature shielded notes)
+  → shadowAccounts(appName).commitment(nonce)   (deterministic shadow identity)
+  → shadow address (counterfactual: calculateContractAddressFromHash(commitment, PRIMER, [], anonymizer))
+  → private STRK withdrawn to the shadow address
+  → shadow.invoke(nonce, { calls })             (the SHADOW ACCOUNT calls the application)
+  → AVNU private paymaster relays the proof     (outer tx sender ≠ root wallet)
+  → Starknet application sees the SHADOW ACCOUNT as caller (never the root wallet)
+```
+
+**Architecture changes:**
+- `src/privacy/strk20/shadowAccount.ts` (new): shadow-address derivation, mature-note selection,
+  and the shadow-invoke builder (`shadowAccounts(appName)` → `commitment(nonce)` → withdraw to
+  shadow → `invoke` → paymaster relay). Removes the dead `privateApplication.ts`.
+- `src/privacy/strk20/paymaster.ts` (new): AVNU private-paymaster protocol client
+  (`default` mode, credential-free; `sponsored_private` with a server-only key).
+- `Strk20Adapter`: passes `shadowAccountAnonymizerAddress` to `createPrivateTransfers`; exposes
+  `shadowAccounts` on the builder; adds `buildAndProve` (prove without root submission) + public
+  `getSafeProvingBlock`.
+- `WalletPrivacySession`: `executeShadowApplication` (serialized) + shadow-identity resolution by
+  (appName, nonce).
+- `PrivateIdentity`: upgraded to the real shadow model (`appName`, `nonce`, `commitment`,
+  `shadowAddress`); records are wallet + network scoped; a new nonce = a fresh shadow identity.
+- `WalletRuntime`: `createShadowIdentity(appName, nonce)` + `executePrivate` (shadow path);
+  `executionOp` shows the shadow address + identity.
+- `WalletCorePrivateExecute` UI: appName + nonce + target application for the shadow call.
+- `ShadowExecutionProbe` (new acceptance contract): the shadow account calls `record(amount)`;
+  the probe stores the shadow caller + amount.
+
+**Operator fix (the Phase 1 discovery blocker):** the repo was pointed at the dead
+`discovery.orrange.xyz`. The working Sepolia operator is
+`https://discovery-service.alpha-sepolia.sw-dev.io` (reachable + healthy). This is what unblocked
+the live path.
+
+**Live acceptance (VERIFIED, real on-chain):**
+- Fresh Wallet Core wallet funded + deployed + proving maturity.
+- Shield (first shield auto-registers + auto-setups in ONE proof) → 30 STRK private balance.
+  (A separate `register()` before `shield()` was found to hit the pool's `NON_ZERO_VALUE`
+  WriteOnce collision because the discovery indexer reports a freshly-opened channel as
+  "precomputed", so the SDK re-opens it. The acceptance therefore lets the first shield
+  auto-register — verified working.)
+- **Shadow execution tx `0x4b05bbd17f2648d9adea2a443c5179520c5eb372199e678462394e8c0e3f1b7`** —
+  `SUCCEEDED` / `ACCEPTED_ON_L2`, block `14507476`.
+- Verified on-chain: the `ShadowExecutionProbe` recorded the SHADOW ADDRESS
+  (`0x2201cdc500333ac6517c6b44f955ce21c749a0faf74aa07ea6f7cc6ee0b668f`) as caller (NOT the root),
+  the recorded amount is `0.2 STRK`, the outer tx sender `0x4ab1f891…` differs from the root, and
+  the shadow address runs the pinned shadow-account class
+  `0x038489bd44c93ee2eb8604d3a15db60781145951ebdebe356fc824b4a0385a5c`.
+- **PRIVATE STRK → REAL SHADOW ACCOUNT → REAL STARKNET APPLICATION CALL — verified live.**
+
+**Verification:** `npm run typecheck` clean; `npm test` 39 files / 495 passed + 2 live gates;
+`npm run build` succeeds; `scarb build` (contracts) succeeds. 20 behavior-first shadow-execution
+tests + upgraded identity tests.
+
+**Remaining limitations:** only `shadow.invoke` against a validated call; the acceptance target
+is the tiny `ShadowExecutionProbe`; the paymaster `default` mode charges a relay fee (~17 STRK on
+Sepolia) from the private balance; `sponsored_private` mode (server key) is client-ready but not
+wired; NEAR / TEE / cross-chain are NOT started.

@@ -1,20 +1,21 @@
 /**
  * @file privateExecutionLiveAcceptance.test.ts
- * @description Phase 1 REAL Sepolia acceptance gate for the private-execution primitive.
+ * @description Stage 3B REAL Sepolia acceptance gate for STRK20 SHADOW-ACCOUNT execution.
  *
  *   Full live path (no mocks):
  *     deployer (funded) → funds a FRESH Wallet Core Ready wallet → DEPLOY_ACCOUNT → 10-block
- *     proving maturity → STRK20 register → shield → private balance discovery → PrivateIdentity →
- *     StarknetPrivateExecutor (runtime.executePrivate) → real Sepolia tx → success → verify the
- *     application-side result on the PrivateExecutionProbe (execution count + received STRK).
+ *     proving maturity → STRK20 register → shield → private balance discovery → shadow identity
+ *     (appName, nonce) → WalletRuntime.executePrivate (REAL shadowAccounts) → private paymaster
+ *     relay → real Sepolia tx → verify: the shadow account (not the root) called the probe,
+ *     the probe recorded the shadow address, the outer tx sender != root wallet.
  *
- *   The funded deployer wallet itself was registered under a legacy viewing-key derivation in a
- *   prior phase, so a FRESH wallet is used for the wallet-native STRK20 path (it has no prior
- *   registration). The deployer provides the funds.
+ *   The funded deployer wallet itself was registered under a legacy viewing-key derivation in an
+ *   earlier phase, so a FRESH wallet is used for the wallet-native STRK20 path.
  *
  *   Requires: `RUN_LIVE_ACCEPTANCE=1`, deployments/deployer_account.json (funded), a reachable
- *   STRK20 prover + discovery (NEXT_PUBLIC_STRK20_*), and the deployed probe address
- *   (NEXT_PUBLIC_STRK20_EXECUTION_PROBE_SEPOLIA). Skips honestly otherwise — never fakes success.
+ *   STRK20 prover + discovery (NEXT_PUBLIC_STRK20_*), the deployed ShadowExecutionProbe address
+ *   (NEXT_PUBLIC_STRK20_EXECUTION_PROBE_SEPOLIA), and the RC5 anonymizer
+ *   (NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA). Skips honestly otherwise — never fakes success.
  */
 
 import { describe, it, expect } from "vitest";
@@ -38,8 +39,8 @@ function deployerWallet(): { address: string; privateKey: string } | null {
   }
 }
 
-describe("PRIVATE EXECUTION — real Sepolia acceptance", () => {
-  it("runs the full live private-execution path and verifies the app-side result", async (ctx) => {
+describe("REAL SHADOW ACCOUNT — real Sepolia acceptance", () => {
+  it("runs the full live shadow-account path and verifies the shadow was the application caller", async (ctx) => {
     if (process.env.RUN_LIVE_ACCEPTANCE !== "1") {
       console.log("[live-acceptance] SKIPPED: set RUN_LIVE_ACCEPTANCE=1 to run the funded live gate.");
       return ctx.skip();
@@ -52,8 +53,9 @@ describe("PRIVATE EXECUTION — real Sepolia acceptance", () => {
     const proverUrl = (process.env.NEXT_PUBLIC_STRK20_PROVER_URL ?? "").trim();
     const discoveryUrl = (process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? "").trim();
     const probe = (process.env.NEXT_PUBLIC_STRK20_EXECUTION_PROBE_SEPOLIA ?? "").trim();
-    if (!proverUrl || !discoveryUrl || !probe) {
-      console.log("[live-acceptance] SKIPPED: operator prover/discovery or probe address not configured.");
+    const anonymizer = (process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA ?? "").trim();
+    if (!proverUrl || !discoveryUrl || !probe || !anonymizer) {
+      console.log("[live-acceptance] SKIPPED: operator prover/discovery, probe, or anonymizer not configured.");
       return ctx.skip();
     }
     let discoveryUp = false;
@@ -76,7 +78,6 @@ describe("PRIVATE EXECUTION — real Sepolia acceptance", () => {
       signer: deployer.privateKey,
     });
 
-    // 0. Create a FRESH Wallet Core Ready wallet (counterfactual, unregistered — clean STRK20 path).
     const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
     runtime.init();
     const wallet = await runtime.create(PASSWORD);
@@ -84,100 +85,103 @@ describe("PRIVATE EXECUTION — real Sepolia acceptance", () => {
 
     const strk = (await import("../config/networks")).getNetworkConfig("sepolia").tokens[0];
 
-    // 1. Deployer funds the fresh wallet (public STRK transfer) — enough to cover the REAL STRK20
-    //    proof gas (STARK proofs are gas-heavy; the adapter's bounded resource fallback caps at
-    //    ~78 STRK, so the account balance must cover the caps for the node's validation).
-    const funding = 200n * 10n ** 18n; // 200 STRK
+    // 1. Deployer funds the fresh wallet (public STRK transfer) — enough for deploy + pool fees.
+    const funding = 200n * 10n ** 18n;
     const fundTx = await deployerAcct.execute({
       contractAddress: strk.address,
       entrypoint: "transfer",
       calldata: [wallet.address, num.toHex(funding & ((1n << 128n) - 1n)), num.toHex(funding >> 128n)],
     });
     await provider.waitForTransaction(fundTx.transaction_hash, { retryInterval: 3000 });
-    console.log(`[live-acceptance] funded ${wallet.address} with 200 STRK (tx ${fundTx.transaction_hash})`);
+    console.log(`[live-acceptance] funded ${wallet.address} (tx ${fundTx.transaction_hash})`);
 
-    // 2. Deploy the fresh account (DEPLOY_ACCOUNT, Wallet Core local signer).
+    // 2. Deploy + wait for proving maturity.
     const deploy = await runtime.deploy();
     console.log(`[live-acceptance] deployed account at block ${deploy.deployedAtBlock ?? "?"} (tx ${deploy.transactionHash})`);
-
-    // 3. Wait for proving maturity (deploy block + 10).
     let ready = false;
-    for (let i = 0; i < 60 && !ready; i++) {
+    for (let i = 0; i < 90 && !ready; i++) {
       await new Promise((r) => setTimeout(r, 15_000));
       await runtime.refreshPrivacyMaturity();
       ready = runtime.getState().privacy.maturity === "ready";
-      if (!ready) {
-        console.log(`[live-acceptance] waiting for proving maturity (${i + 1}/60)...`);
-      }
     }
     if (!ready) throw new Error("Account did not reach STRK20 proving maturity in time.");
 
-    // 4. STRK20 registration (real apply_actions, Wallet Core signer).
-    const reg = await runtime.register();
-    expect(reg.status).toBe("PENDING");
-    console.log(`[live-acceptance] register tx ${reg.transactionHash}`);
-
-    // 5. Shield a real deposit (0.5 STRK) — creates the private balance.
-    const shieldAmount = 5n * 10n ** 17n; // 0.5 STRK
+    // 3. Shield — the FIRST shield auto-registers the viewing key + opens the self-channel +
+//    subchannel in ONE proof (autoRegister + autoSetup). A separate register() before it is
+//    deliberately avoided: the discovery indexer returns a freshly-opened channel as
+//    "precomputed", so a subsequent shield's autoSetup would re-open it and the pool's WriteOnce
+//    storage reverts with NON_ZERO_VALUE. One combined proof avoids the collision entirely.
+    // Shield ~30 STRK so the mature note covers the shadow funding + the private-paymaster relay
+    // fee (~17 STRK on Sepolia) with room for the note-maturity window.
+    const shieldAmount = 30n * 10n ** 18n; // 30 STRK
     const shield = await runtime.shield(strk.address, shieldAmount);
-    expect(shield.status).toBe("PENDING");
     console.log(`[live-acceptance] shield tx ${shield.transactionHash}`);
 
-    // 6. Private balance discovery (wallet-native viewing key + discovery service).
+    // The fresh shielded note must predate the proving block by the note-maturity window
+    // (note created + 10 maturity + 10 proving margin). Wait generously before spending it.
+    console.log("[live-acceptance] waiting ~75s for note maturity before the shadow spend...");
+    await new Promise((r) => setTimeout(r, 75_000));
+
+    // 4. Private balance discovery.
     const rows = await runtime.refreshPrivateBalances();
     const strkRow = rows.find((r) => r.token.symbol === "STRK");
     expect(strkRow).toBeDefined();
     expect(strkRow!.balance).toBeGreaterThanOrEqual(shieldAmount);
     console.log(`[live-acceptance] private STRK balance ${strkRow!.balance.toString()}`);
 
-    // 7. Private identity (the shadow execution identity; probe used as the test identity namespace).
-    const identity = await runtime.createPrivateIdentity("acceptance");
-    console.log(`[live-acceptance] identity ${identity.id} commitment ${identity.commitmentNonce0}`);
+    // 5. Shadow identity (appName, nonce) — deterministic commitment + shadow address.
+    const identity = await runtime.createShadowIdentity("orrange", 0n);
+    console.log(`[live-acceptance] identity commitment ${identity.commitment} shadow ${identity.shadowAddress}`);
 
-    // 8. Real private application execution (0.2 STRK → probe.privacy_invoke).
-    const execAmount = 2n * 10n ** 17n; // 0.2 STRK
+    // 6. REAL shadow-account execution: private STRK → shadow account → probe.record.
+    const execAmount = 2n * 10n ** 17n; // 0.2 STRK routed into the shadow
     const receipt = await runtime.executePrivate({
-      action: "application.invoke",
+      action: "shadow.invoke",
+      appName: "orrange",
+      nonce: 0n,
       token: strk.address,
       amount: execAmount,
-      targetContract: probe,
-      identity: identity.id,
+      calls: [{ contractAddress: probe, entrypoint: "record", calldata: [num.toHex(execAmount)] }],
     });
-    expect(receipt.status).toBe("PENDING");
-    console.log(`[live-acceptance] private execution tx ${receipt.transactionHash}`);
+    console.log(`[live-acceptance] shadow execution tx ${receipt.transactionHash}`);
+    expect(receipt.shadowAddress).toBe(identity.shadowAddress);
     expect(runtime.getState().executionOp.phase).toBe("success");
 
-    // 9. Verify the application-side result ON-CHAIN.
+    // 7. Verify on-chain: the probe saw the SHADOW ACCOUNT (not the root) as caller.
     const countRes = await provider.callContract({
       contractAddress: probe,
       entrypoint: "get_execution_count",
-      calldata: [identity.commitmentNonce0],
+      calldata: [identity.shadowAddress],
     });
     const count = BigInt(countRes[0] ?? "0x0");
-    console.log(`[live-acceptance] probe execution count for identity: ${count.toString()}`);
+    console.log(`[live-acceptance] probe execution count for shadow ${identity.shadowAddress}: ${count.toString()}`);
     expect(count).toBe(1n);
 
     const last = await provider.callContract({
       contractAddress: probe,
-      entrypoint: "get_last_execution",
-      calldata: [identity.commitmentNonce0],
+      entrypoint: "get_last_record",
+      calldata: [identity.shadowAddress],
     });
-    // last = [identity, amount_low, amount_high, caller, block, count_after]
-    const lastAmount = BigInt(last[1] ?? "0x0");
-    console.log(`[live-acceptance] probe last amount ${lastAmount.toString()} caller ${last[3] ?? ""}`);
-    expect(lastAmount).toBe(execAmount);
-    expect(num.toHex(BigInt(last[3] ?? "0x0"))).toBe(num.toHex(BigInt(strk.address)));
+    const caller = "0x" + BigInt(last[0] ?? "0x0").toString(16);
+    const amount = BigInt(last[1] ?? "0x0");
+    console.log(`[live-acceptance] probe last record caller ${caller} amount ${amount.toString()}`);
+    expect(caller.toLowerCase()).toBe(identity.shadowAddress.toLowerCase());
+    expect(amount).toBe(execAmount);
 
-    // The probe must have received the STRK the private balance spent on it.
-    const probeBalance = await provider.callContract({
-      contractAddress: strk.address,
-      entrypoint: "balanceOf",
-      calldata: [probe],
-    });
-    const probeStrk = BigInt(probeBalance[0] ?? "0x0") + (BigInt(probeBalance[1] ?? "0x0") << 128n);
-    console.log(`[live-acceptance] probe STRK balance ${probeStrk.toString()}`);
-    expect(probeStrk).toBeGreaterThanOrEqual(execAmount);
+    // The ROOT wallet is NOT the application caller.
+    expect(caller.toLowerCase()).not.toBe(wallet.address.toLowerCase());
 
-    console.log(`[live-acceptance] ACCEPTANCE PASSED — execution tx ${receipt.transactionHash}`);
-  }, 20 * 60_000);
+    // 8. Outer tx sender must NOT be the root wallet (relayed by the private paymaster).
+    const tx = await provider.getTransactionByHash(receipt.transactionHash);
+    const outerSender =
+      "sender_address" in tx ? ("0x" + BigInt(String(tx.sender_address)).toString(16)) : "";
+    console.log(`[live-acceptance] outer tx sender ${outerSender}`);
+    expect(outerSender.toLowerCase()).not.toBe(wallet.address.toLowerCase());
+
+    // 9. The derived shadow address runs the anonymizer's shadow-account class (if deployed).
+    const shadowClass = await provider.getClassHashAt(identity.shadowAddress);
+    console.log(`[live-acceptance] shadow account class ${shadowClass}`);
+
+    console.log(`[live-acceptance] ACCEPTANCE PASSED — shadow execution tx ${receipt.transactionHash}`);
+  }, 25 * 60_000);
 });

@@ -895,8 +895,9 @@ export class WalletRuntime {
     return this.runPrivacyOp("withdraw", (privacy) => privacy.withdraw(token, amountBase));
   }
 
-  /** Create a PrivateIdentity for the active wallet. Requires the shadow anonymizer for the active network. */
-  async createPrivateIdentity(purpose: string, opts?: { dappName?: string }): Promise<import("@/privacy/identity").PrivateIdentity> {
+  /** Create a REAL STRK20 shadow identity for the active wallet. Requires the shadow anonymizer
+   * for the active network. A fresh nonce yields a fresh shadow identity (never silently reused). */
+  async createShadowIdentity(appName: string, nonce: bigint): Promise<import("@/privacy/identity").PrivateIdentity> {
     const privacy = this.requirePrivacySession();
     const guard = this.captureGuard();
     // Network-scoped PUBLIC contract config (never a server secret). The same network's address
@@ -904,20 +905,19 @@ export class WalletRuntime {
     const anonymizerAddress = getNetworkConfig(this.view.network).shadowAccountAnonymizerAddress.trim();
     if (!anonymizerAddress) {
       throw new Error(
-        `Private identity creation is unavailable: no shadow-account anonymizer is configured for ${this.view.network}.`,
+        `Shadow identity creation is unavailable: no shadow-account anonymizer is configured for ${this.view.network}.`,
       );
     }
     const poolContractAddress = getNetworkConfig(this.view.network).poolAddress;
-    const identity = await privacy.createPrivateIdentity(purpose, {
+    const identity = await privacy.createShadowIdentity(appName, nonce, {
       anonymizerAddress,
       poolContractAddress,
-      dappName: opts?.dappName,
     });
     if (!this.isCurrent(guard)) return identity;
     return identity;
   }
 
-  /** Safe list of the active wallet's PrivateIdentities on the active network (public metadata only). */
+  /** Safe list of the active wallet's shadow identities on the active network (public metadata only). */
   listPrivateIdentities(): import("@/privacy/identity").PrivateIdentity[] {
     if (!this.session) return [];
     return listWalletPrivateIdentities(this.storage, this.view.network, this.session.address);
@@ -932,11 +932,14 @@ export class WalletRuntime {
   }
 
   /**
-   * Execute a PRIVATE Starknet application action (the Wallet Core private-execution surface).
+   * Execute a REAL STRK20 shadow-account application action (the Wallet Core private-execution
+   * surface).
    *
    * Requires an unlocked Wallet Core wallet + a live WalletPrivacySession. Captures the existing
    * walletId/network/generation guard so a stale/locked execution is refused. Runs through the
-   * STRK20 privacy layer (never a public master-wallet fallback) and returns a SAFE receipt.
+   * STRK20 shadow-account layer (never a public master-wallet fallback) and returns a SAFE
+   * receipt. The outer transaction is relayed through the private paymaster so the root wallet is
+   * not the on-chain tx sender.
    *
    * Lifecycle (visible in `executionOp`):
    *   preparing → proving → submitted → pending → success / reverted / rejected / failed
@@ -953,8 +956,10 @@ export class WalletRuntime {
         action: intent.action,
         tokenSymbol: this.tokenSymbolFor(intent.token),
         amount: intent.amount,
-        targetContract: intent.targetContract,
-        identityId: intent.identity,
+        appName: intent.appName,
+        nonce: intent.nonce.toString(),
+        targetContract: intent.calls[0]?.contractAddress ?? null,
+        shadowAddress: null,
         transactionHash: null,
         message: null,
       },
@@ -969,6 +974,8 @@ export class WalletRuntime {
         executionOp: {
           ...this.view.executionOp,
           phase: "submitted",
+          targetContract: receipt.targetContract,
+          shadowAddress: receipt.shadowAddress,
           transactionHash: receipt.transactionHash,
           message: null,
         },

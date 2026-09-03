@@ -17,7 +17,6 @@ import {
   canonicalizeViewingKey,
   VIEWING_KEY_DOMAIN_PREFIX,
 } from "../wallet/privacy";
-import { privateIdentityId } from "../privacy/identity";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -226,13 +225,22 @@ describe("runtime privacy capability", () => {
 });
 
 describe("privacy identity separation", () => {
-  it("the viewing key is never stored in PrivateIdentity records", async () => {
+  it("the viewing key is never stored in shadow identity records", async () => {
     const secret = canonicalizeSecret(generateSecretKey());
     const viewingKey = deriveWalletViewingKey(secret, "sepolia");
-    // The identity id is an application-level namespace, NOT the viewing key and NOT the shadow
-    // commitment. It must differ from the viewing key.
-    const id = privateIdentityId("0xabc", "treasury");
-    expect(BigInt(id)).not.toBe(viewingKey);
+    // The shadow commitment differs from the viewing key (the viewing key is an input to the
+    // commitment, never equal to it).
+    const { deriveShadowIdentity } = await import("../privacy/identity");
+    const d = await deriveShadowIdentity({
+      owner: "0xabc",
+      viewingKey,
+      anonymizerAddress: "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f",
+      poolContractAddress: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91",
+      appName: "orrange",
+      nonce: 0n,
+    });
+    expect(BigInt(d.commitment)).not.toBe(viewingKey);
+    expect(d.commitment).not.toContain(viewingKey.toString());
   });
 });
 

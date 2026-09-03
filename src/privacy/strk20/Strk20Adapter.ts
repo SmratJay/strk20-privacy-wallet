@@ -20,6 +20,14 @@ export interface Strk20AdapterConfig {
   discoveryUrl: string;
   /** STRK fee token the pool charges per apply_actions. Defaults to the canonical STRK address. */
   feeTokenAddress?: string;
+  /**
+   * RC5 shadow-account anonymizer contract (network-scoped PUBLIC config). Required for
+   * `shadowAccounts(...)`; the SDK throws when it is missing. The anonymizer derives the shadow
+   * account addresses from the user's identity key + dapp name + nonce, deploys the shadow
+   * account, and executes application calls FROM it (so the application caller is the shadow
+   * account, never the root wallet).
+   */
+  shadowAccountAnonymizerAddress?: string;
   /** UX callback fired while the STRK allowance prerequisite is being handled. */
   onApprovalStatus?: (status: ApprovalStatus) => void;
   /**
@@ -68,6 +76,36 @@ interface ExecuteResultLike {
   warnings?: unknown[];
 }
 
+/** A Starknet call the shadow account will execute on a target application. */
+export interface ShadowCallLike {
+  contractAddress: string;
+  entrypoint: string;
+  calldata: string[] | bigint[];
+}
+
+/** Collect-policy for the shadow-account invoke (how much of the shadow balance to settle). */
+export type CollectPolicyLike =
+  | { type: "all" }
+  | { type: "diff" }
+  | { type: "exact"; amount: bigint };
+
+/**
+ * The RC5 `ShadowAccountsBuilder` surface (exposed by the vendored SDK via
+ * `PrivateTransfersBuilder.shadowAccounts(appName)`). Used by the shadow executor.
+ */
+export interface ShadowAccountsLike {
+  /** Nonce-independent commitment for this user + dapp. */
+  partialCommitment(): Promise<bigint>;
+  /** Full shadow-account commitment for `nonce`. */
+  commitment(nonce: bigint | number | string): Promise<bigint>;
+  /**
+   * Queue a `computeAndInvoke` against the anonymizer for `nonce`: the anonymizer deploys/uses
+   * the shadow account and executes `calls` FROM it, settling proceeds into open notes created
+   * in the same transaction (`collectPolicy`; default `{ type: "all" }`).
+   */
+  invoke(nonce: bigint | number | string, options: { calls: ShadowCallLike[]; collectPolicy?: CollectPolicyLike }): BuilderLike;
+}
+
 /** The STRK20 SDK builder surface the generic adapter executes. Shared with higher-level adapters. */
 export interface TokenOpsLike {
   deposit(...inputs: unknown[]): unknown;
@@ -90,6 +128,8 @@ export interface BuilderLike {
   surplusTo(recipient: string, withdraw?: boolean): BuilderLike;
   /** Add a `privacy_invoke` call on an executor (anonymizer) that runs after the private ops. */
   invoke(callBuilder: (args: InvokeCalldataArgsLike) => unknown): BuilderLike;
+  /** RC5 shadow-account operations scoped to a single dapp (requires the anonymizer config). */
+  shadowAccounts(dappName: string): ShadowAccountsLike;
   execute(options?: Record<string, unknown>): Promise<ExecuteResultLike>;
   /** SDK fee-simulation: mock proof via CallMockProofProvider, no real proof generation. */
   simulate(options: { node: ProviderInterface; validateSignature?: boolean }): Promise<ExecuteResultLike>;
@@ -97,7 +137,10 @@ export interface BuilderLike {
 
 export interface PrivateTransfersLike {
   build(options?: Record<string, unknown>): BuilderLike;
-  discoverNotes(params?: { tokens?: string[] }): Promise<{
+  discoverNotes(params?: {
+    tokens?: string[] | bigint[];
+    blockIdentifier?: unknown;
+  }): Promise<{
     /** The block reference the discovery snapshot was served at (indexer sync state). */
     timestamp: unknown;
     notes: Map<bigint, ShieldedNote[]>;
@@ -199,6 +242,16 @@ export class Strk20Adapter {
     debug("adapter initialized", { chainId: config.chainId, rpc: "per-account" });
   }
 
+  /** Network-scoped STRK20 pool contract address. */
+  get poolContractAddress(): string {
+    return this.config.poolContractAddress;
+  }
+
+  /** Network-scoped RC5 shadow-account anonymizer address (undefined when not configured). */
+  get shadowAccountAnonymizerAddress(): string | undefined {
+    return this.config.shadowAccountAnonymizerAddress;
+  }
+
   /**
    * Cache a private-transfers context per (address + full STRK20 context). The key includes the
    * chain id, pool, prover, discovery, and fee token so a cached context can NEVER be reused across
@@ -247,6 +300,7 @@ export class Strk20Adapter {
       provingProvider: { url: this.config.proverUrl, chainId: this.config.chainId },
       discoveryProvider,
       poolContractAddress: this.config.poolContractAddress,
+      shadowAccountAnonymizerAddress: this.config.shadowAccountAnonymizerAddress,
     });
 
     this.transfersCache.set(key, transfers);
@@ -257,6 +311,12 @@ export class Strk20Adapter {
     // Prove against a block safely behind the chain head (same rule as shield) so the pool's
     // account validation does not reject the proof as "too recent".
     const provingBlockId = await this.getSafeProvingBlock(user);
+    // NOTE: register() registers the viewing key ONLY (autoRegister). It does NOT open the
+    // self-channel. Opening the channel here would make the very next op (e.g. a shield) see the
+    // discovery's freshly-opened channel as "precomputed" (the indexer has not confirmed it as a
+    // real channel yet), so the SDK's autoSetup would re-open it and the pool's WriteOnce storage
+    // would revert with NON_ZERO_VALUE. The first SHIELD auto-registers AND opens the channel +
+    // subchannel in one proof (autoRegister + autoSetup), so register() must stay minimal.
     return this.runWithBounds(
       user,
       (t, node) => t.build({ autoRegister: true }).register().simulate({ node }),
@@ -334,6 +394,27 @@ export class Strk20Adapter {
       (t) => build(t).execute({ provingBlockId }),
       allowance,
     );
+  }
+
+  /**
+   * Prove a private builder WITHOUT submitting it with the user's account. The SDK's real prover
+   * produces the apply_actions call + proof (the user's account signs the PROOF INVOCATION, which
+   * authorizes the actions). The caller then relays the resulting call+proof through a private
+   * paymaster so the ROOT WALLET is NOT the outer transaction sender (shadow-account invariant).
+   */
+  async buildAndProve(
+    user: Strk20User,
+    build: (transfers: PrivateTransfersLike) => BuilderLike,
+  ): Promise<{ call: Call; proof: CallAndProofLike["proof"]; provingBlockId: number; warnings: unknown[] }> {
+    const provingBlockId = await this.getSafeProvingBlock(user);
+    const transfers = await this.getTransfers(user);
+    const result = await build(transfers).execute({ provingBlockId });
+    return {
+      call: result.callAndProof.call,
+      proof: result.callAndProof.proof,
+      provingBlockId,
+      warnings: result.warnings ?? [],
+    };
   }
 
   async transfer(
@@ -516,7 +597,7 @@ export class Strk20Adapter {
    * primitive (integer / hex / block-tag) for `block_ref` — it REJECTS the `{ block_number }`
    * object form with HTTP 422, which stopped shields after fee estimation and before proving.
    */
-  private async getSafeProvingBlock(user: Strk20User): Promise<number> {
+  async getSafeProvingBlock(user: Strk20User): Promise<number> {
     const provider = this.getNode(user);
     const currentBlock = await provider.getBlockNumber();
     const provingBlock = Math.max(currentBlock - PROVING_SAFETY_MARGIN, 0);
