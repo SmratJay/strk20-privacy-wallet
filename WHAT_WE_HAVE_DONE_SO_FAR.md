@@ -1302,3 +1302,50 @@ addressed; no Stage 2 features were added.
 **Verification.** `npm run typecheck` clean; `npm test` → 52 files / 500 tests pass (Wallet Core
 suite grew from 28 → 46 tests including all new regression tests); `npm run build` succeeds.
 Legacy tests preserved and passing.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 10:02:33 IST
+
+### 🔴 [BIG CHANGE] — STAGE 2: Existing-wallet import + private identity
+
+**Context.** Stage 1 (own Wallet Core) is frozen. Stage 2 adds the strategic capability: existing
+Starknet users can bring their **Ready or Braavos** account into our wallet without changing their
+address, verified for ownership, and gain STRK20 privacy. No Stage 3 features (NEAR Intents, TEE,
+cross-chain, AI) were added.
+
+**Detailed technical explanation.**
+
+- **Account adapters.** `AccountAdapter` extended with `addressDerivable` + `verifyOwnership`.
+  Ready adapter verifies via counterfactual derivation (undeployed) or SRC-5 (deployed). New
+  `BraavosAccountAdapter` is import-only (address is NOT derivable — Braavos init params are not
+  recoverable from a key), verified against the live Sepolia ABI: `get_multisig_threshold`
+  (multisig fails closed), `get_public_key`, SRC-5 `is_valid_signature` fallback. Braavos class
+  hashes were **queried and confirmed declared on Starknet Sepolia** (account + base); Mainnet is
+  `supported: false`. `deploy()` rejects — you never deploy an imported Braavos account.
+- **Ownership verification.** `src/wallet/ownership.ts` implements generic SRC-5 verification via
+  starknet.js `verifyMessageInStarknet`. Import verifies: secret → pubkey → expected account →
+  address → deployed class → owner relationship; mismatches reject, never "repair".
+- **Import flow.** `walletCore.importWallet()`: validate+canonicalize secret (never persisted or
+  sent), derive pubkey, build adapter, Ready derives/verifies the address (user-entered address
+  must match), Braavos requires the existing address + deployed account, verify ownership, encrypt
+  into the standard AES-GCM+PBKDF2 keystore, persist, discard temp input. `accountKind`
+  distinguishes `existing` vs `new-counterfactual`.
+- **Multi-wallet storage.** `storage.ts` gained a registry scoped by walletId (canonical address)
+  + network (`orrange_wallet_v2_registry_<network>`, `orrange_wallet_v2_keystore_<walletId>`).
+  Imported wallets cannot overwrite another wallet; legacy Stage 1 keys preserved + migrated
+  (`migrateLegacyWallet`). `unlockWallet` gained `walletId`; `listWallets` added.
+- **Private identity.** `src/privacy/identity/PrivateIdentity.ts` — wallet primitive
+  `{ id, owner, purpose, chain, partialCommitment, commitmentNonce0, status }` using the REAL
+  vendored STRK20 SDK shadow commitments (`ShadowAccountsBuilder`). Viewing key accepted
+  transiently, never stored/logged. Dedupe by (owner, purpose); retire supported. `strk20User.ts`
+  bridges an imported wallet's signer to the STRK20 adapter (`buildStrk20User`).
+- **UX.** `/own-wallet` now has Create | Import (Ready/Braavos) + a stored-wallet list with
+  per-wallet Unlock/Delete; shows "Private mode: available (STRK20 signer ready)".
+- **Guard.** Test 12 extended so `src/privacy/identity/**` is also scanned for Privy / Wallet API
+  imports.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 57 files / **538 tests** pass (added
+import, registry, Braavos, private-identity, real-network suites); `npm run build` succeeds.
+Real Starknet Sepolia integration tests verify Braavos class declaration, Ready counterfactual
+probing, and SRC-5 ownership rejection on a real deployed account with a throwaway key.

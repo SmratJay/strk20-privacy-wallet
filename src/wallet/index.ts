@@ -10,9 +10,11 @@
  *   Wallet Core      (this module)
  *    ├── Key Management   → crypto.ts
  *    ├── Keystore         → keystore.ts (AES-GCM + PBKDF2, password-encrypted)
- *    ├── Account          → account/ (AccountAdapter seam → ReadyAccountAdapter)
- *    ├── Storage          → storage.ts (public vs private separation)
+ *    ├── Account          → account/ (AccountAdapter seam → Ready + Braavos adapters)
+ *    ├── Ownership        → ownership.ts (SRC-5 on-chain verification)
+ *    ├── Storage          → storage.ts (public vs private; multi-wallet registry)
  *    ├── Amounts          → amount.ts (exact decimal parsing)
+ *    ├── Import           → walletCore.importWallet (existing Ready/Braavos accounts)
  *    └── Signing/Deploy   → walletCore.ts
  *
  *   STRK20 Privacy Core
@@ -41,6 +43,7 @@ export {
 export {
   createWallet,
   unlockWallet,
+  importWallet,
   deployAccount,
   getDeploymentStatus,
   signTransaction,
@@ -48,9 +51,14 @@ export {
   exportSecret,
   clearWallet,
   lockWallet,
+  listWallets,
+  isAccountTypeSupported,
   type UnlockedWallet,
   type CreateWalletOptions,
   type UnlockWalletOptions,
+  type ImportWalletOptions,
+  type ImportResult,
+  type WalletAccountType,
   type WalletDeploymentStatus,
 } from "./walletCore";
 export {
@@ -61,10 +69,27 @@ export {
   writePublicState,
   readKeystore,
   writeKeystore,
+  readWalletRegistry,
+  writeWalletRegistry,
+  upsertWalletRegistryEntry,
+  removeWalletRegistryEntry,
+  readWalletKeystore,
+  writeWalletKeystore,
+  clearWalletById,
+  migrateLegacyWallet,
+  walletIdFor,
   clearWallet as clearWalletStorage,
   type WalletStorage,
   type PublicWalletState,
+  type WalletRegistryEntry,
 } from "./storage";
+export {
+  verifyAccountOwnership,
+  callIsValidSignature,
+  OWNERSHIP_CHALLENGE,
+  ownershipChallengeHash,
+  type OwnershipVerification as OwnershipVerificationResult,
+} from "./ownership";
 export {
   ReadyAccountAdapter,
   READY_ACCOUNT_CONFIG,
@@ -75,7 +100,15 @@ export {
   deployReadyAccount,
   waitForDeploymentFinality,
   READY_SEPOLIA_CLASS_HASH,
+  BraavosAccountAdapter,
+  BRAAVOS_ACCOUNT_CONFIG,
+  isBraavosAccountSupported,
+  isKnownBraavosClass,
+  BRAAVOS_ACCOUNT_CLASSHASH_SEPOLIA,
+  BRAAVOS_BASE_ACCOUNT_CLASSHASH_SEPOLIA,
   type AccountAdapter,
   type AccountDeployment,
   type AccountDeploymentProbe,
+  type OwnershipVerification,
+  type BraavosAccountAdapterOptions,
 } from "./account";

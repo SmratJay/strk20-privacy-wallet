@@ -359,7 +359,7 @@ See `docs/RFP_PRODUCT_SPEC.md` (product contract) and
 
 ## Documentation index
 
-- `docs/WALLET_CORE.md` — Stage 1 self-custodial Wallet Core (keys, keystore, account, signing)
+- `docs/WALLET_CORE.md` — self-custodial Wallet Core (Stage 1: keys, keystore, account, signing; Stage 2: Ready/Braavos import, ownership verification, private identity, STRK20 bridge)
 - `docs/RFP_ALIGNMENT.md`, `docs/RFP_PRODUCT_SPEC.md` — RFP requirements and product contract
 - `docs/PRIVATE_RECEIVING_ARCHITECTURE.md` — private receiving / viewing-key architecture
 - `docs/PRIVY_STRK20_ARCHITECTURE.md` (+ `_AUDIT`, `_COMPATIBILITY_AUDIT`, `_SECURITY_MODEL`) — Privy lane

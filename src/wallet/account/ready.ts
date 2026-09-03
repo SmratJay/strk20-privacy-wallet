@@ -6,8 +6,14 @@ import {
   hash,
 } from "starknet";
 import type { Account, RpcProvider } from "starknet";
+import { verifyAccountOwnership } from "../ownership";
+import type {
+  AccountAdapter,
+  AccountDeployment,
+  AccountDeploymentProbe,
+  OwnershipVerification,
+} from "./types";
 import type { WalletNetworkId } from "../types";
-import type { AccountAdapter, AccountDeployment, AccountDeploymentProbe } from "./types";
 
 /**
  * Wallet Core — Ready (Argent v0.4.0) account adapter.
@@ -199,6 +205,7 @@ export class ReadyAccountAdapter implements AccountAdapter {
   readonly type = "ready-v0.4.0";
   readonly address: string;
   readonly publicKey: string;
+  readonly addressDerivable = true;
   private readonly classHash: string;
 
   constructor(publicKey: string, classHash: string) {
@@ -213,6 +220,24 @@ export class ReadyAccountAdapter implements AccountAdapter {
 
   isDeployed(provider: Pick<RpcProvider, "getClassHashAt">): Promise<boolean> {
     return this.probeDeployment(provider).then((probe) => probe === "deployed");
+  }
+
+  /**
+   * Ready addresses are counterfactually derived from the public key (salt = publicKey,
+   * constructor owner = publicKey), so key → address derivation IS the ownership proof for an
+   * undeployed account. When the account is already deployed, additionally verify on-chain via
+   * SRC-5 `is_valid_signature` so a deployed account is proven to be controlled by this key.
+   */
+  async verifyOwnership(account: Account, provider: RpcProvider): Promise<OwnershipVerification> {
+    const derived = computeReadyAccountAddress(this.publicKey, this.classHash);
+    if (derived.toLowerCase() !== this.address.toLowerCase()) {
+      return { verified: false, method: "counterfactual-derivation", reason: "Address mismatch." };
+    }
+    const probe = await this.probeDeployment(provider);
+    if (probe !== "deployed") {
+      return { verified: true, method: "counterfactual-derivation" };
+    }
+    return verifyAccountOwnership(account, provider);
   }
 
   deploy(account: Account): Promise<AccountDeployment> {

@@ -221,7 +221,7 @@ describe("6. wallet reload (create → unlock)", () => {
   it("fails to unlock when no wallet exists", async () => {
     await expect(
       unlockWallet({ network: "sepolia", password: PASSWORD, storage: createMemoryStorage() }),
-    ).rejects.toThrow(/Create one first/);
+    ).rejects.toThrow(/No wallet exists/);
   });
 });
 
@@ -466,7 +466,7 @@ describe("14. network-specific account configuration", () => {
     const storage = createMemoryStorage();
     await expect(
       createWallet({ network: "mainnet", password: PASSWORD, storage }),
-    ).rejects.toThrow(/not available on mainnet/i);
+    ).rejects.toThrow(/not verified on mainnet/i);
     // Nothing should have been persisted for mainnet.
     expect(readPublicState(storage, "mainnet")).toBeNull();
     expect(readKeystore(storage, "mainnet")).toBeNull();
@@ -486,9 +486,10 @@ describe("14. network-specific account configuration", () => {
   it("unlock on an unsupported network fails fast", async () => {
     const storage = createMemoryStorage();
     await createWallet({ network: "sepolia", password: PASSWORD, storage });
+    // No mainnet wallet exists; unlock must fail (never silently fall back across networks).
     await expect(
       unlockWallet({ network: "mainnet", password: PASSWORD, storage }),
-    ).rejects.toThrow(/not available on mainnet/i);
+    ).rejects.toThrow(/No wallet exists on mainnet/i);
   });
 });
 
@@ -599,18 +600,31 @@ describe("17. exact token amount parsing", () => {
 });
 
 describe("12. Privy is not required by WalletCore", () => {
+  const forbidden = [
+    "@privy-io",
+    "@/privacy/privy",
+    "@/privacy/adapter",
+    "@/context/PrivyWalletContext",
+    "@/hooks/useStarknetWallet",
+    "@/services/strk20WalletApiService",
+    "get-starknet",
+  ];
+
   it("wallet modules never import Privy, external wallets, or Wallet API code", () => {
     const walletDir = join(__dirname, "..", "wallet");
-    const forbidden = [
-      "@privy-io",
-      "@/privacy/privy",
-      "@/privacy/adapter",
-      "@/context/PrivyWalletContext",
-      "@/hooks/useStarknetWallet",
-      "@/services/strk20WalletApiService",
-      "get-starknet",
-    ];
     const files = walk(walletDir);
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const needle of forbidden) {
+        expect(source, `${file} must not import ${needle}`).not.toContain(needle);
+      }
+    }
+  });
+
+  it("privacy identity modules never import Privy or Wallet API code", () => {
+    const identityDir = join(__dirname, "..", "privacy", "identity");
+    const files = walk(identityDir);
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       const source = readFileSync(file, "utf8");

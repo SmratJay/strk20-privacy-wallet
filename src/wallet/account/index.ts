@@ -1,4 +1,9 @@
-export type { AccountAdapter, AccountDeployment, AccountDeploymentProbe } from "./types";
+export type {
+  AccountAdapter,
+  AccountDeployment,
+  AccountDeploymentProbe,
+  OwnershipVerification,
+} from "./types";
 export {
   ReadyAccountAdapter,
   READY_SEPOLIA_CLASS_HASH,
@@ -14,3 +19,13 @@ export {
   probeAccountDeployment,
   waitForDeploymentFinality,
 } from "./ready";
+export {
+  BraavosAccountAdapter,
+  BRAAVOS_ACCOUNT_CONFIG,
+  BRAAVOS_ACCOUNT_CLASSHASH_SEPOLIA,
+  BRAAVOS_BASE_ACCOUNT_CLASSHASH_SEPOLIA,
+  isBraavosAccountSupported,
+  isKnownBraavosClass,
+  type BraavosAccountAdapterOptions,
+  type BraavosNetworkConfig,
+} from "./braavos";

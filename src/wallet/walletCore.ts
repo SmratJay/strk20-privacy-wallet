@@ -16,20 +16,30 @@ import {
 import {
   clearWallet as clearStorage,
   defaultStorage,
+  migrateLegacyWallet,
   readKeystore,
+  readWalletKeystore,
+  readWalletRegistry,
   updateDeploymentStatus,
+  upsertWalletRegistryEntry,
+  walletIdFor,
   writeKeystore,
   writePublicState,
+  writeWalletKeystore,
   type PublicWalletState,
+  type WalletRegistryEntry,
   type WalletStorage,
 } from "./storage";
 import {
   READY_ACCOUNT_CONFIG,
   ReadyAccountAdapter,
   isReadyAccountSupported,
+  BraavosAccountAdapter,
+  isBraavosAccountSupported,
   waitForDeploymentFinality,
   type AccountAdapter,
   type AccountDeploymentProbe,
+  type OwnershipVerification,
 } from "./account";
 import type { WalletNetworkId } from "./types";
 
@@ -37,10 +47,10 @@ import type { WalletNetworkId } from "./types";
  * Wallet Core — the self-custodial Starknet wallet facade.
  *
  * Owns the full wallet lifecycle: key generation, encrypted storage, account derivation,
- * deployment, signing, transaction submission, and recovery/export. The signing secret is held
- * ONLY in memory on an `UnlockedWallet` and is derived again from the encrypted keystore on
- * every unlock. No server, no Privy, no external wallet, no Wallet API — a local signer and the
- * starknet.js Account built on it do all signing.
+ * deployment, signing, transaction submission, import of existing accounts, and recovery/export.
+ * The signing secret is held ONLY in memory on an `UnlockedWallet` and is derived again from the
+ * encrypted keystore on every unlock. No server, no Privy, no external wallet, no Wallet API — a
+ * local signer and the starknet.js Account built on it do all signing.
  *
  * STRK20 privacy is intentionally absent here: Wallet Core knows nothing about viewing keys or
  * notes. The STRK20 layer consumes `UnlockedWallet.account` / `.signer` as a plain signing
@@ -50,11 +60,15 @@ import type { WalletNetworkId } from "./types";
 export type { WalletNetworkId } from "./types";
 export type WalletDeploymentStatus = PublicWalletState["deploymentStatus"];
 
+export type WalletAccountType = "ready-v0.4.0" | "braavos-v1.2.0";
+
 export interface UnlockedWallet {
   network: WalletNetworkId;
   accountType: string;
   publicKey: string;
   address: string;
+  /** Wallet identity (canonical account address) used for storage scoping. */
+  walletId: string;
   keystore: EncryptedKeystore;
   /** In-memory signing secret. NEVER persisted, NEVER logged, NEVER sent anywhere. */
   secret: string;
@@ -77,7 +91,9 @@ export interface UnlockWalletOptions {
   password: string;
   storage?: WalletStorage;
   provider?: RpcProvider;
-  adapterFactory?: (publicKey: string) => AccountAdapter;
+  adapterFactory?: (publicKey: string, address?: string) => AccountAdapter;
+  /** Load a specific wallet from the registry; defaults to the legacy Stage 1 primary wallet. */
+  walletId?: string;
 }
 
 export interface DeployAccountResult {
@@ -95,17 +111,47 @@ function makeProvider(network: WalletNetworkId): RpcProvider {
   return new RpcProvider({ nodeUrl: getNetworkConfig(network).rpcUrls[0] });
 }
 
-function makeAdapter(network: WalletNetworkId, publicKey: string, factory?: (pk: string) => AccountAdapter): AccountAdapter {
-  if (factory) return factory(publicKey);
-  // Network-aware account configuration: never derive an account using a network-agnostic
-  // default class hash. Unsupported networks fail closed.
-  const config = READY_ACCOUNT_CONFIG[network];
-  if (!config?.supported) {
-    throw new Error(
-      `Account contract is not available on ${network}. Only networks with a verified Ready account configuration are supported.`,
-    );
+function normalizeAddr(value: string): string {
+  return "0x" + BigInt(value).toString(16);
+}
+
+/** True when an account type is verified for a network. */
+export function isAccountTypeSupported(accountType: string, network: WalletNetworkId): boolean {
+  if (accountType === "ready-v0.4.0") return isReadyAccountSupported(network);
+  if (accountType === "braavos-v1.2.0") return isBraavosAccountSupported(network);
+  return false;
+}
+
+/**
+ * Build the account adapter for a stored/selected account type. Network-aware: never derives an
+ * account using a network-agnostic default class hash. Unsupported networks/types fail closed.
+ * `address` is required for non-derivable account types (Braavos).
+ */
+function makeAdapterForType(
+  accountType: string,
+  network: WalletNetworkId,
+  publicKey: string,
+  address?: string,
+  factory?: (publicKey: string, address?: string) => AccountAdapter,
+): AccountAdapter {
+  if (factory) return factory(publicKey, address);
+  if (accountType === "ready-v0.4.0") {
+    const config = READY_ACCOUNT_CONFIG[network];
+    if (!config?.supported) {
+      throw new Error(`Ready accounts are not verified on ${network}.`);
+    }
+    return new ReadyAccountAdapter(publicKey, config.classHash);
   }
-  return new ReadyAccountAdapter(publicKey, config.classHash);
+  if (accountType === "braavos-v1.2.0") {
+    if (!isBraavosAccountSupported(network)) {
+      throw new Error(`Braavos accounts are not verified on ${network}.`);
+    }
+    if (!address) {
+      throw new Error("Braavos import requires the existing account address.");
+    }
+    return new BraavosAccountAdapter({ publicKey, address, network });
+  }
+  throw new Error(`Unsupported account type: ${accountType}.`);
 }
 
 function buildUnlocked(
@@ -128,6 +174,7 @@ function buildUnlocked(
     accountType: adapter.type,
     publicKey,
     address: adapter.address,
+    walletId: walletIdFor(adapter.address),
     keystore,
     secret,
     signer,
@@ -137,7 +184,8 @@ function buildUnlocked(
   };
 }
 
-function persist(storage: WalletStorage, network: WalletNetworkId, wallet: UnlockedWallet): void {
+function persist(storage: WalletStorage, network: WalletNetworkId, wallet: UnlockedWallet, source: "created" | "imported"): void {
+  // Legacy Stage 1 mirror (primary wallet) for backward compatibility.
   writePublicState(storage, network, {
     accountType: wallet.accountType,
     address: wallet.address,
@@ -147,18 +195,31 @@ function persist(storage: WalletStorage, network: WalletNetworkId, wallet: Unloc
     createdAt: wallet.keystore.createdAt,
   });
   writeKeystore(storage, network, serializeKeystore(wallet.keystore));
+  // Stage 2 registry: scoped by wallet identity + network; never overwrites another wallet.
+  writeWalletKeystore(storage, wallet.walletId, serializeKeystore(wallet.keystore));
+  const entry: WalletRegistryEntry = {
+    walletId: wallet.walletId,
+    accountType: wallet.accountType,
+    address: wallet.address,
+    publicKey: wallet.publicKey,
+    network,
+    deploymentStatus: "unknown",
+    createdAt: wallet.keystore.createdAt,
+    source,
+  };
+  upsertWalletRegistryEntry(storage, network, entry);
 }
 
 /**
  * Create a new wallet: generate a local key, derive the counterfactual account address,
- * encrypt the keystore with the password, and persist keystore + public state. Returns an
- * UNLOCKED wallet session (secret only in memory). Does NOT deploy — call `deployAccount`.
+ * encrypt the keystore with the password, and persist keystore + public state + registry.
+ * Returns an UNLOCKED wallet session (secret only in memory). Does NOT deploy — call `deployAccount`.
  */
 export async function createWallet(options: CreateWalletOptions): Promise<UnlockedWallet> {
   const storage = options.storage ?? defaultStorage();
   const secret = canonicalizeSecret(generateSecretKey());
   const publicKey = getPublicKey(secret);
-  const adapter = makeAdapter(options.network, publicKey, options.adapterFactory);
+  const adapter = makeAdapterForType("ready-v0.4.0", options.network, publicKey, undefined, options.adapterFactory);
   const provider = options.provider ?? makeProvider(options.network);
 
   const keystore = await encryptSecret(secret, options.password, {
@@ -169,39 +230,153 @@ export async function createWallet(options: CreateWalletOptions): Promise<Unlock
   });
 
   const wallet = buildUnlocked(options.network, publicKey, secret, keystore, adapter, provider);
-  persist(storage, options.network, wallet);
+  persist(storage, options.network, wallet, "created");
   return wallet;
 }
 
 /**
  * Load / unlock an existing wallet from the encrypted keystore. Reconstructs the signer and
  * account from the decrypted secret and verifies the address/public-key relationship. Throws
- * on a wrong password or a tampered keystore.
+ * on a wrong password or a tampered keystore. Resolves the Stage 2 registry (by walletId) or the
+ * legacy Stage 1 primary wallet.
  */
 export async function unlockWallet(options: UnlockWalletOptions): Promise<UnlockedWallet> {
   const storage = options.storage ?? defaultStorage();
-  // Fail fast on unsupported networks before spending PBKDF2 work on decrypt.
-  if (!options.adapterFactory && !isReadyAccountSupported(options.network)) {
+  const raw = options.walletId
+    ? readWalletKeystore(storage, options.walletId)
+    : readKeystore(storage, options.network);
+  if (!raw) {
     throw new Error(
-      `Account contract is not available on ${options.network}. Only networks with a verified Ready account configuration are supported.`,
+      options.walletId
+        ? `No wallet exists for identity ${options.walletId} on ${options.network}.`
+        : `No wallet exists on ${options.network}. Create or import one first.`,
     );
   }
-  const raw = readKeystore(storage, options.network);
-  if (!raw) {
-    throw new Error(`No wallet exists on ${options.network}. Create one first.`);
-  }
   const keystore = deserializeKeystore(raw);
+  if (keystore.network !== options.network) {
+    throw new Error("Wallet unlock failed: keystore network does not match the selected network.");
+  }
+  // Fail fast on unsupported account types/networks before spending PBKDF2 work on decrypt.
+  if (!options.adapterFactory && !isAccountTypeSupported(keystore.accountType, options.network)) {
+    throw new Error(
+      `Account type ${keystore.accountType} is not verified on ${options.network}.`,
+    );
+  }
   const secret = await decryptSecret(keystore, options.password);
   const publicKey = getPublicKey(secret);
   if (publicKey.toLowerCase() !== keystore.publicKey.toLowerCase()) {
     throw new Error("Wallet unlock failed: public key mismatch.");
   }
-  const adapter = makeAdapter(options.network, publicKey, options.adapterFactory);
+  const adapter = makeAdapterForType(keystore.accountType, options.network, publicKey, keystore.address, options.adapterFactory);
   if (adapter.address.toLowerCase() !== keystore.address.toLowerCase()) {
     throw new Error("Wallet unlock failed: account address mismatch.");
   }
   const provider = options.provider ?? makeProvider(options.network);
   return buildUnlocked(options.network, publicKey, secret, keystore, adapter, provider);
+}
+
+/**
+ * List wallets on a network. Migrates any legacy Stage 1 wallet into the registry on first use.
+ */
+export function listWallets(options: { network: WalletNetworkId; storage?: WalletStorage }): WalletRegistryEntry[] {
+  const storage = options.storage ?? defaultStorage();
+  migrateLegacyWallet(storage, options.network);
+  return readWalletRegistry(storage, options.network);
+}
+
+export interface ImportWalletOptions {
+  network: WalletNetworkId;
+  accountType: WalletAccountType;
+  /** Raw signing secret of the existing account. NEVER persisted, NEVER sent anywhere. */
+  secret: string;
+  password: string;
+  /**
+   * Existing account address. REQUIRED for Braavos (not derivable from a key). For Ready it is
+   * optional and, when provided, verified against the counterfactually derived address.
+   */
+  address?: string;
+  storage?: WalletStorage;
+  provider?: RpcProvider;
+  adapterFactory?: (publicKey: string, address?: string) => AccountAdapter;
+  /** Run on-chain ownership verification (default true). */
+  verify?: boolean;
+}
+
+export interface ImportResult {
+  wallet: UnlockedWallet;
+  /** "existing" when the account is already deployed; "new-counterfactual" for an undeployed Ready account. */
+  accountKind: "existing" | "new-counterfactual";
+  /** Result of ownership verification (null only when `verify` is disabled). */
+  ownership: OwnershipVerification | null;
+}
+
+/**
+ * Import an existing Starknet wallet (Ready / Braavos) without changing its address.
+ *
+ * Security properties:
+ *  - the raw imported secret is validated and canonicalized locally, encrypted into the Wallet
+ *    Core keystore, and NEVER persisted in plaintext, sent to a server, or logged;
+ *  - the user-entered address and wallet type are NEVER trusted: the account is verified via
+ *    (a) expected-address derivation (Ready), (b) on-chain deployment probe, and (c) on-chain
+ *    ownership verification (SRC-5 / Braavos get_public_key);
+ *  - mismatches REJECT the import — never silently "repair" it;
+ *  - Braavos accounts are only importable when already deployed (no deployment, no derivation).
+ */
+export async function importWallet(options: ImportWalletOptions): Promise<ImportResult> {
+  const storage = options.storage ?? defaultStorage();
+  const secret = canonicalizeSecret(options.secret);
+  const publicKey = getPublicKey(secret);
+  const adapter = makeAdapterForType(options.accountType, options.network, publicKey, options.address, options.adapterFactory);
+  const provider = options.provider ?? makeProvider(options.network);
+
+  // Never trust a user-entered address: for derivable accounts (Ready) a provided address must
+  // match the counterfactually derived address. For non-derivable accounts (Braavos) the address
+  // is the adapter's address by construction.
+  if (options.address && adapter.addressDerivable) {
+    if (normalizeAddr(options.address) !== normalizeAddr(adapter.address)) {
+      throw new Error(
+        "Provided address does not match the account derived from this key. Import rejected.",
+      );
+    }
+  }
+
+  // Preserve the existing address — never create a new account.
+  const probe = await adapter.probeDeployment(provider);
+  if (probe === "unknown") {
+    throw new Error(
+      "Could not verify on-chain account state; refusing to import. Check the RPC and retry.",
+    );
+  }
+  const accountKind: ImportResult["accountKind"] = probe === "deployed" ? "existing" : "new-counterfactual";
+  if (options.accountType === "braavos-v1.2.0" && accountKind !== "existing") {
+    throw new Error(
+      "Braavos import requires an existing, already-deployed account. Braavos addresses are not derivable from a key.",
+    );
+  }
+
+  // Ownership verification — the definitive gate.
+  let ownership: OwnershipVerification | null = null;
+  if (options.verify !== false) {
+    const account = new Account({ provider, address: adapter.address, signer: new Signer(secret), cairoVersion: "1" });
+    ownership = await adapter.verifyOwnership(account, provider);
+    if (!ownership.verified) {
+      throw new Error(
+        `Import verification failed for ${options.accountType}: ${ownership.reason ?? "ownership could not be proven."}`,
+      );
+    }
+  }
+
+  // Encrypt into the same keystore model as newly-created wallets; discard the raw input.
+  const keystore = await encryptSecret(secret, options.password, {
+    publicKey,
+    address: adapter.address,
+    network: options.network,
+    accountType: adapter.type,
+  });
+
+  const wallet = buildUnlocked(options.network, publicKey, secret, keystore, adapter, provider);
+  persist(storage, options.network, wallet, "imported");
+  return { wallet, accountKind, ownership };
 }
 
 /**
@@ -314,7 +489,7 @@ export async function exportSecret(wallet: UnlockedWallet, password: string): Pr
   return decrypted;
 }
 
-/** Remove the keystore + public state for a network. Returns true when something was removed. */
+/** Remove the legacy Stage 1 keys for a network. Returns true when a keystore existed. */
 export function clearWallet(network: WalletNetworkId, storage?: WalletStorage): boolean {
   const store = storage ?? defaultStorage();
   const hadKeystore = readKeystore(store, network) !== null;

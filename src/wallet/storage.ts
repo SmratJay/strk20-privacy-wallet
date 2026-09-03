@@ -105,3 +105,108 @@ export function clearWallet(storage: WalletStorage, network: string): void {
   storage.removeItem(publicKeyFor(network));
   storage.removeItem(keystoreKeyFor(network));
 }
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Stage 2 — multi-wallet registry.
+//
+// Storage is scoped by WALLET IDENTITY + NETWORK (not just network) so an imported Ready/Braavos
+// wallet can never overwrite another wallet. A wallet identity is its canonical account address
+// (unique per account). The encrypted keystore lives under `orrange_wallet_v2_keystore_<walletId>`.
+// The legacy single-wallet keys above are preserved for Stage 1 compatibility.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+export const REGISTRY_PREFIX = "orrange_wallet_v2_registry";
+export const WALLET_KEYSTORE_PREFIX = "orrange_wallet_v2_keystore";
+
+/** Wallet identity = canonical (lowercased, unpadded) account address. */
+export function walletIdFor(address: string): string {
+  return "0x" + BigInt(address).toString(16);
+}
+
+export interface WalletRegistryEntry {
+  walletId: string;
+  accountType: string;
+  address: string;
+  publicKey: string;
+  network: string;
+  deploymentStatus: PublicWalletState["deploymentStatus"];
+  createdAt: number;
+  source: "created" | "imported";
+}
+
+function registryKeyFor(network: string): string {
+  return `${REGISTRY_PREFIX}_${network}`;
+}
+
+function walletKeystoreKeyFor(walletId: string): string {
+  return `${WALLET_KEYSTORE_PREFIX}_${walletId}`;
+}
+
+export function readWalletRegistry(storage: WalletStorage, network: string): WalletRegistryEntry[] {
+  const raw = storage.getItem(registryKeyFor(network));
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as WalletRegistryEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeWalletRegistry(storage: WalletStorage, network: string, entries: WalletRegistryEntry[]): void {
+  storage.setItem(registryKeyFor(network), JSON.stringify(entries));
+}
+
+/** Insert or update a registry entry, keyed by walletId (never duplicate/overwrite another wallet). */
+export function upsertWalletRegistryEntry(storage: WalletStorage, network: string, entry: WalletRegistryEntry): void {
+  const entries = readWalletRegistry(storage, network);
+  const idx = entries.findIndex((e) => e.walletId === entry.walletId);
+  if (idx >= 0) entries[idx] = entry;
+  else entries.push(entry);
+  writeWalletRegistry(storage, network, entries);
+}
+
+export function removeWalletRegistryEntry(storage: WalletStorage, network: string, walletId: string): void {
+  const entries = readWalletRegistry(storage, network).filter((e) => e.walletId !== walletId);
+  writeWalletRegistry(storage, network, entries);
+}
+
+export function readWalletKeystore(storage: WalletStorage, walletId: string): string | null {
+  return storage.getItem(walletKeystoreKeyFor(walletId));
+}
+
+export function writeWalletKeystore(storage: WalletStorage, walletId: string, keystoreJson: string): void {
+  storage.setItem(walletKeystoreKeyFor(walletId), keystoreJson);
+}
+
+export function clearWalletById(storage: WalletStorage, network: string, walletId: string): void {
+  removeWalletRegistryEntry(storage, network, walletId);
+  storage.removeItem(walletKeystoreKeyFor(walletId));
+}
+
+/**
+ * One-time migration: if the legacy Stage 1 wallet exists for `network` and the registry has no
+ * entry for it, register it (keystore content copied to the walletId-scoped key). Returns the
+ * migrated entry, or null when there is no legacy wallet. Never deletes legacy keys.
+ */
+export function migrateLegacyWallet(storage: WalletStorage, network: string): WalletRegistryEntry | null {
+  const legacyPublic = readPublicState(storage, network);
+  const legacyKeystore = readKeystore(storage, network);
+  if (!legacyPublic || !legacyKeystore) return null;
+  const walletId = walletIdFor(legacyPublic.address);
+  const registry = readWalletRegistry(storage, network);
+  if (registry.some((e) => e.walletId === walletId)) return registry.find((e) => e.walletId === walletId) ?? null;
+  writeWalletKeystore(storage, walletId, legacyKeystore);
+  const entry: WalletRegistryEntry = {
+    walletId,
+    accountType: legacyPublic.accountType,
+    address: legacyPublic.address,
+    publicKey: legacyPublic.publicKey,
+    network,
+    deploymentStatus: legacyPublic.deploymentStatus,
+    createdAt: legacyPublic.createdAt,
+    source: "created",
+  };
+  upsertWalletRegistryEntry(storage, network, entry);
+  return entry;
+}

@@ -5,22 +5,26 @@ import { CallData } from "starknet";
 import {
   createWallet,
   unlockWallet,
+  importWallet,
   deployAccount,
   getDeploymentStatus,
   sendTransaction,
   exportSecret,
-  clearWallet,
+  clearWalletById,
   lockWallet,
   parseAmountToBase,
   isReadyAccountSupported,
+  isBraavosAccountSupported,
+  listWallets,
   defaultStorage,
-  readPublicState,
   type UnlockedWallet,
+  type WalletAccountType,
   type WalletNetworkId,
+  type WalletRegistryEntry,
 } from "@/wallet";
 import { getNetworkConfig } from "@/config/networks";
 
-type View = "create" | "unlock" | "wallet";
+type View = "home" | "create" | "unlock" | "import" | "wallet";
 
 function shortAddr(value: string | null): string {
   if (!value) return "—";
@@ -29,8 +33,15 @@ function shortAddr(value: string | null): string {
 
 export default function OwnWalletPage() {
   const [network, setNetwork] = useState<WalletNetworkId>("sepolia");
-  const [view, setView] = useState<View>("create");
+  const [view, setView] = useState<View>("home");
+  const [wallets, setWallets] = useState<WalletRegistryEntry[]>([]);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
+
   const [password, setPassword] = useState("");
+  const [secret, setSecret] = useState("");
+  const [existingAddress, setExistingAddress] = useState("");
+  const [importType, setImportType] = useState<WalletAccountType>("ready-v0.4.0");
+
   const [wallet, setWallet] = useState<UnlockedWallet | null>(null);
   const [status, setStatus] = useState<string>("unknown");
   const [busy, setBusy] = useState(false);
@@ -47,16 +58,30 @@ export default function OwnWalletPage() {
 
   const storage = defaultStorage();
 
-  // Decide create vs unlock from persisted public state.
+  const refreshWallets = useCallback(() => {
+    setWallets(listWallets({ network, storage }));
+  }, [network, storage]);
+
   useEffect(() => {
-    const state = readPublicState(storage, network);
-    setView(state ? "unlock" : "create");
+    refreshWallets();
     setWallet(null);
     setError(null);
     setNotice(null);
     setExportStage("idle");
     setRevealedSecret(null);
-  }, [network]);
+  }, [network, refreshWallets]);
+
+  const resetSession = useCallback(() => {
+    setWallet(null);
+    setStatus("unknown");
+    setError(null);
+    setNotice(null);
+    setExportStage("idle");
+    setRevealedSecret(null);
+    setPassword("");
+    setSecret("");
+    setExistingAddress("");
+  }, []);
 
   const handleCreate = useCallback(async () => {
     setError(null);
@@ -68,20 +93,21 @@ export default function OwnWalletPage() {
       setView("wallet");
       setStatus("not_deployed");
       setNotice("Wallet created. Keys are stored in an encrypted keystore protected by your password.");
+      refreshWallets();
       void getDeploymentStatus(w).then(setStatus).catch(() => setStatus("unknown"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Wallet creation failed.");
     } finally {
       setBusy(false);
     }
-  }, [network, password]);
+  }, [network, password, refreshWallets]);
 
   const handleUnlock = useCallback(async () => {
     setError(null);
     setNotice(null);
     setBusy(true);
     try {
-      const w = await unlockWallet({ network, password });
+      const w = await unlockWallet({ network, password, walletId: selectedWalletId ?? undefined });
       setWallet(w);
       setView("wallet");
       void getDeploymentStatus(w).then(setStatus).catch(() => setStatus("unknown"));
@@ -90,7 +116,39 @@ export default function OwnWalletPage() {
     } finally {
       setBusy(false);
     }
-  }, [network, password]);
+  }, [network, password, selectedWalletId]);
+
+  const handleImport = useCallback(async () => {
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const result = await importWallet({
+        network,
+        accountType: importType,
+        secret,
+        password,
+        address: existingAddress.trim() || undefined,
+      });
+      setWallet(result.wallet);
+      setView("wallet");
+      setStatus(result.accountKind === "existing" ? "deployed" : "not_deployed");
+      const ownershipNote = result.ownership?.verified
+        ? `ownership verified via ${result.ownership.method}`
+        : "ownership not verified";
+      setNotice(
+        `Imported ${result.accountKind === "existing" ? "existing" : "new-counterfactual"} ${
+          importType === "braavos-v1.2.0" ? "Braavos" : "Ready"
+        } account (${ownershipNote}). Address preserved — no new account created.`,
+      );
+      refreshWallets();
+      void getDeploymentStatus(result.wallet).then(setStatus).catch(() => setStatus("unknown"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [network, importType, secret, password, existingAddress, refreshWallets]);
 
   const handleDeploy = useCallback(async () => {
     if (!wallet) return;
@@ -108,11 +166,7 @@ export default function OwnWalletPage() {
       );
     } catch (err) {
       setStatus("unknown");
-      setError(
-        err instanceof Error
-          ? `Deployment failed: ${err.message}`
-          : "Deployment failed.",
-      );
+      setError(err instanceof Error ? `Deployment failed: ${err.message}` : "Deployment failed.");
     } finally {
       setBusy(false);
     }
@@ -126,7 +180,6 @@ export default function OwnWalletPage() {
     try {
       const strk = getNetworkConfig(network).tokens.find((t) => t.symbol === "STRK");
       if (!strk) throw new Error("STRK token is not configured for this network.");
-      // Exact decimal → base-unit conversion. Never float math for money.
       const amountBase = parseAmountToBase(amount, strk.decimals);
       if (amountBase <= 0n) throw new Error("Amount must be greater than zero.");
       const call = {
@@ -154,8 +207,8 @@ export default function OwnWalletPage() {
     if (!wallet) return;
     setError(null);
     try {
-      const secret = await exportSecret(wallet, password);
-      setRevealedSecret(secret);
+      const secretValue = await exportSecret(wallet, password);
+      setRevealedSecret(secretValue);
       setExportStage("revealed");
     } catch {
       setError("Password did not match this wallet.");
@@ -169,31 +222,35 @@ export default function OwnWalletPage() {
 
   const handleLock = useCallback(() => {
     if (wallet) lockWallet(wallet);
-    setWallet(null);
-    setPassword("");
+    resetSession();
     setNotice("Wallet locked. Unlock with your password to sign again.");
-    setExportStage("idle");
-    setRevealedSecret(null);
     setView("unlock");
-  }, [wallet]);
+    setSelectedWalletId(wallet?.walletId ?? null);
+  }, [wallet, resetSession]);
 
-  const handleDelete = useCallback(() => {
-    clearWallet(network, storage);
-    setWallet(null);
-    setPassword("");
-    setView("create");
-    setNotice("Local wallet state removed.");
-  }, [network, storage]);
+  const handleDelete = useCallback(
+    (walletId: string) => {
+      clearWalletById(storage, network, walletId);
+      resetSession();
+      refreshWallets();
+      setView("home");
+      setNotice("Local wallet state removed.");
+    },
+    [storage, network, resetSession, refreshWallets],
+  );
+
+  const readySupported = isReadyAccountSupported(network);
+  const braavosSupported = isBraavosAccountSupported(network);
 
   return (
     <main className="min-h-screen bg-background text-zinc-100 p-6 flex justify-center">
       <div className="w-full max-w-2xl">
         <header className="mb-6">
-          <p className="text-xs uppercase tracking-widest text-orange-500">Stage 1 · Own Wallet Core</p>
+          <p className="text-xs uppercase tracking-widest text-orange-500">Stage 2 · Import + Private Identity</p>
           <h1 className="text-2xl font-semibold mt-1">Self-custodial Starknet wallet</h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Local key generation → encrypted keystore → Ready account → local signer. No Privy, no
-            external wallet, no server-side signing.
+            Create a new wallet or import your existing Ready / Braavos account — your address is
+            preserved, keys stay local, and the STRK20 privacy layer consumes your signer.
           </p>
         </header>
 
@@ -201,13 +258,13 @@ export default function OwnWalletPage() {
           <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-400">Network</span>
             {(["sepolia", "mainnet"] as const).map((n) => {
-              const supported = isReadyAccountSupported(n);
+              const supported = isReadyAccountSupported(n) || isBraavosAccountSupported(n);
               return (
                 <button
                   key={n}
                   onClick={() => supported && setNetwork(n)}
                   disabled={!supported}
-                  title={supported ? undefined : "Ready account not verified on this network yet"}
+                  title={supported ? undefined : "No verified account config on this network yet"}
                   className={`px-3 py-1 rounded-md text-sm border ${
                     network === n
                       ? "border-orange-500 text-orange-400"
@@ -220,9 +277,6 @@ export default function OwnWalletPage() {
                 </button>
               );
             })}
-            {network === "mainnet" && (
-              <span className="text-xs text-amber-500">Ready account not verified on Mainnet — disabled.</span>
-            )}
           </div>
         </section>
 
@@ -235,6 +289,62 @@ export default function OwnWalletPage() {
           <div className="rounded-md border border-zinc-800 bg-zinc-900/60 text-zinc-300 text-sm p-3 mb-4 break-all">
             {notice}
           </div>
+        )}
+
+        {view === "home" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
+            <h2 className="font-medium mb-4">Get started</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+              <button
+                onClick={() => { resetSession(); setView("create"); }}
+                className="rounded-md border border-orange-600 bg-orange-950/20 px-4 py-4 text-left"
+              >
+                <div className="font-medium text-orange-300">Create wallet</div>
+                <div className="text-xs text-zinc-400 mt-1">Generate a new local key + Ready account.</div>
+              </button>
+              <button
+                onClick={() => { resetSession(); setView("import"); }}
+                className="rounded-md border border-zinc-700 bg-zinc-950/40 px-4 py-4 text-left hover:border-zinc-500"
+              >
+                <div className="font-medium">Import existing wallet</div>
+                <div className="text-xs text-zinc-400 mt-1">Bring your Ready or Braavos account in — same address.</div>
+              </button>
+            </div>
+
+            <h3 className="text-sm font-medium text-zinc-300 mb-2">Stored wallets ({network})</h3>
+            {wallets.length === 0 ? (
+              <p className="text-xs text-zinc-500">
+                No wallets stored on {network} yet. Legacy wallets (if any) are migrated automatically.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {wallets.map((entry) => (
+                  <li key={entry.walletId} className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+                    <div>
+                      <div className="text-sm">
+                        {entry.accountType} <span className="text-zinc-500">· {entry.source}</span>
+                      </div>
+                      <div className="font-mono text-xs text-zinc-400">{shortAddr(entry.address)}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setSelectedWalletId(entry.walletId); setView("unlock"); }}
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm"
+                      >
+                        Unlock
+                      </button>
+                      <button
+                        onClick={() => handleDelete(entry.walletId)}
+                        className="rounded-md border border-red-900 px-3 py-1.5 text-sm text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
 
         {view === "create" && (
@@ -256,8 +366,8 @@ export default function OwnWalletPage() {
               {busy ? "Creating…" : "Create wallet"}
             </button>
             <p className="text-xs text-zinc-500 mt-3">
-              Generates a STARK signing key locally, derives your Ready account address, and
-              encrypts the key with your password (AES-GCM + PBKDF2). Nothing is sent anywhere.
+              Generates a STARK signing key locally, derives your Ready account address, and encrypts
+              the key with your password (AES-GCM + PBKDF2). Nothing is sent anywhere.
             </p>
           </section>
         )}
@@ -282,6 +392,89 @@ export default function OwnWalletPage() {
           </section>
         )}
 
+        {view === "import" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
+            <h2 className="font-medium mb-3">Import existing wallet</h2>
+
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-sm text-zinc-400">Account type</span>
+              <button
+                onClick={() => setImportType("ready-v0.4.0")}
+                disabled={!readySupported}
+                className={`px-3 py-1 rounded-md text-sm border ${
+                  importType === "ready-v0.4.0"
+                    ? "border-orange-500 text-orange-400"
+                    : "border-zinc-800 text-zinc-400"
+                } ${!readySupported ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                Ready
+              </button>
+              <button
+                onClick={() => setImportType("braavos-v1.2.0")}
+                disabled={!braavosSupported}
+                className={`px-3 py-1 rounded-md text-sm border ${
+                  importType === "braavos-v1.2.0"
+                    ? "border-orange-500 text-orange-400"
+                    : "border-zinc-800 text-zinc-400"
+                } ${!braavosSupported ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                Braavos
+              </button>
+            </div>
+
+            <label className="block text-sm text-zinc-400 mb-1">
+              Private key / recovery secret
+            </label>
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder="0x…"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
+            />
+
+            <label className="block text-sm text-zinc-400 mb-1">
+              Existing account address
+              {importType === "braavos-v1.2.0"
+                ? " (required — Braavos addresses are not derivable from a key)"
+                : " (optional — verified against the derived address)"}
+            </label>
+            <input
+              value={existingAddress}
+              onChange={(e) => setExistingAddress(e.target.value)}
+              placeholder="0x…"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
+            />
+
+            <label className="block text-sm text-zinc-400 mb-1">New wallet password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-4"
+            />
+
+            <button
+              onClick={handleImport}
+              disabled={
+                busy ||
+                !secret ||
+                password.length < 8 ||
+                (importType === "braavos-v1.2.0" && !existingAddress.trim())
+              }
+              className="rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
+            >
+              {busy ? "Verifying & importing…" : "Verify & import"}
+            </button>
+            <p className="text-xs text-zinc-500 mt-3">
+              Ownership is verified on-chain (derivation for Ready, <code>get_public_key</code> /
+              SRC-5 for Braavos). Your address is preserved — importing never creates a new account.
+              The key is encrypted with your password and never leaves your device.
+            </p>
+          </section>
+        )}
+
         {view === "wallet" && wallet && (
           <>
             <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 mb-4">
@@ -293,6 +486,7 @@ export default function OwnWalletPage() {
                 <Row label="Public key" value={shortAddr(wallet.publicKey)} />
                 <Row label="Network" value={wallet.network} />
                 <Row label="Deployment" value={status} />
+                <Row label="Private mode" value="available (STRK20 signer ready)" />
               </dl>
               <div className="mt-4 flex gap-2 flex-wrap">
                 <button
@@ -312,7 +506,11 @@ export default function OwnWalletPage() {
                 <button onClick={handleLock} disabled={busy} className="rounded-md border border-zinc-700 px-3 py-2 text-sm">
                   Lock
                 </button>
-                <button onClick={handleDelete} disabled={busy} className="rounded-md border border-red-900 px-3 py-2 text-sm text-red-300">
+                <button
+                  onClick={() => handleDelete(wallet.walletId)}
+                  disabled={busy}
+                  className="rounded-md border border-red-900 px-3 py-2 text-sm text-red-300"
+                >
                   Delete local state
                 </button>
               </div>
