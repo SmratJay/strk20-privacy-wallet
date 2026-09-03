@@ -265,9 +265,17 @@ export class Strk20Adapter {
   }
 
   async shield(user: Strk20User, token: string, amountBase: bigint): Promise<Strk20ExecuteReceipt> {
-    // autoSetup: opens the self-channel + STRK subchannel in the same apply_actions proof when
-    // missing (protocol requires subchannel_exists before CreateEncNote — SUBCHANNEL_NOT_FOUND).
-    const opts = { autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } };
+    // autoRegister: a first-time wallet (no registered viewing key / self-channel) would otherwise
+    // reach OpenChannel(ownAddress) without the required channel context and the SDK compiler
+    // throws "Missing channel context for recipient <own wallet address>". autoRegister registers
+    // the viewing key + opens the self-channel in the same apply_actions proof when missing.
+    // autoSetup: opens the self-channel + STRK subchannel when missing (protocol requires
+    // subchannel_exists before CreateEncNote — SUBCHANNEL_NOT_FOUND).
+    const opts = {
+      autoRegister: true,
+      autoSetup: true,
+      autoDiscover: { notes: "refresh", channels: "refresh" },
+    };
     // Prove against a block safely behind the current chain head so account validation does not
     // reject the proof as "too recent" (do NOT prove against `latest`).
     const provingBlockId = await this.getSafeProvingBlock(user);

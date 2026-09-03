@@ -1862,3 +1862,26 @@ launchpad/extended gated, allowance decimals, no monkey-patching. Full suite:
 **Verification.** Full suite: **569 passed, 1 skipped** (live acceptance skips honestly).
 `npm run typecheck`, `npm test`, `npm run build` all pass; real Sepolia suite 6 passed + 1 honest
 skip. `docs/WALLET_CORE.md` documents the trust model (§16g).
+
+## 📅 Thursday, September 03, 2026 — 17:57:44 IST
+### URGENT FIX — STRK20 first shield (autoRegister)
+
+#### 🔴 [BIG CHANGE] — Shield enables autoRegister so a first-time wallet can shield
+
+**Detailed Technical Explanation.**
+- Real failure on a freshly created + deployed + funded Wallet Core Ready account:
+  `Shield → approving STRK allowance → Missing channel context for recipient <own wallet address>`.
+- Root cause: `Strk20Adapter.shield()` used `{ autoSetup: true, autoDiscover: { notes: "refresh",
+  channels: "refresh" } }` but did NOT enable `autoRegister`. On a first-time wallet (no registered
+  viewing key / self-channel) the SDK compiler reaches `OpenChannel(ownAddress)` without the
+  required channel context and throws exactly that error.
+- Fix (only the first-use shield path): shield now builds with
+  `{ autoRegister: true, autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } }`.
+  `autoRegister` (a real `ExecuteOptions` field in the vendored SDK 0.14.3-rc.5) adds a
+  SetViewingKey action when the user is not in the registry, so the viewing key + self-channel are
+  registered in the same apply_actions proof as the deposit.
+- Regression test: `strk20AdapterHardening.test.ts` records the SDK build opts and asserts EVERY
+  shield build carries `autoRegister: true` + `autoSetup: true` + the refresh discovery options.
+
+**Verification.** `npm run typecheck`, `npm test` (570 passed, 1 skipped — live acceptance honest
+skip), `npm run build` all pass.

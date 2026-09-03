@@ -18,11 +18,14 @@ const sdkState = vi.hoisted(() => ({
   createCalls: 0,
   discoveryTimestamp: "0x0" as unknown,
   ohttpDiscoveryOptions: null as unknown,
+  /** Build options passed to `build(opts)` (autoRegister/autoSetup/autoDiscover/...). */
+  buildOpts: [] as Record<string, unknown>[],
   reset() {
     this.opsLog.length = 0;
     this.createCalls = 0;
     this.discoveryTimestamp = "0x0";
     this.ohttpDiscoveryOptions = null;
+    this.buildOpts.length = 0;
   },
 }));
 
@@ -50,6 +53,7 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
     },
   });
   const makeBuilder = (opts: Record<string, unknown>) => {
+    sdkState.buildOpts.push({ ...opts });
     const builder = {
       with: (_token: string, opFn: (t: unknown) => void) => {
         opFn(makeTokenOps());
@@ -187,6 +191,21 @@ describe("STRK20 operation shapes", () => {
     expect(receipt.transactionHash).toBe("0xsubmit");
     expect(sdkState.opsLog).toContain("deposit");
     expect(sdkState.opsLog).toContain("surplusTo");
+  });
+
+  it("FIRST-SHIELD fix: shield enables autoRegister so a first-time wallet never hits 'Missing channel context'", async () => {
+    // Regression: on a freshly created/deployed/funded wallet the SDK compiler reaches
+    // OpenChannel(ownAddress) without channel context and throws unless autoRegister is on.
+    const adapter = makeAdapter();
+    const user = makeUser();
+    await adapter.shield(user, STRK, 5n);
+    // The SDK build ran twice (simulate + execute); every shield build must carry autoRegister.
+    expect(sdkState.buildOpts.length).toBeGreaterThan(0);
+    for (const opts of sdkState.buildOpts) {
+      expect(opts.autoRegister).toBe(true);
+      expect(opts.autoSetup).toBe(true);
+      expect(opts.autoDiscover).toEqual({ notes: "refresh", channels: "refresh" });
+    }
   });
 
   it("transfer builds a transfer + surplusTo flow", async () => {
