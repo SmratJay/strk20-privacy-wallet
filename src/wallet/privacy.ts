@@ -1,7 +1,14 @@
 import { hash, ec, constants } from "starknet";
 import { getNetworkConfig } from "@/config/networks";
-import { Strk20Adapter, STRK_TOKEN_ADDRESS, type Strk20User, type Strk20ExecuteReceipt } from "@/privacy/strk20";
-import { createPrivateIdentity, type PrivateIdentity } from "@/privacy/identity";
+import {
+  Strk20Adapter,
+  STRK_TOKEN_ADDRESS,
+  privateApplicationInvoke,
+  type PrivateApplicationInvokeParams,
+  type Strk20User,
+  type Strk20ExecuteReceipt,
+} from "@/privacy/strk20";
+import { createPrivateIdentity, listPrivateIdentities, type PrivateIdentity } from "@/privacy/identity";
 import type { UnlockedWallet, WalletNetworkId } from "./index";
 import type { WalletStorage } from "./storage";
 
@@ -248,6 +255,48 @@ export class WalletPrivacySession {
   withdraw(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
     return this.serialize(async () => {
       const receipt = await this.adapter.unshield(this.user(), token, amountBase);
+      return toSafeResult(receipt);
+    });
+  }
+
+  /**
+   * Safe list of this wallet's PrivateIdentities on this network (public metadata only — never
+   * viewing keys or secret material). Bound to the session wallet + network.
+   */
+  listPrivateIdentities(): PrivateIdentity[] {
+    return listPrivateIdentities(this.storage, this.network, this.wallet.address);
+  }
+
+  /**
+   * Resolve an ACTIVE PrivateIdentity for this wallet on this network. The identity MUST belong
+   * to the session wallet + network (never a cross-wallet/cross-network identity) and MUST be
+   * active. Throws otherwise. Returns only the public identity record.
+   */
+  getPrivateIdentity(id: string, owner?: string): PrivateIdentity {
+    const expectedOwner = owner?.trim() ? owner : this.wallet.address;
+    if (BigInt(expectedOwner).toString(16) !== BigInt(this.wallet.address).toString(16)) {
+      throw new Error("Private identity owner does not match the active wallet.");
+    }
+    const identity = listPrivateIdentities(this.storage, this.network, expectedOwner).find(
+      (i) => i.id.toLowerCase() === id.toLowerCase() && i.status === "active",
+    );
+    if (!identity) {
+      throw new Error(`No active private identity ${id} for this wallet on ${this.network}.`);
+    }
+    return identity;
+  }
+
+  /**
+   * Private application execution (serialized like every mutating pool op).
+   *
+   * Consumes a private STRK20 balance and causes an external Starknet application action through
+   * the SDK private-invoke pipeline (withdraw → privacy_invoke → surplus), signed by the Wallet
+   * Core local signer. The application executes under the passed shadow identity commitment —
+   * never the master wallet. The viewing key stays inside this session.
+   */
+  executePrivateApplication(params: PrivateApplicationInvokeParams): Promise<PrivacyOperationResult> {
+    return this.serialize(async () => {
+      const receipt = await privateApplicationInvoke(this.adapter, this.user(), params);
       return toSafeResult(receipt);
     });
   }

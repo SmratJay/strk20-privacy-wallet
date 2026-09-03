@@ -28,6 +28,15 @@ import {
   type PrivacyOperationResult,
   type WalletPrivacyConfig,
 } from "./privacy";
+import {
+  StarknetPrivateExecutor,
+  IDLE_PRIVATE_EXECUTION,
+  type PrivateExecutionIntent,
+  type PrivateExecutionOpState,
+  type PrivateExecutionReceipt,
+} from "@/privacy/execution";
+import { listPrivateIdentities as listWalletPrivateIdentities } from "@/privacy/identity";
+import type { PrivateIdentity } from "@/privacy/identity";
 
 /**
  * Wallet Core — application wallet runtime.
@@ -143,6 +152,8 @@ export interface WalletRuntimeView {
   privateBalances: PublicBalanceRow[];
   /** Honest lifecycle of the latest STRK20 privacy operation (never proof/note/secret data). */
   privacyOp: PrivacyOpState;
+  /** Honest lifecycle of the latest PRIVATE EXECUTION (application action). Never secrets. */
+  executionOp: PrivateExecutionOpState;
   /** In-memory activity for this session (never persisted, never on-chain-sensitive). */
   recentTransactions: RecentTransaction[];
   error: string | null;
@@ -250,6 +261,7 @@ export class WalletRuntime {
       ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
+      executionOp: IDLE_PRIVATE_EXECUTION,
       recentTransactions: [],
       error: null,
     };
@@ -334,6 +346,7 @@ export class WalletRuntime {
       ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
+      executionOp: IDLE_PRIVATE_EXECUTION,
       recentTransactions: [],
       error: null,
     };
@@ -365,6 +378,7 @@ export class WalletRuntime {
       ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
+      executionOp: IDLE_PRIVATE_EXECUTION,
       error: null,
     });
   }
@@ -397,6 +411,7 @@ export class WalletRuntime {
       publicBalances: [],
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
+      executionOp: IDLE_PRIVATE_EXECUTION,
       error: null,
     });
   }
@@ -493,6 +508,7 @@ export class WalletRuntime {
       publicBalances: [],
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
+      executionOp: IDLE_PRIVATE_EXECUTION,
       recentTransactions: [],
       error: null,
     });
@@ -810,6 +826,28 @@ export class WalletRuntime {
     if (!session) return;
     const provider = session.provider;
     this.setView({ privacyOp: { operation, phase: "pending", transactionHash, message: null } });
+    const result = await this.pollTransactionPhase(transactionHash, guard, provider);
+    if (!result) return;
+    this.setView({
+      privacyOp: {
+        operation,
+        phase: result.phase,
+        transactionHash,
+        message: result.phase === "reverted" ? "STRK20 transaction reverted on-chain." : result.message,
+      },
+    });
+  }
+
+  /**
+   * Poll a submitted transaction until finality (or an honest timeout). Returns null when the
+   * poll was stale (wallet/network switched or locked) — the caller must not update state.
+   * A finality timeout must NEVER be reported as success; it stays "pending".
+   */
+  private async pollTransactionPhase(
+    transactionHash: string,
+    guard: RuntimeGuard,
+    provider: Pick<RpcProvider, "waitForTransaction">,
+  ): Promise<{ phase: "pending" | "success" | "reverted" | "rejected"; message: string | null } | null> {
     try {
       const receipt = (await Promise.race([
         provider.waitForTransaction(transactionHash, { retryInterval: 4000 }),
@@ -817,9 +855,9 @@ export class WalletRuntime {
           setTimeout(() => reject(new Error("Finality timeout")), PRIVACY_FINALITY_TIMEOUT_MS),
         ),
       ])) as { execution_status?: unknown; status?: unknown; revert_reason?: unknown };
-      if (!this.isCurrent(guard)) return;
+      if (!this.isCurrent(guard)) return null;
       const exec = receipt.execution_status ?? receipt.status;
-      const phase: PrivacyOpState["phase"] =
+      const phase: "pending" | "success" | "reverted" | "rejected" =
         exec === "REVERTED"
           ? "reverted"
           : exec === "REJECTED"
@@ -827,27 +865,16 @@ export class WalletRuntime {
             : exec === "SUCCEEDED" || exec === "ACCEPTED_ON_L2"
               ? "success"
               : "pending";
-      this.setView({
-        privacyOp: {
-          operation,
-          phase,
-          transactionHash,
-          message: phase === "reverted" ? "STRK20 transaction reverted on-chain." : null,
-        },
-      });
+      return { phase, message: null };
     } catch (err) {
-      if (!this.isCurrent(guard)) return;
+      if (!this.isCurrent(guard)) return null;
       // A finality timeout must NOT be reported as success — leave it honestly "pending".
-      this.setView({
-        privacyOp: {
-          operation,
-          phase: "pending",
-          transactionHash,
-          message: err instanceof Error && /Finality timeout/.test(err.message)
-            ? "Submitted — finality not yet confirmed on-chain."
-            : "Could not confirm on-chain finality.",
-        },
-      });
+      return {
+        phase: "pending",
+        message: err instanceof Error && /Finality timeout/.test(err.message)
+          ? "Submitted — finality not yet confirmed on-chain."
+          : "Could not confirm on-chain finality.",
+      };
     }
   }
 
@@ -888,5 +915,97 @@ export class WalletRuntime {
     });
     if (!this.isCurrent(guard)) return identity;
     return identity;
+  }
+
+  /** Safe list of the active wallet's PrivateIdentities on the active network (public metadata only). */
+  listPrivateIdentities(): import("@/privacy/identity").PrivateIdentity[] {
+    if (!this.session) return [];
+    return listWalletPrivateIdentities(this.storage, this.view.network, this.session.address);
+  }
+
+  /** Best-effort human token symbol for the active network (UI label, never a secret). */
+  private tokenSymbolFor(token: string): string | null {
+    const tokenConfig = getNetworkConfig(this.view.network).tokens.find(
+      (t) => t.address.toLowerCase() === token.toLowerCase(),
+    );
+    return tokenConfig?.symbol ?? null;
+  }
+
+  /**
+   * Execute a PRIVATE Starknet application action (the Wallet Core private-execution surface).
+   *
+   * Requires an unlocked Wallet Core wallet + a live WalletPrivacySession. Captures the existing
+   * walletId/network/generation guard so a stale/locked execution is refused. Runs through the
+   * STRK20 privacy layer (never a public master-wallet fallback) and returns a SAFE receipt.
+   *
+   * Lifecycle (visible in `executionOp`):
+   *   preparing → proving → submitted → pending → success / reverted / rejected / failed
+   * Success is NEVER claimed before on-chain reconciliation.
+   */
+  async executePrivate(intent: PrivateExecutionIntent): Promise<PrivateExecutionReceipt> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to execute private actions.");
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    this.setView({
+      executionOp: {
+        phase: "preparing",
+        action: intent.action,
+        tokenSymbol: this.tokenSymbolFor(intent.token),
+        amount: intent.amount,
+        targetContract: intent.targetContract,
+        identityId: intent.identity,
+        transactionHash: null,
+        message: null,
+      },
+      error: null,
+    });
+    try {
+      this.setView({ executionOp: { ...this.view.executionOp, phase: "proving" } });
+      const executor = new StarknetPrivateExecutor({ wallet: session, privacySession: privacy });
+      const receipt = await executor.execute(intent);
+      if (!this.isCurrent(guard)) return receipt;
+      this.setView({
+        executionOp: {
+          ...this.view.executionOp,
+          phase: "submitted",
+          transactionHash: receipt.transactionHash,
+          message: null,
+        },
+        recentTransactions: [
+          { hash: receipt.transactionHash, at: Date.now(), kind: "privateTransfer" as const },
+          ...this.view.recentTransactions,
+        ].slice(0, 20),
+      });
+      await this.waitForExecutionFinality(receipt.transactionHash, guard);
+      return receipt;
+    } catch (err) {
+      if (!this.isCurrent(guard)) throw err;
+      this.setView({
+        executionOp: {
+          ...this.view.executionOp,
+          phase: "failed",
+          message: err instanceof Error ? err.message : "Private execution failed.",
+        },
+      });
+      throw err;
+    }
+  }
+
+  /** Poll the RPC for the final status of a submitted private execution. Honest: never fabricates success. */
+  private async waitForExecutionFinality(transactionHash: string, guard: RuntimeGuard): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    this.setView({ executionOp: { ...this.view.executionOp, phase: "pending", transactionHash, message: null } });
+    const result = await this.pollTransactionPhase(transactionHash, guard, session.provider);
+    if (!result) return;
+    this.setView({
+      executionOp: {
+        ...this.view.executionOp,
+        phase: result.phase,
+        transactionHash,
+        message: result.phase === "reverted" ? "Private execution reverted on-chain." : result.message,
+      },
+    });
   }
 }

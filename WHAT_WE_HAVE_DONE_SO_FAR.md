@@ -98,6 +98,63 @@ clear UI errors. **Verified live on Sepolia**: 0.1 STRK sent from the funded dep
 
 ---
 
+## Private Execution (Phase 1) — 2026-09-03
+
+#### 🔴 [BIG CHANGE] — Wallet Core private-execution primitive (`PrivateExecutor`)
+
+**What:** a new layer `Wallet Core → STRK20 privacy → PrivateExecutor → Starknet application`.
+The smallest private-execution abstraction: a `PrivateExecutionIntent` (action, token, amount,
+target contract, identity, optional destination/expiry) becomes a safe `PrivateExecutionReceipt`
+(tx hash + status + public identity metadata — never secrets/notes/proofs/viewing keys).
+
+**Domain layer** `src/privacy/execution/` (types + `PrivateExecutor` interface +
+`StarknetPrivateExecutor`). **Application adapter** `src/privacy/strk20/privateApplication.ts`
+mirrors the proven `privateCurve` pattern: `.build({ autoSetup, autoDiscover: refresh,
+autoSelectNotes })` → `.with(token).withdraw({ recipient: target, amount })` →
+`.invoke(target, privacy_invoke(identity, amount))` → `.surplusTo`. **Session surface**
+`WalletPrivacySession.executePrivateApplication` (serialized through the mutex) +
+`getPrivateIdentity`/`listPrivateIdentities` (wallet + network scoped). **Runtime surface**
+`WalletRuntime.executePrivate(intent)` with the `(walletId, network, generation)` guard, an
+`executionOp` lifecycle (`preparing → proving → submitted → pending → success/reverted/rejected/
+failed`), and safe activity metadata. **UI:** a minimal `/wallet` "Private execute" panel
+(`WalletCorePrivateExecute`). **Acceptance helper:** a tiny `PrivateExecutionProbe` Cairo
+contract (`contracts/src/private_execution_probe.cairo`) implementing `privacy_invoke(identity,
+amount)` that records executions and receives the private spend.
+
+**Boundaries preserved:** Wallet Core = custody (unchanged); STRK20 = privacy (viewing key stays
+in the session; the SDK's stateless/full-refresh model, 10-block proving margin, mutex, cache
+isolation unchanged); PrivateExecutor = application execution; NEAR = future routing layer (not
+built). No second wallet/signer, no viewing key in React, no public fallback path, no arbitrary
+public builder escape hatch. The shadow account is an execution identity derived from the user's
+Wallet Core authority — `Master Wallet → PrivateIdentity (SDK shadow commitment) → Private App
+Execution`; the app sees only the public commitment, never the master wallet.
+
+**Verification:** `npm run typecheck` clean; `npm test` 38 files / 510 tests (18 new
+behavior-first private-execution tests: intent validation, unlocked/session/stale guards, SDK
+path with the shadow commitment, wallet/network-scoped identity, success/revert/failure
+lifecycle, serialization, no-secret exposure); `npm run build` succeeds.
+
+**Live acceptance (honest):** the `PrivateExecutionProbe` was **deployed and verified on Sepolia**
+(`0x7874ab24a8f46969e124f6fe388ae36f8ce6c05b13a2c46ba1a9adcc6e90e84`, deploy tx
+`0x9a07c9d36851335b5ce9e766053cbb27824e222bdd4f9ddfd7ac53d2ad93c7`, SUCCEEDED). A fresh funded
+Wallet Core wallet reached 10-block proving maturity and its **real STRK20 register tx
+SUCCEEDED on-chain** (`0x40bd11e5658689fcb4688cf5ef2b639876c6776530e7986d6a415beeab8e5a0`,
+ACCEPTED_ON_L2). The shield and private-execution tx were blocked before submission by the
+**operator discovery indexer** — the official `discovery-service:PRIVACY-0.14.3-RC.2` image's
+indexer cannot process current Sepolia new-head WS events (its bundled starknet-rust parser drops
+the block-header subscription events, so it never tracks an indexed head → SDK discovery calls
+return `503 "No indexed head available yet"`). The repo's operator infra uses a custom patched
+discovery image (built on the operator EC2, not in this repo) for exactly this reason, and the
+public `discovery.orrange.xyz` is unreachable from this environment. No live execution success
+was claimed (the execution tx did not actually succeed).
+
+**Remaining limitations:** Phase 1 supports only `application.invoke` against a
+`privacy_invoke(identity, amount)` contract; the RC5 `shadowAccounts()` anonymizer path is
+documented but not wired (anonymizer not configured); the live gate requires a working discovery
+indexer. NEAR Intents / TEE / cross-chain are NOT started.
+---
+
 Authoritative docs: `docs/WALLET_CORE.md` (architecture), `docs/STRK20_COMPATIBILITY_MATRIX.md`
-(SDK/operator compatibility), `docs/STRK20_LIVE_ACCEPTANCE.md` (live procedure), `docs/archive/`
-(historical perps/privy/planning records).
+(SDK/operator compatibility), `docs/STRK20_LIVE_ACCEPTANCE.md` (live procedure),
+`docs/PRIVATE_EXECUTION.md` (Phase 1 private execution), `docs/archive/` (historical
+perps/privy/planning records).

@@ -20,6 +20,7 @@ import { AppShell } from '@/components/wallet/AppShell';
 import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
 import { WalletCoreSend } from '@/components/wallet/WalletCoreSend';
 import { WalletCorePrivacyPanel } from '@/components/wallet/WalletCorePrivacyPanel';
+import { WalletCorePrivateExecute } from '@/components/wallet/WalletCorePrivateExecute';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { priceService } from '@/services/priceService';
@@ -358,6 +359,13 @@ export default function WalletPage() {
               <div className="mt-6">
                 <div className="product-eyebrow mb-3">PRIVATE OPERATIONS</div>
                 <WalletCorePrivacyPanel />
+              </div>
+            )}
+
+            {state.privacy.available && (
+              <div className="mt-6">
+                <div className="product-eyebrow mb-3">PRIVATE EXECUTION</div>
+                <WalletCorePrivateExecute />
               </div>
             )}
 

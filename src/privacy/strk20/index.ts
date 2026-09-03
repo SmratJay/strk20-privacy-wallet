@@ -12,6 +12,7 @@ export {
   type PrivateTransfersLike,
 } from "./Strk20Adapter";
 export { privateCurveTrade, type PrivateCurveTradeParams } from "./privateCurve";
+export { privateApplicationInvoke, type PrivateApplicationInvokeParams } from "./privateApplication";
 export {
   STRK_TOKEN_ADDRESS,
   DEFAULT_STRK_ALLOWANCE_TARGET,
