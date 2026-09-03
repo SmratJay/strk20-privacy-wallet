@@ -1,7 +1,6 @@
 /**
  * Privacy Core — STRK20 (wallet-native). The PRIMARY privacy path: consumes a Wallet Core
  * account/signer + the wallet-native viewing key. No Privy, no external wallet, no Wallet API.
- * `PrivyStrk20Adapter` (legacy) aliases `Strk20Adapter` for backward compatibility.
  */
 export {
   Strk20Adapter,

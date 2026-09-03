@@ -60,7 +60,7 @@ export interface ExecuteIntentInput {
   currentBalances: PrivateBalanceRow[];
   /** Resolve FRESH prices keyed by raw lowercase token address. */
   resolvePrices: () => Promise<Record<string, AssetPrice>>;
-  /** The EXISTING STRK20 privateTransfer path (Privy or Ready lane). Never anything else. */
+  /** The Wallet Core STRK20 privateTransfer path (WalletRuntime → WalletPrivacySession). Never anything else. */
   executeTransfer: (opts: { amountBase: bigint; token: string; recipient: string }) => Promise<{ transactionHash: string }>;
   /** Wall-clock override for deterministic tests. */
   now?: number;

@@ -19,7 +19,7 @@ import {
   type ImportWalletOptions,
 } from "../wallet/index";
 import { buildStrk20User } from "../privacy/identity";
-import type { PrivyStrk20User } from "../privacy/adapter";
+import type { Strk20User } from "../privacy/strk20";
 
 const PASSWORD = "correct horse battery staple";
 const VALID_SRC5 = ["0x56614c4944"]; // SRC-5 VALID
@@ -289,7 +289,7 @@ describe("STRK20 signer consumption (PART J)", () => {
     });
 
     const viewingKey = 12345678901234567890n;
-    const user: PrivyStrk20User = buildStrk20User(imported.wallet, viewingKey);
+    const user: Strk20User = buildStrk20User(imported.wallet, viewingKey);
     expect(user.address).toBe(imported.wallet.address);
     expect(user.account.signer).toBe(imported.wallet.account.signer);
     expect(user.viewingKey).toBe(viewingKey);

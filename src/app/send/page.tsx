@@ -6,27 +6,19 @@ import { AppShell } from '@/components/wallet/AppShell';
 import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
 import { WalletCoreSend } from '@/components/wallet/WalletCoreSend';
 import { WalletCorePrivacyPanel } from '@/components/wallet/WalletCorePrivacyPanel';
-import { SendForm } from '@/components/wallet/SendForm';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
-import { useWallet } from '@/context/WalletContext';
-import { usePrivyWallet } from '@/context/PrivyWalletContext';
 
 /**
- * Primary Orrange send flow — fully Wallet Core driven.
- *
- *  - PUBLIC SEND: Wallet Runtime → Wallet Core local signer.
- *  - STRK20 PRIVATE: Wallet Runtime → Wallet Core privacy session (wallet-native viewing key).
- *    The legacy STRK20 private lane (Ready Wallet API / Privy) is rendered ONLY as a clearly
- *    marked compatibility fallback when the Wallet Core privacy capability is unavailable AND a
- *    legacy-compatible wallet is connected. Legacy/Privy state never decides the active wallet.
+ * Primary Orrange send flow — fully Wallet Core driven. There is no legacy STRK20 lane and no
+ * Privy fallback:
+ *   - PUBLIC SEND: Wallet Runtime → Wallet Core local signer.
+ *   - STRK20 PRIVATE: Wallet Runtime → Wallet Core privacy session (wallet-native viewing key).
+ * If privacy is unavailable, the panel explains why (never a silent switch to another wallet).
+ * There is no legacy wallet lane and no Privy fallback.
  */
 function SendContent() {
   const searchParams = useSearchParams();
-  const { runtime, state } = useWalletRuntime();
-
-  const legacy = useWallet();
-  const privy = usePrivyWallet();
-  const legacyLaneAvailable = legacy.wallet.isConnected || (privy.authenticated && privy.account !== null);
+  const { state } = useWalletRuntime();
 
   const modeParam = searchParams.get('mode');
   const privateMode = modeParam === 'deposit' ? 'SHIELD' : modeParam === 'withdraw' ? 'WITHDRAW' : 'TRANSFER';
@@ -83,26 +75,8 @@ function SendContent() {
 
       {tab === 'public' ? (
         <WalletCoreSend />
-      ) : privacyAvailable ? (
-        <WalletCorePrivacyPanel initialOp={privateMode} />
       ) : (
-        <>
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5 mb-4">
-            <h2 className="text-sm font-semibold text-zinc-200">STRK20 privacy — unavailable in Wallet Core</h2>
-            <p className="text-xs text-zinc-500 mt-1">
-              {state.privacy.reason ?? 'Wallet Core privacy is not available yet.'} The Wallet Core
-              signer and viewing key are ready; proving/discovery services must be configured for
-              private operations.
-            </p>
-            {legacyLaneAvailable && (
-              <p className="text-xs text-zinc-600 mt-2">
-                Legacy compatibility: a legacy privacy wallet is connected, so the old STRK20 lane
-                below remains available.
-              </p>
-            )}
-          </div>
-          {legacyLaneAvailable && <SendForm initialMode={modeParam === 'withdraw' ? 'WITHDRAW' : modeParam === 'deposit' ? 'DEPOSIT' : 'SEND'} />}
-        </>
+        <WalletCorePrivacyPanel initialOp={privateMode} />
       )}
     </div>
   );

@@ -48,23 +48,11 @@ export function tokenSymbols(balances: PrivateBalanceRow[]): string[] {
 /**
  * Resolve the STRK20 private treasury identity for the UI + analyze context.
  *
- * For the Privy lane this is the Ready-derived account
- * (`computeReadyAccountAddress(publicKey)`) — the address the existing STRK20 integration
- * registers as the private-note owner and uses as the SOURCE of every private transfer. Both
- * `privy.account.address` and the Privy context `address` carry this derived identity (the
- * Privy wallet's own `wallet.address` is NOT the STRK20 identity). For the Ready/Wallet-API
- * lane the connected account IS the STRK20 identity. This is NOT the SDK's separate
- * "Shadow Account" concept.
+ * With the Wallet Core runtime, the STRK20 identity IS the Wallet Core account itself — the
+ * address that owns the wallet-native viewing key and is the source of every private transfer.
+ * There is no Privy lane, no Ready Wallet-API lane, and no separate shadow-account identity here.
  */
-export function resolvePrivateTreasuryAddress(opts: {
-  privyConnected: boolean;
-  privyAccountAddress?: string | null;
-  privyAddress?: string | null;
-  walletAddress?: string | null;
-}): string {
-  if (opts.privyConnected) {
-    return (opts.privyAccountAddress ?? opts.privyAddress ?? '').trim();
-  }
+export function resolvePrivateTreasuryAddress(opts: { walletAddress?: string | null }): string {
   return (opts.walletAddress ?? '').trim();
 }
 
@@ -121,7 +109,7 @@ export interface TreasuryExecutionInput {
   currentBalances: PrivateBalanceRow[];
   /** Resolve FRESH prices keyed by raw lowercase token address. */
   resolvePrices: () => Promise<Record<string, AssetPrice>>;
-  /** The EXISTING STRK20 privateTransfer path (Privy or Ready lane). Never anything else. */
+  /** The Wallet Core STRK20 privateTransfer path (WalletRuntime → WalletPrivacySession). Never anything else. */
   executeTransfer: (opts: {
     amountBase: bigint;
     token: string;

@@ -1762,3 +1762,73 @@ reachable from the sandbox; the prover endpoint is reachable). No fake zero, no 
 funded wallet in this environment). `npm run typecheck`, `npm test`, `npm run build` all pass.
 Browser verification: create → dashboard (PUBLIC/PRIVATE operations, wallet selector, no legacy
 Google/Ready/privy connect in the primary flow) → lock → unlock → dashboard.
+
+## 📅 Thursday, September 03, 2026 — 16:34:33 IST
+### Stage 3A.5 FINAL — Gut Privy, single Wallet Runtime, STRK20 hardening
+
+#### 🔴 [BIG CHANGE] — Privy fully removed from the product
+
+**Detailed Technical Explanation.**
+- Deleted the entire Privy + legacy wallet stack: `providers/PrivyAuthProvider.tsx`,
+  `context/PrivyWalletContext.tsx`, `context/WalletContext.tsx`, `hooks/useStarknetWallet.ts`,
+  `components/ConnectWalletModal.tsx`, `components/wallet/{ConnectGate,PrivyConnect,
+  EnablePrivateReceiving,SendForm,SettingsActions,BalanceCard,PublicBalanceCard,ReceivePanel,
+  TransactionList}.tsx`, the whole `privacy/privy/` directory, `privacy/adapter/`
+  (`PrivyStrk20Adapter`), `services/strk20WalletApiService.ts`, `services/privateLaunchService.ts`,
+  `app/api/privy/*` routes, `context/ExtendedWalletContext.tsx`, `hooks/useExtended.ts`.
+- Removed `@privy-io/react-auth` + `@privy-io/server-auth` (and the now-unused
+  `@starknet-io/get-starknet-*`) from `package.json`/lockfile.
+- Root `layout.tsx` is now: `NetworkProvider → ToastProvider → WalletRuntimeProvider`. No Privy
+  provider, no legacy WalletProvider, no hidden alternative wallet.
+- Deleted the obsolete Privy/Wallet-API test files (14) that tested the removed lane.
+- Classified every remaining "Privy" occurrence: documentation-only or "no Privy" assertions in
+  tests. There is no executable Privy wallet path.
+
+#### 🔴 [BIG CHANGE] — One wallet runtime everywhere (settings / activity / swap / treasury / gates)
+
+**Detailed Technical Explanation.**
+- `AppShell` header derives ONLY from `WalletRuntime` (Orrange + shortened address, links to
+  /settings). No legacy fallback, no ConnectWalletModal.
+- `/settings` rewritten to WalletRuntime: Orrange address, walletId, account type, network,
+  deployment, lock state, STRK20 privacy status (available/registered/unavailable), lock/delete.
+  No Privy address, no Google account, no embedded-wallet status, no "connect privacy wallet".
+- `/activity` rewritten to WalletRuntime session activity (bound to walletId+network+tx hash;
+  cleared on lock/switch/reload). Historical indexer activity is not built — the UI says
+  "Activity for this wallet will appear here."
+- `/receive` rewritten to WalletRuntime address + QR.
+- `/swap` rewritten to Wallet Runtime: PUBLIC swaps are signed by the Wallet Core local signer
+  (`runtime.send(buildPublicSwapCalls(...))`); STRK20 PRIVATE swaps are explicitly unavailable
+  (never a silent fallback). `swapService` dropped the private-swap/Ready-prover path.
+- `/treasury` migrated to WalletRuntime: balances from `runtime.refreshPrivateBalances()`,
+  execution through `runtime.privateTransfer()`, treasury identity = the Wallet Core account.
+  The AI analyze route lost its server-side Privy session verification (addresses are now
+  client-claimed Wallet Core inputs; `verification: 'client-claimed'`).
+- `/launch`, `/launch/[token]`, `/extended` are explicitly gated ("being migrated to Wallet
+  Core") instead of exposing a second wallet identity.
+
+#### 🟢 [SMALL CHANGE] — STRK20 hardening (monkey-patching / allowance decimals / anonymizer)
+
+- **No provider/signer monkey-patching**: `Strk20Adapter.submit()` no longer instruments/restores
+  `getNonceForAddress`/`getChainId`/`getCairoVersion`/`invokeFunction`/`signTransaction` on
+  third-party objects. Diagnostics are staged around our own call boundaries only (source guard
+  test).
+- **Allowance decimals**: `ensurePrivacyPoolAllowance` now approves STRK with deliberate headroom
+  (≥10 STRK) but approves non-STRK tokens for EXACTLY their required base-unit amount — a
+  6-decimal token (e.g. USDC) is never over-approved by an 18-decimal assumption. Tests: STRK
+  headroom, USDC exact, insufficient → throws, exact required, repeated no-re-approve.
+- **Network-scoped anonymizer**: `createPrivateIdentity` now reads
+  `NETWORKS[network].shadowAccountAnonymizerAddress` (public `NEXT_PUBLIC_STRK20_ANONYMIZER_*`,
+  per network) instead of a client-side `process.env.SHADOW_ACCOUNT_ANONYMIZER_ADDRESS` server
+  secret. Missing config → explicit "unavailable for <network>". Tests prove sepolia config never
+  leaks to mainnet.
+
+**Docs.** Added `docs/STRK20_COMPATIBILITY_MATRIX.md` (exact SDK revision, starknet.js parity,
+pool/prover/discovery/anonymizer config, deployment-specific fee caps). Updated
+`docs/WALLET_CORE.md`, `.env.example` (Privy vars removed, anonymizer vars added).
+
+**Tests.** `walletConsolidation.test.ts` (new): Privy fully removed from product source, layout
+has only WalletRuntimeProvider, settings/activity/swap/treasury derive from WalletRuntime,
+launchpad/extended gated, allowance decimals, no monkey-patching. Full suite:
+**563 passed, 1 skipped** (live acceptance skips honestly). `npm run typecheck`, `npm test`,
+`npm run build` all pass. Browser-verified: fresh gate shows Create/Import only (no Google /
+"Connect your privacy wallet" / "Install Ready"), create → dashboard, settings shows Orrange.

@@ -126,40 +126,15 @@ describe('executeProposal — expiry boundary', () => {
   });
 });
 
-describe('resolvePrivateTreasuryAddress — UI treasury identity', () => {
-  it('uses the Ready-derived account address for the Privy lane', () => {
-    const treasury = '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+describe('resolvePrivateTreasuryAddress — UI treasury identity (Wallet Core)', () => {
+  it('uses the Wallet Core account address as the STRK20 treasury identity', () => {
     expect(
-      resolvePrivateTreasuryAddress({ privyConnected: true, privyAccountAddress: treasury, privyAddress: '0xprivywallet' }),
-    ).toBe(treasury);
+      resolvePrivateTreasuryAddress({ walletAddress: '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d' }),
+    ).toBe('0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d');
   });
 
-  it('falls back to the Privy context address when the account is not yet resolved', () => {
-    expect(
-      resolvePrivateTreasuryAddress({ privyConnected: true, privyAccountAddress: null, privyAddress: '0xderived' }),
-    ).toBe('0xderived');
-  });
-
-  it('uses the connected wallet address for the Ready/Wallet-API lane', () => {
-    expect(
-      resolvePrivateTreasuryAddress({ privyConnected: false, walletAddress: '0xreadyaccount' }),
-    ).toBe('0xreadyaccount');
-  });
-
-  it('never leaks the Privy wallet address as the STRK20 identity when a derived address exists', () => {
-    const derived = '0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
-    const privyWallet = '0x1234567890abcdef';
-    const resolved = resolvePrivateTreasuryAddress({
-      privyConnected: true,
-      privyAccountAddress: derived,
-      privyAddress: privyWallet,
-      walletAddress: privyWallet,
-    });
-    expect(resolved).toBe(derived);
-  });
-
-  it('returns empty when nothing is available', () => {
-    expect(resolvePrivateTreasuryAddress({ privyConnected: false, walletAddress: null })).toBe('');
+  it('returns empty when no Wallet Core address is available', () => {
+    expect(resolvePrivateTreasuryAddress({ walletAddress: null })).toBe('');
   });
 });
 

@@ -127,7 +127,7 @@ export async function onboard(params: OnboardParams): Promise<OnboardedAccount> 
 // Native Starknet-wallet onboarding (current Extended web app flow, traced from the
 // frontend bundles + verified against the live API).
 //
-// A Starknet wallet (Braavos / Argent / Ready / Privy) signs SNIP-12 typed data:
+// A Starknet wallet (Braavos / Argent / Ready) signs SNIP-12 typed data:
 //   - "AccountCreation"  → L2 Stark key pair is derived from the signature (grindKey over r)
 //   - "AccountRegistration" → becomes `l1Signature` (serialized `[r, s]` JSON)
 // then the app POSTs `/auth/register` with `walletType: "STARKNET"`.

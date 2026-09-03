@@ -33,7 +33,7 @@ export interface RecentActivityRow {
 export interface AgentIdentity {
   userAddress: string;
   privateTreasuryAddress: string;
-  verification: 'privy' | 'client-claimed';
+  verification: 'client-claimed';
 }
 
 /** Everything a tool can read. Built server-side from real state; never from the model. */

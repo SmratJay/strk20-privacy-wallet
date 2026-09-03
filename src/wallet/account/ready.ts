@@ -85,8 +85,7 @@ export function buildReadyConstructorCalldata(publicKey: string): string[] {
  * identical regardless of which wallet/dapp derives it.
  *
  * The wallet CORE must pass the class hash resolved from `READY_ACCOUNT_CONFIG[network]` —
- * never a network-agnostic default. The single-argument form is retained ONLY for the legacy
- * Sepolia-only Privy lane; it must not be used for Mainnet derivation.
+ * never a network-agnostic default. The single-argument form is retained only for backward-compatible callers; it must not be used for Mainnet derivation.
  */
 export function computeReadyAccountAddress(
   publicKey: string,
@@ -151,7 +150,7 @@ export async function isAccountDeployed(
  * DEPLOY_ACCOUNT fee is paid by the new account).
  *
  * The wallet CORE passes an explicit class hash from `READY_ACCOUNT_CONFIG[network]`. The
- * default is retained ONLY for the legacy Sepolia-only Privy lane.
+ * default is retained only for backward-compatible callers.
  */
 export async function deployReadyAccount(
   account: Account,

@@ -7,10 +7,8 @@ import type { WalletRuntimeView } from "@/wallet/runtime";
 /**
  * Wallet Runtime — the primary Orrange wallet runtime (Wallet Core backed, NO Privy).
  *
- * This is the custody boundary the product UI talks to. It is intentionally independent of the
- * legacy `WalletContext` / `PrivyWalletContext` runtimes, which remain for legacy/compatibility
- * pages. An unlocked Wallet Core session is in-memory only and never persisted — a page reload
- * returns to "wallet exists → locked".
+ * This is the ONLY wallet runtime in the product. It is intentionally independent of any legacy
+ * wallet runtime that previously existed; a locked/empty runtime shows "wallet exists → locked".
  *
  * SUBSCRIPTION MODEL: consumers subscribe to the runtime through `useWalletRuntime()` using
  * `useSyncExternalStore`. This is the idiomatic React binding for an external store: every

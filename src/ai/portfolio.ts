@@ -5,7 +5,7 @@
  * The AI NEVER sees raw private notes, viewing keys, or per-transaction metadata. It only
  * receives this derived summary: aggregate balances, USD values, allocation percentages and
  * liquidity. Everything here is computed from the existing STRK20 balance reads
- * (`getPrivateBalances` / `privy.getPrivateBalance`) which already return aggregate amounts.
+ * (`WalletRuntime` private balances) which already return aggregate amounts.
  */
 import { SEPOLIA_TOKENS, TokenInfo } from '@/config/networks';
 import { isLiquidSymbol, AssetPrice } from '@/ai/prices';

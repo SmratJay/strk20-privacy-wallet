@@ -25,8 +25,15 @@ export type ApprovalStatus =
   | "verified";
 
 export interface EnsureAllowanceOptions {
-  /** Allowance to grant if currently below `requiredAmount`. Defaults to 10 STRK. */
+  /** Explicit approval target (base units). Defaults per `strk`. */
   target?: bigint;
+  /**
+   * True when `tokenAddress` is the STRK fee token. STRK gets deliberate headroom
+   * (`DEFAULT_STRK_ALLOWANCE_TARGET`, 10 STRK) so consecutive privacy ops don't re-approve.
+   * Non-STRK tokens are approved for EXACTLY the required base-unit amount — a 6-decimal token
+   * (e.g. USDC) is never over-approved by an 18-decimal assumption.
+   */
+  strk?: boolean;
   onStatus?: (status: ApprovalStatus) => void;
 }
 
@@ -107,8 +114,8 @@ export async function readAllowance(
 
 /**
  * Ensure the wallet account has approved enough STRK for the privacy pool to charge its fee.
- * `account` is a generic starknet.js account (a Wallet Core `UnlockedWallet.account`, a Privy
- * embedded account, or any compatible signer) — this helper is wallet-generic.
+ * `account` is a generic starknet.js account (a Wallet Core `UnlockedWallet.account` or any
+ * compatible signer) — this helper is wallet-generic.
  *
  * - Reads the current allowance.
  * - If already `>= requiredAmount` → no transaction.
@@ -126,13 +133,15 @@ export async function ensurePrivacyPoolAllowance(
 ): Promise<AllowanceResult> {
   const provider = accountProvider(account);
   const rpc = safeProviderUrl(provider);
-  // Dynamic target: never approve less than the required allowance (e.g. a 42-STRK shield needs
-  // 44 STRK approved, not just the 10-STRK default); still grant at least the default headroom.
+  // Approval target:
+  //   - STRK fee token: deliberate headroom (at least the required amount, at least 10 STRK) so
+  //     consecutive privacy ops don't re-approve on every call.
+  //   - non-STRK deposit token: EXACTLY the required base-unit amount. Never assume 18 decimals
+  //     for another token (e.g. a 6-decimal USDC deposit must not be over-approved by 10^18).
+  const strk = opts.strk === true;
   const target =
     opts.target ??
-    (requiredAmount > DEFAULT_STRK_ALLOWANCE_TARGET
-      ? requiredAmount
-      : DEFAULT_STRK_ALLOWANCE_TARGET);
+    (strk ? (requiredAmount > DEFAULT_STRK_ALLOWANCE_TARGET ? requiredAmount : DEFAULT_STRK_ALLOWANCE_TARGET) : requiredAmount);
 
   debug("allowance check", { rpc });
   opts.onStatus?.("checking");

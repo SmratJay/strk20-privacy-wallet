@@ -521,6 +521,37 @@ See `docs/STRK20_LIVE_ACCEPTANCE.md` for the funded, real-environment acceptance
 live test skips honestly when the RPC, operator services, or a funded wallet are unavailable and
 never fakes success.
 
+## 16f. Consolidation: ONE wallet runtime (Privy removed)
+
+Orrange is now a **single-wallet-runtime product**. The one and only wallet source of truth is:
+
+```
+Orrange UI
+  ↓
+WalletRuntime (useWalletRuntime → useSyncExternalStore)
+  ↓
+Wallet Core (create/import/unlock/select/lock/delete/deploy/send)
+  ↓
+Ready / Braavos (Wallet Core account adapters)
+  ↓
+Starknet
+  ↓
+WalletPrivacySession → Strk20Adapter → STRK20 SDK (privacy)
+```
+
+- Privy (embedded wallets, `@privy-io/*`, `PrivyAuthProvider`, `PrivyWalletContext`,
+  `PrivyStrk20Adapter`, `/api/privy/*`, Wallet API services) is **fully removed** — not
+  commented, not legacy-gated. No email/Google login is required to create/use the wallet.
+- The legacy external-wallet stack (`WalletContext`, `useStarknetWallet`, `ConnectWalletModal`,
+  `ConnectGate`, legacy Ready Wallet-API lane) is removed. Settings, activity, receive, swap,
+  send and the treasury derive exclusively from `WalletRuntime.getState().account`.
+- Launchpad and extended/perps trading are explicitly gated ("being migrated to Wallet Core")
+  rather than exposing a second wallet identity.
+- Activity is bound to `walletId + network + transactionHash` and cleared on lock/wallet switch/
+  network reload; no legacy wallet activity is substituted.
+- There is no server-side wallet session; the AI analyze route accepts client-claimed Wallet
+  Core addresses and the execution gate re-checks current state + requires the user's signature.
+
 ## 17. Stage 3B+ boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution

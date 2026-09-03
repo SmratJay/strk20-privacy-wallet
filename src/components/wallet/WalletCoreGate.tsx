@@ -7,7 +7,7 @@ import { isReadyAccountSupported, isBraavosAccountSupported, type WalletAccountT
 import { shortenAddress } from '@/utils/formatters';
 
 /**
- * The primary Orrange wallet entry gate. Replaces the legacy ConnectWalletModal / ConnectGate as
+ * The primary Orrange wallet entry gate. Replaces the legacy connect modal / gate as
  * the main flow for `/wallet`: Create a new Wallet Core wallet, or Import an existing
  * Ready/Braavos account (ownership verified on-chain, encrypted persistence, same address).
  */

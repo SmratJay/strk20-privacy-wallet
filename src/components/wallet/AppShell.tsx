@@ -22,9 +22,7 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import { useWallet } from '@/context/WalletContext';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
-import { ConnectWalletModal } from '@/components/ConnectWalletModal';
 import { useToast } from '@/components/Toast';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
@@ -46,16 +44,15 @@ const ACTION_NAV = [
 
 type AppTheme = 'light' | 'dark';
 
+/**
+ * Application shell. The ONLY wallet identity shown anywhere is the Wallet Core runtime session
+ * (`useWalletRuntime`). There is no Privy identity, no legacy WalletContext account, and no
+ * legacy connect modal. A locked/empty runtime shows a plain "Create wallet" link into /wallet.
+ */
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
-  const { wallet } = useWallet();
-  // The PRIMARY account shown in the header is the Wallet Core runtime session (self-custodial,
-  // no Privy). The legacy `wallet` (Ready extension / Privy) is only a fallback for legacy pages.
   const { state: runtimeState } = useWalletRuntime();
   const runtimeAccount = runtimeState.account;
-  const primaryAddress = runtimeAccount?.address ?? wallet.address;
-  const primaryName = runtimeAccount ? 'Orrange' : wallet.walletName || 'Wallet';
-  const hasPrimaryAccount = Boolean(runtimeAccount || wallet.isConnected);
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<AppTheme>('light');
@@ -75,14 +72,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   };
 
   const handleCopyAddress = async () => {
-    if (!primaryAddress) return;
-    const ok = await copyToClipboard(primaryAddress);
+    if (!runtimeAccount) return;
+    const ok = await copyToClipboard(runtimeAccount.address);
     if (ok) {
       setCopied(true);
       showToast({
         type: 'success',
         title: 'Address copied',
-        description: `${shortenAddress(primaryAddress, 6)} copied to clipboard.`,
+        description: `${shortenAddress(runtimeAccount.address, 6)} copied to clipboard.`,
       });
       setTimeout(() => setCopied(false), 2000);
     } else {
@@ -136,14 +133,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             <button type="button" className="product-icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} aria-pressed={theme === 'dark'}>
               {theme === 'light' ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>
-            {hasPrimaryAccount ? (
-              <button type="button" onClick={handleCopyAddress} className="product-account-button" title="Copy wallet address">
-                <span className="product-account-avatar">{runtimeAccount ? '◌' : (wallet.walletIcon || '◌')}</span>
+            {runtimeAccount ? (
+              <Link href="/settings" className="product-account-button" title="Orrange wallet account">
+                <span className="product-account-avatar">◌</span>
                 <span className="product-account-copy">
-                  <strong>{primaryName}</strong>
-                  <span>{copied ? <><Check aria-hidden="true" /> Copied</> : shortenAddress(primaryAddress!, 5)}</span>
+                  <strong>Orrange</strong>
+                  <span>{copied ? <><Check aria-hidden="true" /> Copied</> : shortenAddress(runtimeAccount.address, 5)}</span>
                 </span>
-              </button>
+              </Link>
             ) : (
               <Link href="/wallet" className="product-primary-button product-connect-button">Create wallet</Link>
             )}
@@ -177,20 +174,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </Link>
         ))}
       </nav>
-
-      {/* LEGACY: the external-privacy-wallet / Privy connect modal. No longer the primary entry
-          flow (Wallet Core at /wallet is). Kept mounted so legacy pages (settings, legacy
-          SendForm) that still call wallet.openConnectModal() keep working. */}
-      <ConnectWalletModal
-        isOpen={wallet.isConnectModalOpen}
-        onClose={wallet.closeConnectModal}
-        supportedWallets={wallet.supportedWallets}
-        isConnecting={wallet.isConnecting}
-        connectingWalletId={wallet.connectingWalletId}
-        connectionError={wallet.error}
-        onSelectWallet={wallet.connectWallet}
-        onRescan={wallet.rescan}
-      />
     </div>
   );
 };

@@ -2,10 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 import { NetworkProvider } from '@/context/NetworkContext';
-import { WalletProvider } from '@/context/WalletContext';
 import { WalletRuntimeProvider } from '@/context/WalletRuntimeContext';
-import { PrivyAuthProvider } from '@/providers/PrivyAuthProvider';
-import { PrivyWalletProvider } from '@/context/PrivyWalletContext';
 
 export const metadata: Metadata = {
   title: 'ORRANGE — Starknet privacy wallet',
@@ -17,6 +14,22 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Provider tree. Orrange is a SINGLE-wallet-runtime product:
+ *
+ *   App
+ *     ↓
+ *   NetworkProvider        (network config context, not a wallet)
+ *     ↓
+ *   ToastProvider          (UI toasts)
+ *     ↓
+ *   WalletRuntimeProvider  (the ONE wallet runtime — Wallet Core backed, no Privy)
+ *     ↓
+ *   Orrange UI
+ *
+ * There is no Privy provider, no legacy WalletContext, and no hidden alternative wallet.
+ * The WalletRuntime is the only wallet identity the UI can read.
+ */
 export default function RootLayout({
   children,
 }: {
@@ -35,13 +48,7 @@ export default function RootLayout({
       <body className="bg-background text-zinc-100 min-h-screen flex flex-col antialiased">
         <NetworkProvider>
           <ToastProvider>
-            <PrivyAuthProvider>
-              <PrivyWalletProvider>
-                <WalletProvider>
-                  <WalletRuntimeProvider>{children}</WalletRuntimeProvider>
-                </WalletProvider>
-              </PrivyWalletProvider>
-            </PrivyAuthProvider>
+            <WalletRuntimeProvider>{children}</WalletRuntimeProvider>
           </ToastProvider>
         </NetworkProvider>
       </body>

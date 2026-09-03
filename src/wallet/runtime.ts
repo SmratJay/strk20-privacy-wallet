@@ -74,6 +74,8 @@ export interface WalletAccountView {
 export interface RecentTransaction {
   hash: string;
   at: number;
+  /** Kind of activity, for UI labeling. Never contains secrets. */
+  kind?: 'public' | 'shield' | 'privateTransfer' | 'withdraw' | 'register';
 }
 
 /** Safe privacy-capability status — never exposes the viewing key or any secret material. */
@@ -579,14 +581,17 @@ export class WalletRuntime {
   }
 
   /** Sign + submit an ordinary public transaction with the Wallet Core local signer. */
-  async send(call: Call): Promise<{ transactionHash: string }> {
+  async send(call: Call | Call[]): Promise<{ transactionHash: string }> {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to send transactions.");
     const guard = this.captureGuard();
     const result = await sendTransaction(session, call);
     if (!this.isCurrent(guard)) return result;
     this.setView({
-      recentTransactions: [{ hash: result.transactionHash, at: Date.now() }, ...this.view.recentTransactions].slice(0, 20),
+      recentTransactions: [
+        { hash: result.transactionHash, at: Date.now(), kind: "public" as const },
+        ...this.view.recentTransactions,
+      ].slice(0, 20),
     });
     return result;
   }
@@ -775,7 +780,7 @@ export class WalletRuntime {
         privacy: { ...this.view.privacy, status: "available", reason: null },
         privacyOp: { operation, phase: "submitted", transactionHash: result.transactionHash, message: null },
         recentTransactions: [
-          { hash: result.transactionHash, at: Date.now() },
+          { hash: result.transactionHash, at: Date.now(), kind: operation ?? undefined },
           ...this.view.recentTransactions,
         ].slice(0, 20),
       });
@@ -863,13 +868,17 @@ export class WalletRuntime {
     return this.runPrivacyOp("withdraw", (privacy) => privacy.withdraw(token, amountBase));
   }
 
-  /** Create a PrivateIdentity for the active wallet. Requires the shadow anonymizer to be configured. */
+  /** Create a PrivateIdentity for the active wallet. Requires the shadow anonymizer for the active network. */
   async createPrivateIdentity(purpose: string, opts?: { dappName?: string }): Promise<import("@/privacy/identity").PrivateIdentity> {
     const privacy = this.requirePrivacySession();
     const guard = this.captureGuard();
-    const anonymizerAddress = (process.env.SHADOW_ACCOUNT_ANONYMIZER_ADDRESS ?? "").trim();
+    // Network-scoped PUBLIC contract config (never a server secret). The same network's address
+    // is always used; a missing config reports explicit unavailability.
+    const anonymizerAddress = getNetworkConfig(this.view.network).shadowAccountAnonymizerAddress.trim();
     if (!anonymizerAddress) {
-      throw new Error("Private identity creation requires the shadow-account anonymizer to be configured.");
+      throw new Error(
+        `Private identity creation is unavailable: no shadow-account anonymizer is configured for ${this.view.network}.`,
+      );
     }
     const poolContractAddress = getNetworkConfig(this.view.network).poolAddress;
     const identity = await privacy.createPrivateIdentity(purpose, {

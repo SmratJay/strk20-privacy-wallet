@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createPrivateTransfers } from '@starkware-libs/starknet-privacy-sdk';
-import { computeReadyAccountAddress } from '@/privacy/privy/ready';
+import { computeReadyAccountAddress } from '@/wallet/account';
 
 const PUBLIC_KEY = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde';
 const POOL = '0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91';

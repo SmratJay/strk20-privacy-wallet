@@ -8,29 +8,34 @@ import {
   Globe,
   CheckCircle2,
   X,
+  ShieldAlert,
 } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
-import { ConnectGate } from '@/components/wallet/ConnectGate';
-import { useWallet } from '@/context/WalletContext';
+import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
+import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import {
   getSwapQuote,
-  executePublicSwap,
-  executePrivateSwapFlow,
-  networkIdFromChainId,
+  buildPublicSwapCalls,
+  publicSwapSupported,
+  privateSwapSupported,
 } from '@/services/swapService';
+import { SEPOLIA_TOKENS } from '@/config/networks';
 import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
 
 const PUBLIC_SLIPPAGE = 0.01; // 1%
-const PRIVATE_SLIPPAGE = 0.03; // 3%
 
-type SwapMode = 'PUBLIC' | 'PRIVATE';
 type Step = 'QUOTING' | 'BUILDING' | 'SIGNING' | 'SUBMITTING' | 'DONE';
 
+/**
+ * Swap — Wallet Core only. Public swaps are signed by the Wallet Core local signer
+ * (`runtime.send`). Private STRK20 swaps are NOT supported by Wallet Core yet and are shown as
+ * explicitly unavailable (never a silent fallback to another wallet).
+ */
 export default function SwapPage() {
-  const { wallet, balances, currentNetwork, isSepolia, networkId, refreshAfterMutation } = useWallet();
+  const { runtime, state } = useWalletRuntime();
+  const account = state.account;
 
-  const tokens = currentNetwork.tokens;
-  const [mode, setMode] = useState<SwapMode>('PUBLIC');
+  const tokens = SEPOLIA_TOKENS;
   const [sellAddr, setSellAddr] = useState<string>(() => tokens[0]?.address ?? '');
   const [buyAddr, setBuyAddr] = useState<string>(() => tokens[1]?.address ?? tokens[0]?.address ?? '');
   const [sellAmount, setSellAmount] = useState('');
@@ -44,23 +49,15 @@ export default function SwapPage() {
   const sellToken = tokens.find((t) => t.address.toLowerCase() === sellAddr.toLowerCase()) ?? tokens[0];
   const buyToken = tokens.find((t) => t.address.toLowerCase() === buyAddr.toLowerCase()) ?? tokens[1];
 
-  const balanceRow = useMemo(
-    () => balances.find((b) => b.token.address.toLowerCase() === sellAddr.toLowerCase()),
-    [balances, sellAddr],
-  );
+  const publicBalance = useMemo(() => {
+    const row = state.publicBalances.find((b) => b.token.address.toLowerCase() === sellAddr.toLowerCase());
+    return row?.available ? row.balance : 0n;
+  }, [state.publicBalances, sellAddr]);
 
-  const publicBalance = balanceRow?.publicBalance ?? 0n;
-  const shieldedBalance = balanceRow?.shieldedBalance ?? 0n;
-  const shieldedAvailable = balanceRow?.shieldedBalanceAvailable === true;
-
-  const connected = wallet.isConnected;
-  const privyOnly = !wallet.isPrivacySupported; // Ready (STRK20) wallet not connected
-  const privateCapable = connected && !privyOnly;
-  const walletChain = networkIdFromChainId(wallet.chainId);
-  const walletOnAppNetwork = walletChain === networkId;
+  const connected = Boolean(account);
 
   const refreshQuote = useCallback(async () => {
-    if (!connected || !wallet.address || !sellAmount || parseFloat(sellAmount) <= 0) {
+    if (!connected || !account || !sellAmount || parseFloat(sellAmount) <= 0) {
       setQuote(null);
       return;
     }
@@ -68,11 +65,11 @@ export default function SwapPage() {
     setQuoteError(null);
     setQuote(null);
     try {
-      const res = await getSwapQuote(networkId, sellToken, buyToken, sellAmount, wallet.address);
+      const res = await getSwapQuote(state.network, sellToken, buyToken, sellAmount, account.address);
       if (!res) {
         setQuoteError(
-          isSepolia
-            ? 'No quote found — AVNU currently has no liquidity on Sepolia. Switch your wallet to Mainnet to swap.'
+          state.network === 'sepolia'
+            ? 'No quote found — AVNU currently has no liquidity on Sepolia.'
             : 'No quote found for this pair. Try a different token or amount.',
         );
         return;
@@ -83,25 +80,25 @@ export default function SwapPage() {
     } finally {
       setQuoting(false);
     }
-  }, [connected, wallet.address, sellAmount, networkId, sellToken, buyToken, isSepolia]);
+  }, [connected, account, sellAmount, state.network, sellToken, buyToken]);
 
   useEffect(() => {
     void refreshQuote();
   }, [refreshQuote]);
 
   const execute = async () => {
-    if (!connected || !wallet.address) return;
+    if (!connected || !account) return;
     setError(null);
     setTxHash(null);
 
     let currentQuote: Awaited<ReturnType<typeof getSwapQuote>> | null = null;
     try {
       setStep('QUOTING');
-      currentQuote = await getSwapQuote(networkId, sellToken, buyToken, sellAmount, wallet.address);
+      currentQuote = await getSwapQuote(state.network, sellToken, buyToken, sellAmount, account.address);
       if (!currentQuote) {
         setError(
-          isSepolia
-            ? 'No quote found — AVNU currently has no liquidity on Sepolia. Switch to Mainnet to swap.'
+          state.network === 'sepolia'
+            ? 'No quote found — AVNU currently has no liquidity on Sepolia.'
             : 'No quote found for this pair.',
         );
         setStep(null);
@@ -114,33 +111,14 @@ export default function SwapPage() {
     }
 
     try {
-      let hash: string;
-      if (mode === 'PUBLIC') {
-        setStep('SIGNING');
-        const res = await executePublicSwap(
-          wallet.walletAccount || wallet.rawWallet,
-          networkId,
-          currentQuote.quote,
-          PUBLIC_SLIPPAGE,
-        );
-        hash = res.transactionHash;
-      } else {
-        setStep('SIGNING');
-        const res = await executePrivateSwapFlow({
-          wallet,
-          networkId,
-          quote: currentQuote.quote,
-          slippage: PRIVATE_SLIPPAGE,
-          takerAddress: wallet.address,
-          poolAddress: currentNetwork.poolAddress,
-          poolFeeToken: sellToken.address,
-        });
-        hash = res.transactionHash;
-      }
+      setStep('BUILDING');
+      const calls = await buildPublicSwapCalls(state.network, currentQuote.quote, PUBLIC_SLIPPAGE, account.address);
+      setStep('SIGNING');
+      const res = await runtime.send(calls);
       setStep('SUBMITTING');
-      setTxHash(hash);
+      setTxHash(res.transactionHash);
       setStep('DONE');
-      await refreshAfterMutation();
+      void runtime.refreshPublicBalances();
     } catch (err: any) {
       setError(err?.message || 'Swap failed.');
       setStep(null);
@@ -148,15 +126,10 @@ export default function SwapPage() {
   };
 
   const setMax = () => {
-    const bal = mode === 'PRIVATE' ? shieldedBalance : publicBalance;
-    if (bal > 0n) setSellAmount(formatTokenAmount(bal, sellToken.decimals, sellToken.decimals));
+    if (publicBalance > 0n) setSellAmount(formatTokenAmount(publicBalance, sellToken.decimals, sellToken.decimals));
   };
 
-  const availableBalance = mode === 'PRIVATE' ? shieldedBalance : publicBalance;
-  const balanceText = mode === 'PRIVATE'
-    ? shieldedAvailable ? formatTokenAmount(shieldedBalance, sellToken.decimals, 4) : '—'
-    : formatTokenAmount(publicBalance, sellToken.decimals, 4);
-  const insufficient = sellAmount.length > 0 && parseTokenAmount(sellAmount, sellToken.decimals) > availableBalance;
+  const insufficient = sellAmount.length > 0 && parseTokenAmount(sellAmount, sellToken.decimals) > publicBalance;
 
   const switchTokens = () => {
     setSellAddr(buyAddr);
@@ -171,56 +144,22 @@ export default function SwapPage() {
             <div className="product-eyebrow">ORRANGE / SWAP</div>
             <h1 className="product-page-title">Swap quietly</h1>
             <p className="product-page-description">
-            {mode === 'PUBLIC'
-              ? 'Public swap — wallet balance → AVNU → wallet balance.'
-              : 'Private swap — STRK20 shielded balance → AVNU executor → shielded balance.'}
+              Public swap — Wallet Core balance → AVNU → Wallet Core balance.
             </p>
           </div>
         </div>
 
         {!connected ? (
-          <ConnectGate />
+          <WalletCoreGate />
         ) : (
           <>
-            {!walletOnAppNetwork && (
-              <div className="flex items-center gap-2 text-[12px] text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg p-3">
-                <Globe className="w-4 h-4" />
-                Your wallet is on a different network. Switch it to {currentNetwork.label} for swaps.
-              </div>
-            )}
-
-            {/* Mode toggle */}
-            <div className="product-swap-mode grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setMode('PUBLIC')}
-                className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-semibold border transition-colors ${
-                  mode === 'PUBLIC'
-                    ? 'bg-zinc-100 text-black border-zinc-100'
-                    : 'border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Globe className="w-4 h-4" /> Public
-              </button>
-              <button
-                onClick={() => setMode('PRIVATE')}
-                disabled={!privateCapable}
-                className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-semibold border transition-colors ${
-                  mode === 'PRIVATE'
-                    ? 'bg-violet-500 text-white border-violet-500'
-                    : privyOnly
-                      ? 'border-zinc-800 text-zinc-600 cursor-not-allowed'
-                      : 'border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Shield className="w-4 h-4" /> Private
-              </button>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 mb-4 flex items-start gap-2 text-[12px] text-violet-200/80">
+              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-violet-300" />
+              <span>
+                Public swaps are signed by your Orrange wallet. STRK20 private swaps are not yet
+                supported by Wallet Core — they are never routed to another wallet.
+              </span>
             </div>
-
-            {mode === 'PRIVATE' && privyOnly && (
-              <p className="text-[12px] text-zinc-500">
-                Private swaps need a STRK20-capable wallet. Connect Ready Wallet to unlock the private path.
-              </p>
-            )}
 
             <div className="product-swap-card border border-zinc-800 bg-zinc-950/60 rounded-2xl p-4 space-y-4">
               {/* Sell */}
@@ -228,7 +167,7 @@ export default function SwapPage() {
                 <div className="flex items-center justify-between text-[11px] text-zinc-500">
                   <span>You pay</span>
                   <button onClick={setMax} className="hover:text-zinc-200">
-                    Max: {balanceText} {sellToken.symbol}
+                    Max: {formatTokenAmount(publicBalance, sellToken.decimals, 4)} {sellToken.symbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -305,19 +244,15 @@ export default function SwapPage() {
                 </div>
               )}
               {insufficient && !error && (
-                <p className="text-[12px] text-rose-400">
-                  Insufficient {mode === 'PRIVATE' ? 'shielded' : 'public'} balance.
-                </p>
+                <p className="text-[12px] text-rose-400">Insufficient public balance.</p>
               )}
             </div>
 
             <button
               onClick={() => void execute()}
               disabled={!connected || quoting || step !== null || !sellAmount || parseFloat(sellAmount) <= 0 || insufficient}
-              className={`w-full py-3.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                mode === 'PRIVATE'
-                  ? 'bg-violet-500 hover:bg-violet-400 text-white'
-                  : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+              className={`w-full mt-4 py-3.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                'bg-emerald-500 hover:bg-emerald-400 text-black'
               }`}
             >
               {step === 'QUOTING' || step === 'BUILDING' ? (
@@ -326,7 +261,7 @@ export default function SwapPage() {
                 </span>
               ) : step === 'SIGNING' ? (
                 <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Signing in wallet…
+                  <Loader2 className="w-4 h-4 animate-spin" /> Signing with Orrange wallet…
                 </span>
               ) : step === 'SUBMITTING' ? (
                 <span className="flex items-center justify-center gap-2">
@@ -337,35 +272,25 @@ export default function SwapPage() {
                   <CheckCircle2 className="w-4 h-4" /> Submitted
                 </span>
               ) : (
-                `${mode === 'PRIVATE' ? 'Private' : 'Public'} swap`
+                'Public swap'
               )}
             </button>
 
             {txHash && (
-              <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-3 break-all">
+              <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-3 break-all mt-3">
                 <span>{txHash}</span>
-                <a
-                  href={`${currentNetwork.explorerUrl}/tx/${txHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-2 shrink-0 text-emerald-300 underline"
-                >
-                  View
-                </a>
               </div>
             )}
 
             {error && (
-              <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3 break-words">
+              <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3 break-words mt-3">
                 {error}
               </div>
             )}
 
-            <p className="text-[11px] text-zinc-600">
-              {mode === 'PRIVATE'
-                ? 'Private swaps are gas-sponsored by AVNU: the executor swaps inside the privacy pool and the output returns as a new shielded note. A STRK20-capable wallet (Ready) signs the proof; AVNU relays it.'
-                : 'Public swaps use your on-chain balance and pay gas from your wallet.'}
-              {isSepolia && ' AVNU currently has no liquidity on Sepolia — switch your wallet to Mainnet to swap.'}
+            <p className="text-[11px] text-zinc-600 mt-3">
+              Public swaps use your on-chain balance and pay gas from your wallet.
+              {state.network === 'sepolia' && ' AVNU currently has no liquidity on Sepolia.'}
             </p>
           </>
         )}
@@ -373,3 +298,8 @@ export default function SwapPage() {
     </AppShell>
   );
 }
+
+void publicSwapSupported;
+void privateSwapSupported;
+void Globe;
+void Shield;

@@ -14,10 +14,6 @@
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^4.2.0",
-    "@privy-io/react-auth": "^3.37.4",
-    "@privy-io/server-auth": "^1.32.5",
-    "@starknet-io/get-starknet-discovery": "6.0.3",
-    "@starknet-io/get-starknet-wallet-standard": "6.0.3",
     "@starknet-io/types-js": "0.10.3",
     "@starkware-libs/starknet-privacy-sdk": "file:vendor/starknet-privacy-sdk",
     "@types/qrcode.react": "^1.0.5",

@@ -25,6 +25,13 @@ export interface NetworkConfig {
   label: string;
   chainId: string;
   poolAddress: string;
+  /**
+   * STRK20 shadow-account anonymizer contract (RC5-compatible) for this network. This is PUBLIC
+   * contract configuration (never a server secret). Empty string means the anonymizer is not
+   * configured for this network → private-identity creation reports explicitly unavailable.
+   * Network-scoped so a network can never accidentally use another network's address.
+   */
+  shadowAccountAnonymizerAddress: string;
   rpcUrls: string[];
   avnuBaseUrl: string;
   explorerUrl: string;
@@ -98,6 +105,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     poolAddress:
       process.env.NEXT_PUBLIC_STRK20_POOL ||
       '0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a',
+    shadowAccountAnonymizerAddress: process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_MAINNET || '',
     rpcUrls: [
       'https://api.cartridge.gg/x/starknet/mainnet',
       process.env.NEXT_PUBLIC_STARKNET_RPC || 'https://free-rpc.nethermind.io/mainnet-juno',
@@ -115,6 +123,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     poolAddress:
       process.env.NEXT_PUBLIC_STRK20_SEPOLIA_POOL ||
       '0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91',
+    shadowAccountAnonymizerAddress: process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA || '',
     rpcUrls: [
       // Public Sepolia RPCs. The old Alchemy fallback key was removed because it no longer
       // serves. rpcUrls[0] must support RPC spec >= 0.10.1 (STRK20 SNIP-36 proof transactions

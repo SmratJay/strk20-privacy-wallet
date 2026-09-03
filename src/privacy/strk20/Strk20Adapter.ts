@@ -126,7 +126,7 @@ type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTran
  *
  * Consumes a generic STRK20 user: a starknet.js account/signer (e.g. a Wallet Core
  * `UnlockedWallet.account`) plus the wallet-native viewing key. No Privy, no external wallet,
- * no Wallet API. `PrivyStrk20Adapter` (legacy) aliases this class.
+ * no Wallet API.
  *
  * STRK20 account validation rejects a proof whose block is too recent ("The proof block number X
  * is too recent. The maximum allowed block number is Y."). Proving against `latest` races that
@@ -536,14 +536,19 @@ export class Strk20Adapter {
       depositToken !== undefined && depositToken.toLowerCase() === feeToken.toLowerCase();
 
     // STRK allowance covers the fee, plus the deposit amount when depositing STRK itself.
+    // STRK gets deliberate headroom; non-STRK deposit tokens are approved for exactly their
+    // required base-unit amount (never an 18-decimal assumption).
     const strkRequired = fee + (depositIsFeeToken ? depositAmount : 0n);
     await ensurePrivacyPoolAllowance(user.account, feeToken, this.config.poolContractAddress, strkRequired, {
+      strk: true,
       onStatus: this.config.onApprovalStatus,
     });
 
-    // Depositing a non-STRK token pulls that token from the account too — separate allowance.
+    // Depositing a non-STRK token pulls that token from the account too — separate allowance,
+    // approved for exactly the deposit amount (correct for any token decimal count).
     if (depositToken !== undefined && !depositIsFeeToken) {
       await ensurePrivacyPoolAllowance(user.account, depositToken, this.config.poolContractAddress, depositAmount, {
+        strk: false,
         onStatus: this.config.onApprovalStatus,
       });
     }
@@ -595,49 +600,15 @@ export class Strk20Adapter {
     // starknet.js Account.execute uses `this.prepareInvoke`, so it must stay bound to the
     // account instance. (AccountInterface types execute() with InvocationsDetails, which
     // lacks proofFacts/proof, hence the cast.)
+    //
+    // NOTE: we do NOT monkey-patch the provider/signer objects. Third-party objects are never
+    // mutated for logging; diagnostics are staged around OUR OWN call boundaries only.
     const execute = user.account.execute.bind(user.account) as unknown as (
       calls: Call,
       details?: Record<string, unknown>,
     ) => Promise<{ transaction_hash: string }>;
 
-    // Instrument the stages INSIDE starknet.js Account.execute so the exact failure point is
-    // recorded: nonce lookup, signing, and RPC submission. (Fee estimation is skipped here
-    // because resourceBounds are supplied.) Stage names only — no call data, proof blobs, or
-    // secrets are ever logged.
-    const provider = (user.account as unknown as { provider?: unknown }).provider;
-    const signer = (user.account as unknown as { signer?: unknown }).signer;
-    const originals = new Map<string, unknown>();
-    const instrument = (target: unknown, key: string) => {
-      const obj = target as Record<string, unknown>;
-      const original = obj?.[key];
-      if (typeof original !== "function") return;
-      const wrapped = async (...args: unknown[]) => {
-        debug(`stage → ${key} (start)`);
-        try {
-          const out = await (original as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
-          debug(`stage → ${key} (ok)`);
-          return out;
-        } catch (err) {
-          debug(`stage → ${key} (FAILED)`, { message: err instanceof Error ? err.message : err });
-          throw err;
-        }
-      };
-      obj[key] = wrapped;
-      originals.set(key, original);
-    };
-    const restore = (target: unknown) => {
-      const obj = target as Record<string, unknown>;
-      originals.forEach((original, key) => {
-        obj[key] = original;
-      });
-    };
-
-    instrument(provider, "getNonceForAddress");
-    instrument(provider, "getChainId");
-    instrument(provider, "getCairoVersion");
-    instrument(provider, "invokeFunction");
-    instrument(signer, "signTransaction");
-
+    debug("submit stage=execute start");
     try {
       const response = await execute(callAndProof.call, {
         tip: 0n,
@@ -645,7 +616,7 @@ export class Strk20Adapter {
         ...proofDetails,
       });
       const transactionHash = response.transaction_hash;
-      debug("submission ok", { transactionHash });
+      debug("submit stage=execute complete", { transactionHash });
       return {
         transactionHash,
         status: "PENDING",
@@ -653,11 +624,8 @@ export class Strk20Adapter {
         warnings: result.warnings ?? [],
       };
     } catch (err) {
-      debug("Account.execute FAILED (post-proof submission)", { message: err instanceof Error ? err.message : err });
+      debug("submit stage=execute FAILED", { message: err instanceof Error ? err.message : err });
       throw err;
-    } finally {
-      restore(provider);
-      restore(signer);
     }
   }
 }

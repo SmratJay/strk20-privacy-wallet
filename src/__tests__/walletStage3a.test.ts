@@ -794,3 +794,59 @@ describe("network reload invalidates in-flight privacy work", () => {
     void walletA;
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────────────────
+// 13. Network-scoped shadow-account anonymizer config (no server secret)
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+describe("shadow-account anonymizer config", () => {
+  it("is network-scoped public config — sepolia env never leaks to mainnet", async () => {
+    vi.resetModules();
+    process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA = "0xanonymizer-sepolia";
+    try {
+      const { getNetworkConfig } = await import("@/config/networks");
+      expect(getNetworkConfig("sepolia").shadowAccountAnonymizerAddress).toBe("0xanonymizer-sepolia");
+      // Mainnet is a different network: it must not inherit the sepolia address.
+      expect(getNetworkConfig("mainnet").shadowAccountAnonymizerAddress).toBe("");
+    } finally {
+      delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
+    }
+  });
+
+  it("createPrivateIdentity is explicitly unavailable when the active network has no anonymizer", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
+    await expect(runtime.createPrivateIdentity("treasury")).rejects.toThrow(/no shadow-account anonymizer is configured for sepolia/i);
+  });
+
+  it("createPrivateIdentity uses the network-scoped anonymizer when configured", async () => {
+    vi.resetModules();
+    delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+    delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+    process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
+    process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
+    process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA = "0xabc";
+    try {
+      const { WalletRuntime } = await import("../wallet/runtime");
+      const { createMemoryStorage } = await import("../wallet/storage");
+      const { READY_SEPOLIA_CLASS_HASH } = await import("../wallet/account");
+      const provider = {
+        getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+        callContract: vi.fn(async () => ["0x56614c4944"]),
+        getBlockNumber: vi.fn(async () => 1),
+        waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),
+      } as never;
+      const runtime = new WalletRuntime({ storage: createMemoryStorage(), providerFactory: () => provider });
+      const wallet = await runtime.create(PASSWORD);
+      const identity = await runtime.createPrivateIdentity("treasury");
+      expect(identity.purpose).toBe("treasury");
+      expect(identity.owner.toLowerCase()).toBe(wallet.address.toLowerCase());
+      expect(identity.partialCommitment).toBeTruthy();
+    } finally {
+      delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
+      delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+      delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+    }
+  });
+});

@@ -18,9 +18,8 @@ import {
   Lock,
 } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
-import { ConnectGate } from '@/components/wallet/ConnectGate';
-import { useWallet } from '@/context/WalletContext';
-import { usePrivyWallet } from '@/context/PrivyWalletContext';
+import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
+import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { SEPOLIA_TOKENS } from '@/config/networks';
 import { ActionProposal } from '@/ai/schema';
 import { PortfolioSummary, PrivateBalanceRow, buildPortfolioSummary } from '@/ai/portfolio';
@@ -50,7 +49,6 @@ import { AgentPlan } from '@/ai/plan';
 import { ShadowAccountCapability } from '@/ai/shadow';
 import { verifyExecution, ExecutionVerification, OutcomePoint } from '@/ai/verification';
 import { executeIntent, tokenSymbols, resolvePrivateTreasuryAddress, buildAnalyzeRequest, ExecutionResult } from '@/services/treasuryService';
-import { strk20WalletApiService } from '@/services/strk20WalletApiService';
 import { shortenAddress, formatTokenAmount } from '@/utils/formatters';
 
 interface AnalyzeResponse {
@@ -60,7 +58,7 @@ interface AnalyzeResponse {
   verdict: PolicyVerdict;
   policy: TreasuryPolicy;
   shadowCapability: ShadowAccountCapability;
-  addresses: { userAddress: string; privateTreasuryAddress: string; verification: 'privy' | 'client-claimed' };
+  addresses: { userAddress: string; privateTreasuryAddress: string; verification: 'client-claimed' };
   trust: { balances: string; note: string };
   proposalGeneratedAt: number;
   proposalExpiresAt: number;
@@ -97,9 +95,8 @@ function barTone(value: number, cap: number): 'good' | 'warn' | 'bad' {
 }
 
 export default function TreasuryPage() {
-  const { wallet, refreshAfterMutation, transactions, recordTransaction } = useWallet();
-  const privy = usePrivyWallet();
-  const privyConnected = privy.authenticated && privy.account !== null && privy.viewingKey !== null;
+  const { runtime, state } = useWalletRuntime();
+  const account = state.account;
 
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [priceStatus, setPriceStatus] = useState<Record<string, AssetPrice>>({});
@@ -126,14 +123,11 @@ export default function TreasuryPage() {
   const [customDraft, setCustomDraft] = useState({ minLiquidityUsd: '50', maxPositionPct: '80', maxTxUsd: '150' });
   const [customError, setCustomError] = useState<string | null>(null);
 
-  const connected = wallet.isConnected;
+  const connected = state.isUnlocked;
 
-  // The STRK20 private treasury identity (source of every private transfer).
+  // The STRK20 private treasury identity — the Wallet Core account itself (no other wallet).
   const privateTreasuryAddress = resolvePrivateTreasuryAddress({
-    privyConnected,
-    privyAccountAddress: privy.account?.address,
-    privyAddress: privy.address,
-    walletAddress: wallet.address,
+    walletAddress: account?.address ?? '',
   });
 
   const refreshBalances = useCallback(async () => {
@@ -154,7 +148,7 @@ export default function TreasuryPage() {
     } catch {
       // wallet/STRK20 read failed — keep prior state
     }
-  }, [connected, privyConnected, privy, wallet]);
+  }, [connected, state.privateBalances]);
 
   // Keep the ref pointing at the latest refresh closure so the connect effect below is stable.
   useEffect(() => {
@@ -162,24 +156,17 @@ export default function TreasuryPage() {
   });
 
   const fetchRows = useCallback(async (): Promise<PrivateBalanceRow[]> => {
-    if (privyConnected) {
-      const out: PrivateBalanceRow[] = [];
-      for (const t of SEPOLIA_TOKENS) {
-        try {
-          const b = await privy.getPrivateBalance(t.address);
-          if (b > 0n) out.push({ token: t.address, balance: b });
-        } catch {
-          // skip
-        }
-      }
-      return out;
+    // Private balances come ONLY from the Wallet Core privacy session (wallet-native viewing key
+    // → STRK20 discovery). Never a legacy/Privy wallet.
+    try {
+      await runtime.refreshPrivateBalances();
+    } catch {
+      // discovery unavailable → empty portfolio; honest, not fake.
     }
-    const entries = await strk20WalletApiService.getPrivateBalances(
-      wallet,
-      SEPOLIA_TOKENS.map((t) => t.address),
-    );
-    return entries.filter((e) => e.balance > 0n).map((e) => ({ token: e.token, balance: e.balance }));
-  }, [privyConnected, privy, wallet]);
+    return state.privateBalances
+      .filter((r) => r.available && r.balance > 0n)
+      .map((r) => ({ token: r.token.address, balance: r.balance }));
+  }, [runtime, state.privateBalances]);
 
   useEffect(() => {
     if (!connected) return;
@@ -255,7 +242,7 @@ export default function TreasuryPage() {
           buildAnalyzeRequest({
             prompt,
             balances: rows,
-            userAddress: wallet.address ?? '',
+            userAddress: account?.address ?? '',
             privateTreasuryAddress,
             policy: guardrail,
             recentActivity: treasuryActivity,
@@ -292,11 +279,9 @@ export default function TreasuryPage() {
 
       // 2. Execute ONLY through the ExecutionRouter using the plan's canonical intent.
       const executeTransfer = async (opts: { amountBase: bigint; token: string; recipient: string }) => {
-        if (privyConnected) {
-          const res = await privy.transfer(opts.token, opts.amountBase, opts.recipient);
-          return { transactionHash: res.transactionHash };
-        }
-        return strk20WalletApiService.privateTransfer(wallet, opts.token, opts.amountBase, opts.recipient);
+        // The ONLY execution path is the Wallet Core privacy session (wallet-native signer).
+        const res = await runtime.privateTransfer(opts.token, opts.amountBase, opts.recipient);
+        return { transactionHash: res.transactionHash };
       };
 
       const result = await executeIntent({
@@ -325,23 +310,9 @@ export default function TreasuryPage() {
         return;
       }
 
-      // 3. Record treasury activity + refresh balances.
-      const tokenSymbol = assetSymbol(intent.asset);
-      const decimals = assetDecimals(intent.asset);
-      recordTransaction({
-        id: `treasury-${Date.now()}`,
-        type: 'PRIVATE_TRANSFER',
-        txHash: result.transactionHash,
-        timestamp: Date.now(),
-        tokenSymbol,
-        amount: formatTokenAmount(result.amountBaseUnits, decimals, 6),
-        recipient: intent.recipient,
-        status: 'CONFIRMED',
-        isPrivate: true,
-        privacyDetails: 'AI Treasury Rebalance',
-      });
+      // 3. Refresh balances (the runtime records the transfer in session activity).
       setExecuteState({ status: 'success', result });
-      await refreshAfterMutation();
+      await refreshBalances();
       // 4. Verify against the SAME plan's expected simulation (returned by the router).
       await refreshAndVerify(result.expectedSimulation.after);
     } catch (e) {
@@ -400,11 +371,22 @@ export default function TreasuryPage() {
 
   const treasuryActivity = useMemo(
     () =>
-      transactions
-        .filter((t) => t.type === 'PRIVATE_TRANSFER')
+      state.recentTransactions
+        .filter((t) => t.kind === 'privateTransfer' || t.kind === 'shield' || t.kind === 'withdraw')
         .slice(0, 6)
-        .map((t) => ({ ...t })),
-    [transactions],
+        .map((t) => ({
+          id: `wallet-${t.hash}`,
+          type: 'PRIVATE_TRANSFER' as const,
+          txHash: t.hash,
+          timestamp: t.at,
+          tokenSymbol: 'STRK',
+          amount: '',
+          recipient: '',
+          status: 'CONFIRMED' as const,
+          isPrivate: true,
+          privacyDetails: 'Wallet Core private transfer',
+        })),
+    [state.recentTransactions],
   );
 
   // ---- Derived view state -------------------------------------------------
@@ -479,7 +461,7 @@ export default function TreasuryPage() {
         </div>
 
         {!connected ? (
-          <ConnectGate />
+          <WalletCoreGate />
         ) : (
           <>
             {/* A. Total value */}

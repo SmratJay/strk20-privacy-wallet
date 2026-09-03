@@ -12,7 +12,7 @@ import type { UnlockedWallet } from "@/wallet";
  *
  * never:
  *
- *   Imported Wallet → Privy → STRK20
+ *   (no Privy / embedded-wallet lane exists)
  *
  * The viewing key is supplied by the STRK20 privacy layer at call time; it is never stored here.
  */

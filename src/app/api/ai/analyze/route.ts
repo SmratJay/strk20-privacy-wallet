@@ -10,7 +10,6 @@ import { buildPortfolioSummary, PrivateBalanceRow } from '@/ai/portfolio';
 import { resolvePortfolioPrices, AssetPrice } from '@/ai/prices';
 import { computeTreasuryHealth } from '@/ai/health';
 import { canonicalizeAddress } from '@/ai/address';
-import { computeReadyAccountAddress } from '@/privacy/privy/ready';
 
 /**
  * Hamster AI analyze endpoint (M2 — agent loop).
@@ -18,7 +17,6 @@ import { computeReadyAccountAddress } from '@/privacy/privy/ready';
  *   POST /api/ai/analyze
  *   { prompt, balances: [{ token, balance }], context: { userAddress, privateTreasuryAddress },
  *     policy?: { preset, custom? }, recentActivity?: [...] }
- *   Authorization: Bearer <privy-session-jwt>  (optional; preferred when present)
  *
  * The endpoint runs the bounded agent loop: the model emits deterministic tool calls (read /
  * simulate / inspect — never execution primitives), then a structured AgentPlan. All scenario
@@ -32,13 +30,12 @@ import { computeReadyAccountAddress } from '@/privacy/privy/ready';
  *   - Only tokens present in the existing `SEPOLIA_TOKENS` configuration are accepted; an
  *     unknown token address is rejected (400) — no invented metadata for unknown assets.
  *   - Destinations are ONLY the user's primary account, the STRK20 private treasury identity,
- *     and any server-configured allowlist. When a valid Privy session is supplied, those
- *     addresses are derived server-side from the verified user's Starknet wallet; without a
- *     session they are NON-authoritative client-claimed inputs — the final execution gate
- *     independently re-checks state and requires the user's signature.
+ *     and any server-configured allowlist. There is no Privy session: the addresses are
+ *     client-claimed inputs from the Wallet Core runtime, and the final execution gate
+ *     independently re-checks state and requires the user's wallet signature.
  *   - The AI can never modify policy (server-validated user selection), add a destination, or
  *     emit arbitrary calldata. The shadow-account anonymizer is feature-gated and NOT wired in
- *     this build unless SHADOW_ACCOUNT_ANONYMIZER_ADDRESS is configured.
+ *     this build unless the anonymizer address is configured.
  *   - Balances are wallet-provided analysis input, not server-verified on-chain truth.
  *   - Plans carry generatedAt/expiresAt; execution must re-fetch state and re-run policy.
  *
@@ -74,8 +71,8 @@ function parseAllowlist(envValue: string | undefined): string[] {
 }
 
 function bearerToken(req: NextRequest): string | null {
-  const header = req.headers.get('authorization') ?? '';
-  return header.startsWith('Bearer ') ? header.slice(7) : null;
+  void req;
+  return null;
 }
 
 /** Minimal in-memory sliding-window request guard (best-effort; not a security boundary). */
@@ -94,36 +91,12 @@ function rateLimited(ip: string): boolean {
 }
 
 /**
- * Server-verified addresses when a valid Privy session is presented. Returns null when the
- * session cannot be verified or Privy is not configured — callers then fall back to the
- * client-claimed (non-authoritative) path.
+ * There is no server-side wallet session (Privy is removed). Addresses are always the
+ * client-claimed Wallet Core runtime addresses; the execution gate independently re-checks
+ * current state and requires the user's wallet signature before anything moves.
  */
-async function resolveVerifiedAddresses(
-  token: string | null,
-): Promise<{ userAddress: string; privateTreasuryAddress: string } | null> {
-  if (!token) return null;
-  try {
-    const { getPrivyServerClient } = await import('@/privacy/privy/server');
-    const privy = getPrivyServerClient();
-    const claims = await privy.verifyAuthToken(token);
-    const user: any = await privy.getUserById(claims.userId);
-    const walletId = user?.customMetadata?.starknetWalletId;
-    if (typeof walletId !== 'string' || !walletId) return null;
-    const wallet: any = await privy.walletApi.getWallet({ id: walletId });
-    const address = String(wallet?.address ?? '');
-    const publicKey = String(wallet?.public_key ?? wallet?.publicKey ?? '');
-    if (!address || !publicKey) return null;
-    let treasury: string;
-    try {
-      // The STRK20 user identity (owns private notes + sources private transfers).
-      treasury = computeReadyAccountAddress(publicKey);
-    } catch {
-      return null;
-    }
-    return { userAddress: address, privateTreasuryAddress: treasury };
-  } catch {
-    return null;
-  }
+function resolveVerifiedAddresses(): Promise<{ userAddress: string; privateTreasuryAddress: string } | null> {
+  return Promise.resolve(null);
 }
 
 export async function POST(req: NextRequest) {
@@ -178,13 +151,13 @@ export async function POST(req: NextRequest) {
     rows.push({ token: raw.token, balance });
   }
 
-  // Addresses: server-verified (Privy session) preferred; otherwise client-claimed.
-  const verified = await resolveVerifiedAddresses(bearerToken(req));
+  // Addresses: client-claimed Wallet Core runtime addresses (no server-side wallet session).
+  const verified = await resolveVerifiedAddresses();
   const context = isRecord(body.context) ? body.context : {};
   const clientUser = typeof context.userAddress === 'string' ? context.userAddress : '';
   const clientTreasury =
     typeof context.privateTreasuryAddress === 'string' ? context.privateTreasuryAddress : '';
-  const verification: 'privy' | 'client-claimed' = verified ? 'privy' : 'client-claimed';
+  const verification: 'client-claimed' = 'client-claimed';
   const userAddress = verified?.userAddress ?? clientUser;
   const privateTreasuryAddress = verified?.privateTreasuryAddress ?? clientTreasury;
 
