@@ -20,6 +20,12 @@ import {
   type WalletRegistryEntry,
   type WalletStorage,
 } from "./index";
+import {
+  resolveWalletPrivacyConfig,
+  WalletPrivacySession,
+  type PrivacyOperationResult,
+  type WalletPrivacyConfig,
+} from "./privacy";
 
 /**
  * Wallet Core — application wallet runtime.
@@ -64,6 +70,13 @@ export interface RecentTransaction {
   at: number;
 }
 
+/** Safe privacy-capability status — never exposes the viewing key or any secret material. */
+export interface PrivacyCapability {
+  available: boolean;
+  status: "unavailable" | "idle" | "loading" | "available" | "error";
+  reason: string | null;
+}
+
 export interface WalletRuntimeView {
   network: WalletNetworkId;
   wallets: WalletRegistryEntry[];
@@ -73,6 +86,9 @@ export interface WalletRuntimeView {
   isUnlocked: boolean;
   deploymentStatus: WalletDeploymentStatus;
   publicBalances: PublicBalanceRow[];
+  /** Safe STRK20 privacy capability + private balances. Never exposes viewing keys. */
+  privacy: PrivacyCapability;
+  privateBalances: PublicBalanceRow[];
   /** In-memory activity for this session (never persisted, never on-chain-sensitive). */
   recentTransactions: RecentTransaction[];
   error: string | null;
@@ -82,6 +98,8 @@ export interface WalletRuntimeOptions {
   storage?: WalletStorage;
   /** TEST SEAM ONLY: inject a deterministic provider (never weakens custody/signing). */
   providerFactory?: (network: WalletNetworkId) => RpcProvider;
+  /** TEST SEAM ONLY: inject a deterministic privacy config (prover/discovery) for tests. */
+  privacyConfig?: WalletPrivacyConfig | null;
   /**
    * When true, the initial registry load is deferred to `init()` (called from a React effect).
    * This keeps server/prerender output deterministic (empty gate) so client hydration never
@@ -104,15 +122,20 @@ function providerFor(network: WalletNetworkId, factory?: (n: WalletNetworkId) =>
 export class WalletRuntime {
   /** Raw custody session — private. Never exposed through `getState()`. */
   private session: UnlockedWallet | null = null;
+  /** Wallet-native STRK20 privacy session (in-memory viewing key) — private. */
+  private privacySession: WalletPrivacySession | null = null;
   private view: WalletRuntimeView;
   private readonly storage: WalletStorage;
   private readonly providerFactory?: (n: WalletNetworkId) => RpcProvider;
+  private readonly privacyConfig: WalletPrivacyConfig | null;
   private readonly listeners = new Set<() => void>();
   private generation = 0;
 
   constructor(options: WalletRuntimeOptions = {}) {
     this.storage = options.storage ?? defaultStorage();
     this.providerFactory = options.providerFactory;
+    this.privacyConfig =
+      options.privacyConfig !== undefined ? options.privacyConfig : resolveWalletPrivacyConfig("sepolia");
     this.view = {
       network: "sepolia",
       wallets: [],
@@ -121,6 +144,12 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
+      privacy: {
+        available: this.privacyConfig !== null,
+        status: this.privacyConfig !== null ? "idle" : "unavailable",
+        reason: this.privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
+      },
+      privateBalances: [],
       recentTransactions: [],
       error: null,
     };
@@ -180,7 +209,10 @@ export class WalletRuntime {
   private reloadForNetwork(network: WalletNetworkId): void {
     this.invalidate();
     const wallets = listWallets({ network, storage: this.storage });
+    if (this.privacySession) this.privacySession.dispose();
+    this.privacySession = null;
     this.session = null;
+    const privacyConfig = this.privacyConfig !== null ? resolveWalletPrivacyConfig(network) : null;
     this.view = {
       network,
       wallets,
@@ -189,6 +221,12 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
+      privacy: {
+        available: privacyConfig !== null,
+        status: privacyConfig !== null ? "idle" : "unavailable",
+        reason: privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
+      },
+      privateBalances: [],
       recentTransactions: [],
       error: null,
     };
@@ -198,12 +236,22 @@ export class WalletRuntime {
   private setActiveSession(wallet: UnlockedWallet): void {
     this.invalidate();
     this.session = wallet;
+    if (this.privacySession) this.privacySession.dispose();
+    const privacyConfig = this.privacyConfig !== null ? resolveWalletPrivacyConfig(this.view.network) : null;
+    this.privacySession =
+      privacyConfig !== null ? new WalletPrivacySession(wallet, this.view.network, privacyConfig, this.storage) : null;
     this.setView({
       selectedWalletId: wallet.walletId,
       account: this.accountView(wallet),
       isUnlocked: true,
       deploymentStatus: "unknown",
       publicBalances: [],
+      privacy: {
+        available: this.privacySession !== null,
+        status: this.privacySession !== null ? "idle" : "unavailable",
+        reason: this.privacySession !== null ? null : "STRK20 proving/discovery services are not configured.",
+      },
+      privateBalances: [],
       error: null,
     });
   }
@@ -223,6 +271,8 @@ export class WalletRuntime {
     if (!entry) return;
     // Selecting a wallet always returns to the locked state and invalidates in-flight work.
     if (this.session) lockWallet(this.session);
+    if (this.privacySession) this.privacySession.dispose();
+    this.privacySession = null;
     this.invalidate();
     this.session = null;
     this.setView({
@@ -231,6 +281,7 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
+      privateBalances: [],
       error: null,
     });
   }
@@ -312,6 +363,8 @@ export class WalletRuntime {
 
   lock(): void {
     if (this.session) lockWallet(this.session);
+    if (this.privacySession) this.privacySession.dispose();
+    this.privacySession = null;
     this.invalidate();
     this.session = null;
     this.setView({
@@ -319,6 +372,7 @@ export class WalletRuntime {
       isUnlocked: false,
       deploymentStatus: "unknown",
       publicBalances: [],
+      privateBalances: [],
       recentTransactions: [],
       error: null,
     });
@@ -372,5 +426,96 @@ export class WalletRuntime {
       recentTransactions: [{ hash: result.transactionHash, at: Date.now() }, ...this.view.recentTransactions].slice(0, 20),
     });
     return result;
+  }
+
+  // ─────────────────────────── STRK20 privacy (wallet-native) ───────────────────────────
+
+  private requirePrivacySession(): WalletPrivacySession {
+    if (!this.session) throw new Error("Wallet is locked. Unlock it to use privacy.");
+    if (!this.privacySession) {
+      throw new Error("STRK20 privacy is unavailable: proving/discovery services are not configured.");
+    }
+    return this.privacySession;
+  }
+
+  /** Private balances via the wallet-native viewing key + STRK20 discovery. Never fakes zeroes. */
+  async refreshPrivateBalances(): Promise<PublicBalanceRow[]> {
+    const session = this.session;
+    if (!session) {
+      this.setView({ privateBalances: [], privacy: { available: false, status: "idle", reason: null } });
+      return [];
+    }
+    if (!this.privacySession) {
+      this.setView({ privateBalances: [], privacy: { available: false, status: "unavailable", reason: "STRK20 proving/discovery services are not configured." } });
+      return [];
+    }
+    const guard = this.captureGuard();
+    this.setView({ privacy: { available: true, status: "loading", reason: null } });
+    try {
+      const networkConfig = getNetworkConfig(this.view.network);
+      const rows: PublicBalanceRow[] = [];
+      for (const token of networkConfig.tokens) {
+        const balance = await this.privacySession.getPrivateBalance(token.address);
+        rows.push({ token, balance, available: true });
+      }
+      if (!this.isCurrent(guard)) return [];
+      this.setView({ privateBalances: rows, privacy: { available: true, status: "available", reason: null } });
+      return rows;
+    } catch (err) {
+      if (!this.isCurrent(guard)) return [];
+      this.setView({
+        privacy: {
+          available: true,
+          status: "error",
+          reason: err instanceof Error ? err.message : "STRK20 private balance discovery failed.",
+        },
+      });
+      return [];
+    }
+  }
+
+  async shield(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    const result = await privacy.shield(token, amountBase);
+    if (!this.isCurrent(guard)) return result;
+    this.setView({ privacy: { available: true, status: "available", reason: null } });
+    return result;
+  }
+
+  async privateTransfer(token: string, amountBase: bigint, recipient: string): Promise<PrivacyOperationResult> {
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    const result = await privacy.privateTransfer(token, amountBase, recipient);
+    if (!this.isCurrent(guard)) return result;
+    this.setView({ privacy: { available: true, status: "available", reason: null } });
+    return result;
+  }
+
+  async withdraw(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    const result = await privacy.withdraw(token, amountBase);
+    if (!this.isCurrent(guard)) return result;
+    this.setView({ privacy: { available: true, status: "available", reason: null } });
+    return result;
+  }
+
+  /** Create a PrivateIdentity for the active wallet. Requires the shadow anonymizer to be configured. */
+  async createPrivateIdentity(purpose: string, opts?: { dappName?: string }): Promise<import("@/privacy/identity").PrivateIdentity> {
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    const anonymizerAddress = (process.env.SHADOW_ACCOUNT_ANONYMIZER_ADDRESS ?? "").trim();
+    if (!anonymizerAddress) {
+      throw new Error("Private identity creation requires the shadow-account anonymizer to be configured.");
+    }
+    const poolContractAddress = getNetworkConfig(this.view.network).poolAddress;
+    const identity = await privacy.createPrivateIdentity(purpose, {
+      anonymizerAddress,
+      poolContractAddress,
+      dappName: opts?.dappName,
+    });
+    if (!this.isCurrent(guard)) return identity;
+    return identity;
   }
 }

@@ -17,6 +17,7 @@ import {
   READY_SEPOLIA_CLASS_HASH,
 } from "@/wallet";
 import { generateSecretKey, canonicalizeSecret, getPublicKey } from "@/wallet/crypto";
+import { deriveWalletViewingKey, resolveWalletPrivacyConfig } from "@/wallet/privacy";
 import { verifyAccountOwnership } from "@/wallet/ownership";
 import { Account } from "starknet";
 
@@ -82,5 +83,36 @@ describe("real Starknet Sepolia network", () => {
     const account = new Account({ provider, address, signer: new (await import("starknet")).Signer(secret), cairoVersion: "1" });
     const result = await verifyAccountOwnership(account, provider);
     expect(result.verified).toBe(false);
+  });
+
+  it("verifies the STRK20 pool is deployed on real Sepolia and a wallet-native viewing key is canonical", async (ctx) => {
+    if (!(await rpcReachable())) return ctx.skip();
+    const poolAddress = getNetworkConfig("sepolia").poolAddress;
+    const classHash = await provider.getClassHashAt(poolAddress);
+    expect(BigInt(classHash)).not.toBe(0n);
+
+    // Wallet-native viewing-key derivation for a throwaway wallet: must be canonical and in the
+    // STRK20 range (a real, valid key for the pool).
+    const secret = canonicalizeSecret(generateSecretKey());
+    const viewingKey = deriveWalletViewingKey(secret, "sepolia");
+    const n = 3618502788666131213697322783095070105526743751716087489154079457884512865583n;
+    expect(viewingKey).toBeGreaterThan(0n);
+    expect(viewingKey).toBeLessThanOrEqual(n / 2n);
+  });
+
+  it("reports STRK20 privacy as unavailable when operator proving/discovery services are not configured (no fake zero)", async (ctx) => {
+    if (!(await rpcReachable())) return ctx.skip();
+    // In this environment the operator prover/discovery services are not configured, so the
+    // wallet-native privacy capability must report UNAVAILABLE (never a fake zero balance).
+    const savedProver = process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+    const savedDiscovery = process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+    delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+    delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+    try {
+      expect(resolveWalletPrivacyConfig("sepolia")).toBeNull();
+    } finally {
+      if (savedProver) process.env.NEXT_PUBLIC_STRK20_PROVER_URL = savedProver;
+      if (savedDiscovery) process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = savedDiscovery;
+    }
   });
 });

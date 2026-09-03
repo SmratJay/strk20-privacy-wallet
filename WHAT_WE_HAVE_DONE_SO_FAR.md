@@ -1504,3 +1504,41 @@ state, no raw private key in UI-facing state, clean /wallet + /send, network/ses
 
 **Verification.** `npm run typecheck` clean; `npm test` → 59 files / **584 tests** pass (7 new
 stale/safety tests); `npm run build` succeeds. Real Sepolia integration tests still pass.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 11:52:48 IST
+
+### 🔴 [BIG CHANGE] — STAGE 3A: STRK20 privacy native to Wallet Core
+
+**Context.** Remove the legacy-wallet dependency from the PRIMARY STRK20 privacy path. The target:
+WalletRuntime → Wallet Core → wallet-native privacy session → STRK20 (private balances / shield /
+private transfer / withdraw), all signed/managed by Wallet Core. No NEAR/TEE/cross-chain.
+
+**Detailed technical explanation.**
+
+- **Viewing-key lifecycle.** `src/wallet/privacy.ts` defines the documented derivation:
+  `canonicalize(poseidon(masterSecret, starknetKeccak("ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1:<network>")))`.
+  Deterministic per wallet (reproducible after unlock), network-scoped, output in the STRK20
+  `[1, floor(n/2)]` range. Derived in memory; never persisted, never sent to Privy/backend, never
+  in React state, never in `PrivateIdentity` records; locking discards it.
+- **WalletPrivacySession.** Bound to one unlocked wallet + network; holds the viewing key in
+  memory and exposes `getPrivateBalance / shield / privateTransfer / withdraw /
+  createPrivateIdentity`. Consumes the Wallet Core account/signer.
+- **Neutral STRK20 adapter.** `Strk20Adapter` + allowance helpers moved to `src/privacy/strk20/`
+  (no Privy import). `PrivyStrk20Adapter` is now a LEGACY alias (backward compatible);
+  `@/privacy/privy/allowance` re-exports the neutral helpers.
+- **Runtime integration.** `WalletRuntime` exposes a SAFE privacy capability
+  (`privacy.available/status/reason` + `privateBalances`) — never the viewing key. Privacy ops are
+  bound to `walletId + network + generation` (same stale guards as the runtime). When proving/
+  discovery services are unconfigured, privacy reports **unavailable** — never a fake zero.
+- **UI.** `/wallet` shows Public + Private balances of the SAME Wallet Core account with
+  Shield/Withdraw; `/send` private STRK20 uses the Wallet Core privacy session by default, with the
+  legacy lane as a clearly-marked compatibility fallback only.
+- **Tests.** `walletPrivacy.test.ts` (14 tests): deterministic/reproducible/network-scoped viewing
+  key, no plaintext persistence, lock/switch invalidation, safe capability state, adapter bound to
+  the active wallet + viewing key, no Privy import guard. Real Sepolia: pool deployed, canonical
+  viewing key, privacy-unavailable-without-operator-services.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 60 files / **602 tests** pass; `npm run
+build` succeeds. Real Sepolia integration tests pass.

@@ -37,7 +37,10 @@ export default function WalletPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (account) void runtime.refreshPublicBalances();
+    if (account) {
+      void runtime.refreshPublicBalances();
+      void runtime.refreshPrivateBalances();
+    }
   }, [runtime, account?.walletId]);
 
   useEffect(() => {
@@ -121,7 +124,7 @@ export default function WalletPage() {
                     <Row label="Type" value={account.accountType} />
                     <Row label="Network" value={state.network} />
                     <Row label="Deployment" value={state.deploymentStatus} />
-                    <Row label="Private mode" value="signer ready (STRK20 legacy lanes)" />
+                    <Row label="Private mode" value={state.privacy.available ? `native STRK20 (${state.privacy.status})` : 'unavailable'} />
                   </dl>
                   <button
                     onClick={handleCopy}
@@ -150,6 +153,31 @@ export default function WalletPage() {
                     </ul>
                   )}
                 </div>
+                <div className="product-card p-5">
+                  <div className="text-xs uppercase tracking-widest text-violet-300 mb-3">Private balances (STRK20)</div>
+                  {state.privacy.status === 'unavailable' || !state.privacy.available ? (
+                    <p className="text-xs text-zinc-500">{state.privacy.reason ?? 'STRK20 privacy unavailable.'}</p>
+                  ) : state.privacy.status === 'loading' ? (
+                    <p className="text-sm text-zinc-500">Loading…</p>
+                  ) : state.privacy.status === 'error' ? (
+                    <p className="text-xs text-red-300">Discovery failed — {state.privacy.reason ?? 'no private balance.'}</p>
+                  ) : state.privateBalances.length === 0 ? (
+                    <p className="text-xs text-zinc-500">No private balance discovered (shields will appear here).</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {state.privateBalances.map((row) => (
+                        <li key={row.token.address} className="flex items-center justify-between text-sm">
+                          <span className="text-zinc-300">{row.token.symbol}</span>
+                          <span className="font-mono text-zinc-200">
+                            {row.available
+                              ? (Number(row.balance) / 10 ** row.token.decimals).toLocaleString(undefined, { maximumFractionDigits: 6 })
+                              : '—'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -165,6 +193,10 @@ export default function WalletPage() {
               <Link href="/send?mode=deposit" className="product-action is-primary">
                 <Shield aria-hidden="true" />
                 <span>Shield</span>
+              </Link>
+              <Link href="/send?mode=withdraw" className="product-action">
+                <ArrowDownLeft aria-hidden="true" />
+                <span>Withdraw</span>
               </Link>
               <Link href="/swap" className="product-action">
                 <Repeat aria-hidden="true" />

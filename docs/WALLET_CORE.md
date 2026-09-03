@@ -358,11 +358,64 @@ until a Wallet Core-native viewing-key derivation lands (later stage).
   dependency). `/send` public sends are always Wallet Runtime → Wallet Core; legacy/Privy state
   only toggles the explicitly-labeled STRK20 private compatibility lane.
 
-## 15. Stage 3 boundaries (do NOT touch yet)
+## 15. Stage 3A — STRK20 privacy native to Wallet Core
+
+Status: **implemented.** The PRIMARY STRK20 privacy path no longer requires Privy, the Ready
+extension, or the Wallet API. Legacy lanes remain only as compatibility.
+
+### 15a. Wallet-native viewing key
+
+- **Derivation (documented):**
+  `viewingKey = canonicalize( poseidon( masterSecretScalar, starknetKeccak(domain) ) )` with
+  `domain = "ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1:<network>"`.
+- Input = the wallet master signing secret (the same scalar owning the account); deterministic per
+  wallet so unlocking reproduces the same viewing key (privacy state recovers). Different wallets
+  / wrong secrets produce different keys. Network-scoped so the same wallet never shares a privacy
+  identity across networks.
+- Output = a canonical scalar in `[1, floor(n/2)]` (`MAX_VIEWING_KEY`), exactly what the STRK20
+  SDK/pool accept; upper-half reflection preserves the derived public identity.
+- Security: derived in memory from the in-memory session secret; never persisted, never sent to
+  Privy/backend, never logged, never in React state, never in `PrivateIdentity` records. Locking
+  discards the privacy session (and the viewing key).
+
+### 15b. Privacy session + adapter
+
+- `src/wallet/privacy.ts` — `WalletPrivacySession` (bound to one unlocked wallet + network),
+  holds the viewing key in memory and exposes `getPrivateBalance / shield / privateTransfer /
+  withdraw / createPrivateIdentity`.
+- `src/privacy/strk20/` — the NEUTRAL STRK20 adapter (`Strk20Adapter`) + allowance helpers. It
+  consumes a generic `{ account, address, viewingKey }` — a Wallet Core `UnlockedWallet.account`
+  + wallet-native viewing key. No Privy, no Wallet API.
+- `PrivyStrk20Adapter` is now a LEGACY alias of `Strk20Adapter` (backward compatible; existing
+  legacy pages/tests keep resolving). `@/privacy/privy/allowance` re-exports the neutral helpers.
+
+### 15c. Runtime integration
+
+`WalletRuntime` exposes a SAFE privacy capability (`privacy.available/status/reason` +
+`privateBalances`) — never the viewing key. Methods `refreshPrivateBalances / shield /
+privateTransfer / withdraw / createPrivateIdentity` are bound to the active
+`walletId + network + generation` guard (same stale-session protections as the rest of the
+runtime). If the operator proving/discovery services are not configured, privacy reports
+**unavailable** — never a fake zero.
+
+### 15d. UI
+
+- `/wallet` shows Public + Private balances of the SAME Wallet Core account, with Shield /
+  Withdraw actions. No "Connect privacy wallet" / "Continue with Google" in the primary flow.
+- `/send` private STRK20 uses the Wallet Core privacy session by default; the legacy STRK20 lane
+  renders only as a clearly marked compatibility fallback when privacy is unavailable AND a legacy
+  wallet is connected.
+
+### 15e. Verification
+
+`npm run typecheck` clean; `npm test` → 60 files / 602 tests; `npm run build` succeeds. Real
+Sepolia integration verifies the STRK20 pool is deployed, wallet-native viewing keys are
+canonical, and privacy reports unavailable without operator services.
+
+## 16. Stage 3B+ boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution
 - TEE infrastructure · solver infrastructure · cross-chain shadow execution
 - Seed-phrase mnemonic + key derivation
-- Wallet Core-native viewing-key derivation
-- Expanding the Stage 2 UI into a dashboard
+- Expanding the Stage 3A UI into a dashboard
 - New privacy contracts
