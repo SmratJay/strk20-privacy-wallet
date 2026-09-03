@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { WalletRuntime } from "../wallet/runtime";
+import { WalletRuntime, type WalletRuntimeView } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
 import { canonicalizeSecret, generateSecretKey } from "../wallet/crypto";
 import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
@@ -163,6 +163,76 @@ describe("stale async state protection", () => {
     await createWallet(runtime);
     runtime.lock();
     await tick();
+    expect(runtime.getState().account).toBeNull();
+    expect(runtime.getState().isUnlocked).toBe(false);
+  });
+
+  it("ignores an old async result after a network change (guard network arm)", async () => {
+    const storage = createMemoryStorage();
+    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    await createWallet(runtime);
+
+    const d = deferred<unknown[]>();
+    (privacyService.fetchBalances as unknown as ReturnType<typeof vi.fn>).mockReturnValue(d.promise);
+    const pending = runtime.refreshPublicBalances();
+
+    // Only Sepolia is enabled today, so a real network switch is unreachable through the public
+    // API. Exercise the guard's network comparison directly: a real switch (reloadForNetwork)
+    // would set the view's network and bump the generation.
+    (runtime as unknown as { view: WalletRuntimeView }).view.network = "mainnet";
+
+    d.resolve([{ token: { symbol: "STRK", decimals: 18 }, publicBalance: 1n, publicBalanceAvailable: true }]);
+    await pending;
+    await tick();
+
+    expect(runtime.getState().publicBalances).toHaveLength(0);
+  });
+});
+
+describe("stale create/import/unlock cannot replace the current wallet", () => {
+  it("a stale create result does not adopt a session after lock", async () => {
+    const storage = createMemoryStorage();
+    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+
+    // create() awaits WebCrypto encryption, so we can invalidate while it is in flight.
+    const pending = runtime.create(PASSWORD);
+    runtime.lock();
+    const wallet: UnlockedWallet = await pending;
+
+    expect(wallet).toBeDefined();
+    expect(runtime.getState().account).toBeNull();
+    expect(runtime.getState().isUnlocked).toBe(false);
+  });
+
+  it("a stale import result does not adopt a session after lock", async () => {
+    const storage = createMemoryStorage();
+    const slow = slowProvider();
+    const runtime = new WalletRuntime({ storage, providerFactory: () => slow.provider });
+
+    const secret = canonicalizeSecret(generateSecretKey());
+    const pending = runtime.import({ accountType: "ready-v0.4.0", secret, password: PASSWORD });
+    // import() awaits an on-chain probe — invalidate while it is pending, then let it resolve.
+    runtime.lock();
+    slow.resolve(READY_SEPOLIA_CLASS_HASH);
+    const wallet: UnlockedWallet = await pending;
+
+    expect(wallet).toBeDefined();
+    expect(runtime.getState().account).toBeNull();
+    expect(runtime.getState().isUnlocked).toBe(false);
+  });
+
+  it("a stale unlock result does not resurrect a session after lock", async () => {
+    const storage = createMemoryStorage();
+    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    await createWallet(runtime);
+    runtime.lock();
+
+    // unlock() awaits WebCrypto decrypt — invalidate while it is in flight.
+    const pending = runtime.unlock(PASSWORD);
+    runtime.lock();
+    const wallet: UnlockedWallet = await pending;
+
+    expect(wallet).toBeDefined();
     expect(runtime.getState().account).toBeNull();
     expect(runtime.getState().isUnlocked).toBe(false);
   });
