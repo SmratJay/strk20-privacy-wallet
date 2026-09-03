@@ -57,6 +57,8 @@ interface AnalyzeResponse {
   proposal: ActionProposal;
   verdict: PolicyVerdict;
   policy: TreasuryPolicy;
+  /** Server-approved external destinations (AI_ALLOWED_DESTINATIONS) — the only non-self recipients. */
+  serverAllowedDestinations?: string[];
   shadowCapability: ShadowAccountCapability;
   addresses: { userAddress: string; privateTreasuryAddress: string; verification: 'client-claimed' };
   trust: { balances: string; note: string };
@@ -290,6 +292,10 @@ export default function TreasuryPage() {
         policy,
         analysisBalances: analysisBalancesRef.current,
         currentBalances,
+        // The AUTHORITATIVE wallet: the destination must be this session's own address or a
+        // server-approved destination — a client-claimed address can never authorize execution.
+        authoritativeWalletAddress: account?.address ?? '',
+        serverAllowedDestinations: analyzeState.analysis.serverAllowedDestinations,
         resolvePrices: async () => {
           const symbols = tokenSymbols(currentBalances);
           const bySymbol = await resolvePortfolioPrices(symbols);
@@ -995,6 +1001,8 @@ export default function TreasuryPage() {
         return 'Policy rejected against current state';
       case 'AMOUNT_INVALID':
         return 'Invalid amount';
+      case 'UNAUTHORIZED_DESTINATION':
+        return 'Unauthorized destination';
       case 'SHADOW_UNAVAILABLE':
         return 'Shadow Account execution is not available';
       default:

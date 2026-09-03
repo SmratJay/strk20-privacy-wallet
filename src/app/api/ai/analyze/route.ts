@@ -202,6 +202,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: built.error }, { status: 400 });
   }
   const policy = built.policy;
+  // The server-approved external destinations (AI_ALLOWED_DESTINATIONS) — the ONLY way execution
+  // may target an address other than the active Wallet Core wallet. Returned so the client-side
+  // execution gate can enforce it against the authoritative session address.
+  const serverAllowedDestinations = parseAllowlist(process.env.AI_ALLOWED_DESTINATIONS);
 
   // 3. Run the bounded agent loop: the model emits deterministic tool calls, then a plan.
   let provider;
@@ -264,6 +268,7 @@ export async function POST(req: NextRequest) {
     // policy against CURRENT state (with fresh prices) before execution. The verdict is
     // advisory; this policy + a fresh state re-check are what gate execution client-side.
     policy,
+    serverAllowedDestinations,
     addresses: { userAddress, privateTreasuryAddress, verification },
     trust: {
       balances: 'wallet-provided-analysis-input',

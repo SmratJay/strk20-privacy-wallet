@@ -60,6 +60,10 @@ function baseInput(over: Partial<Parameters<typeof executeProposal>[0]> = {}): P
     analysisBalances: balances(),
     currentBalances: balances(),
     resolvePrices: vi.fn(async () => freshPrices()),
+    // The authoritative Wallet Core session account is the treasury identity in the Wallet Core
+    // model; the destination must be this address or a server-approved destination.
+    authoritativeWalletAddress: TREASURY,
+    serverAllowedDestinations: [],
     executeTransfer: vi.fn(async () => ({ transactionHash: '0xabc' })),
     now: NOW,
     ...over,
@@ -232,3 +236,79 @@ describe('executeProposal — execution gate', () => {
     if (a.ok && b.ok) expect(a.amountBaseUnits).toBe(b.amountBaseUnits);
   });
 });
+describe('AI trust model — client-claimed addresses can NEVER authorize execution', () => {
+  it('executes when the destination is the authoritative Wallet Core account (self-transfer)', async () => {
+    const input = baseInput();
+    const res = await result(input);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.transactionHash).toBe('0xabc');
+      expect(input.executeTransfer).toHaveBeenCalledWith({
+        amountBase: expect.any(BigInt),
+        token: STRK,
+        recipient: TREASURY,
+      });
+    }
+  });
+
+  it('rejects a client-claimed destination even when the (polluted) policy allows it', async () => {
+    const attacker = '0x00000000000000000000000000000000000000000000000000000000000dead';
+    // Simulate a malicious analysis: the client-claimed userAddress was injected into the policy's
+    // allowedDestinations, so the VERDICT passes. The destination AUTHORIZATION gate must still
+    // reject it because it is neither the active Wallet Core wallet nor a server-approved address.
+    const pollutedPolicy: TreasuryPolicy = { ...policy(), allowedDestinations: [TREASURY, attacker] };
+    const input = baseInput({
+      proposal: proposalWithRecipient(attacker),
+      policy: pollutedPolicy,
+      authoritativeWalletAddress: TREASURY,
+      serverAllowedDestinations: [],
+    });
+    const res = await result(input);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe('UNAUTHORIZED_DESTINATION');
+    expect(input.executeTransfer).not.toHaveBeenCalled();
+  });
+
+  it('executes when the destination is a server-approved destination', async () => {
+    const approved = '0x00000000000000000000000000000000000000000000000000000000000fee1';
+    const approvedPolicy: TreasuryPolicy = { ...policy(), allowedDestinations: [TREASURY, approved] };
+    const input = baseInput({
+      proposal: proposalWithRecipient(approved),
+      policy: approvedPolicy,
+      authoritativeWalletAddress: TREASURY,
+      serverAllowedDestinations: [approved],
+    });
+    const res = await result(input);
+    expect(res.ok).toBe(true);
+  });
+
+  it('rejects when the wallet is locked/changed and the client claims another identity', async () => {
+    const attacker = '0x00000000000000000000000000000000000000000000000000000000000badc';
+    const pollutedPolicy: TreasuryPolicy = { ...policy(), allowedDestinations: [TREASURY, attacker] };
+    const input = baseInput({
+      proposal: proposalWithRecipient(attacker),
+      policy: pollutedPolicy,
+      authoritativeWalletAddress: '0x0000000000000000000000000000000000000000000000000000000000000abc',
+      serverAllowedDestinations: [],
+    });
+    const res = await result(input);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe('UNAUTHORIZED_DESTINATION');
+    expect(input.executeTransfer).not.toHaveBeenCalled();
+  });
+
+  it('analysis and authorization are distinct: a passing policy verdict alone never executes an unapproved destination', async () => {
+    const attacker = '0x00000000000000000000000000000000000000000000000000000000000aaa';
+    const input = baseInput({
+      proposal: proposalWithRecipient(attacker),
+      authoritativeWalletAddress: TREASURY,
+    });
+    const res = await result(input);
+    expect(res.ok).toBe(false);
+    expect(input.executeTransfer).not.toHaveBeenCalled();
+  });
+});
+
+function proposalWithRecipient(recipient: string): ActionProposal {
+  return { ...proposal(), action: { type: 'private_transfer', asset: STRK, amount: '10', recipient } };
+}

@@ -115,6 +115,14 @@ export interface TreasuryExecutionInput {
     token: string;
     recipient: string;
   }) => Promise<{ transactionHash: string }>;
+  /**
+   * The authoritative Wallet Core session account address. Client-claimed analysis addresses are
+   * ADVISORY ONLY and can never authorize execution — the destination must be this wallet's own
+   * address or an explicit server-approved destination.
+   */
+  authoritativeWalletAddress: string;
+  /** Server-configured approved external destinations (AI_ALLOWED_DESTINATIONS). */
+  serverAllowedDestinations?: string[];
   /** Wall-clock override for deterministic tests. */
   now?: number;
 }
@@ -159,6 +167,8 @@ export async function executeProposal(input: TreasuryExecutionInput): Promise<Ex
     analysisBalances: input.analysisBalances,
     currentBalances: input.currentBalances,
     resolvePrices: async () => prices,
+    authoritativeWalletAddress: input.authoritativeWalletAddress,
+    serverAllowedDestinations: input.serverAllowedDestinations,
     executeTransfer: input.executeTransfer,
     now: input.now,
   });

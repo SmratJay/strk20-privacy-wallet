@@ -304,10 +304,15 @@ export class Strk20Adapter {
   }
 
   /**
-   * Generic STRK20 operation execution over an SDK builder — the shared simulate → fee-estimate →
-   * execute → submit machinery used by register/shield/transfer/unshield and by higher-level
-   * application adapters (e.g. the launchpad private-curve trade) without coupling THIS adapter
-   * to application-specific actions.
+   * INTERNAL COMPOSITION PRIMITIVE (higher-level adapters only — NOT a UI/public API).
+   *
+   * Executes a STRK20 SDK builder op through the shared simulate → fee-estimate → execute →
+   * submit pipeline with the safe proving block and bounded fees. Used ONLY by the launchpad
+   * private-curve adapter (`privateCurve.ts`) to keep application-specific actions out of this
+   * generic adapter. The UI never calls this directly; application code must compose on the
+   * adapter's safe methods (`shield` / `transfer` / `unshield` / `register`) or a dedicated
+   * higher-level adapter. The `build` callback can only express SDK builder actions
+   * (with/register/surplusTo/invoke) — never arbitrary calldata execution.
    */
   async executeBuilder(
     user: Strk20User,

@@ -61,6 +61,9 @@ function baseInput(over: Partial<ExecuteIntentInput> = {}): ExecuteIntentInput {
     analysisBalances: balances(),
     currentBalances: balances(),
     resolvePrices: vi.fn(async () => freshPrices()),
+    // The authoritative Wallet Core session wallet (the destination must be this or server-approved).
+    authoritativeWalletAddress: DEST,
+    serverAllowedDestinations: [],
     executeTransfer: vi.fn(async () => ({ transactionHash: '0xabc' })),
     now: NOW,
     ...over,

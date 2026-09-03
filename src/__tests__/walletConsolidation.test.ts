@@ -239,3 +239,20 @@ describe("STRK20 adapter never monkey-patches third-party objects", () => {
     expect(adapter).not.toContain("originals");
   });
 });
+describe("generic adapter composition boundary (item 12)", () => {
+  it("executeBuilder is used ONLY by the private-curve adapter — never by UI/app modules", () => {
+    const dirs = ["app", "components", "context", "wallet", "services", "ai"];
+    const files: string[] = [];
+    for (const dir of dirs) {
+      for (const f of walk(join(__dirname, "..", dir))) files.push(f);
+    }
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      // No app/UI/service module may invoke the generic adapter's raw builder execution.
+      expect(source, `${file} must not call executeBuilder`).not.toContain(".executeBuilder(");
+    }
+    // The only sanctioned consumer is the launchpad private-curve adapter.
+    const curve = readFileSync(join(__dirname, "..", "privacy", "strk20", "privateCurve.ts"), "utf8");
+    expect(curve).toContain("adapter.executeBuilder(");
+  });
+});

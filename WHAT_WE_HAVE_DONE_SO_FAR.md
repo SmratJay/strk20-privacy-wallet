@@ -1832,3 +1832,33 @@ launchpad/extended gated, allowance decimals, no monkey-patching. Full suite:
 **563 passed, 1 skipped** (live acceptance skips honestly). `npm run typecheck`, `npm test`,
 `npm run build` all pass. Browser-verified: fresh gate shows Create/Import only (no Google /
 "Connect your privacy wallet" / "Install Ready"), create → dashboard, settings shows Orrange.
+
+## 📅 Thursday, September 03, 2026 — 16:52:42 IST
+### Final pre-Stage-3B hardening — one wallet, one trust model
+
+#### 🔴 [BIG CHANGE] — AI / server trust model: client-claimed addresses can NEVER authorize execution
+
+**Detailed Technical Explanation.**
+- `executeIntent` (the ExecutionRouter) gained two fields: `authoritativeWalletAddress` (the actual
+  Wallet Core session account from `WalletRuntime.getState().account`) and `serverAllowedDestinations`
+  (the server-configured `AI_ALLOWED_DESTINATIONS`, returned by `/api/ai/analyze`).
+- Added a hard **destination-authorization** gate (step 7b): the transfer recipient must be the
+  authoritative wallet's own address or a server-approved destination. A client-claimed address
+  injected into a (possibly malicious) analysis can no longer authorize execution — it is rejected
+  with `UNAUTHORIZED_DESTINATION` before any signature is produced. `analysis ≠ authorization ≠
+  execution` is now explicit in code and docs.
+- The legacy `executeProposal` adapter threads the same fields; the treasury page passes the
+  runtime session address as the authoritative wallet.
+- Tests: arbitrary client-claimed address rejected even when the (polluted) policy allows it;
+  server-approved destination executes; wallet-changed identity rejected; passing verdict alone
+  never executes an unapproved destination.
+
+#### 🟢 [SMALL CHANGE] — Generic adapter composition boundary
+
+- `Strk20Adapter.executeBuilder` documented as the INTERNAL composition primitive for higher-level
+  adapters only (used solely by `privateCurve.ts`), not a UI/public API. Source guard test asserts
+  no app/UI/service module calls it.
+
+**Verification.** Full suite: **569 passed, 1 skipped** (live acceptance skips honestly).
+`npm run typecheck`, `npm test`, `npm run build` all pass; real Sepolia suite 6 passed + 1 honest
+skip. `docs/WALLET_CORE.md` documents the trust model (§16g).

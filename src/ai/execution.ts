@@ -25,6 +25,7 @@ export type ExecutionFailureReason =
   | 'STATE_CHANGED'
   | 'POLICY_REJECTED'
   | 'AMOUNT_INVALID'
+  | 'UNAUTHORIZED_DESTINATION'
   | 'EXECUTION_FAILED'
   | 'SHADOW_UNAVAILABLE';
 
@@ -60,6 +61,17 @@ export interface ExecuteIntentInput {
   currentBalances: PrivateBalanceRow[];
   /** Resolve FRESH prices keyed by raw lowercase token address. */
   resolvePrices: () => Promise<Record<string, AssetPrice>>;
+  /**
+   * The authoritative Wallet Core session account address (WalletRuntime.getState().account).
+   * Client-claimed analysis addresses are ADVISORY ONLY and can NEVER authorize execution — the
+   * destination must be THIS wallet's own address or an explicit server-approved destination.
+   */
+  authoritativeWalletAddress: string;
+  /**
+   * Server-configured approved external destinations (AI_ALLOWED_DESTINATIONS), canonicalized.
+   * The ONLY way a private transfer may target an address other than the active wallet.
+   */
+  serverAllowedDestinations?: string[];
   /** The Wallet Core STRK20 privateTransfer path (WalletRuntime → WalletPrivacySession). Never anything else. */
   executeTransfer: (opts: { amountBase: bigint; token: string; recipient: string }) => Promise<{ transactionHash: string }>;
   /** Wall-clock override for deterministic tests. */
@@ -199,6 +211,25 @@ export async function executeIntent(input: ExecuteIntentInput): Promise<Executio
       ok: false,
       reason: 'POLICY_REJECTED',
       detail: failed || 'The policy rejected this action against your current state.',
+    };
+  }
+
+  // 7b. DESTINATION AUTHORIZATION (the hard security gate).
+  // The analysis/plan addresses are client-claimed ADVISORY inputs — they can never authorize
+  // execution. The destination MUST be the ACTUAL Wallet Core session wallet's own address, or an
+  // explicit server-configured approved destination. A malicious client-claimed address in the
+  // analysis can never authorize a transfer to it.
+  const dest = canonicalToken(input.intent.recipient);
+  const selfDest = canonicalToken(input.authoritativeWalletAddress);
+  const serverApproved = (input.serverAllowedDestinations ?? []).some(
+    (d) => canonicalToken(d) === dest,
+  );
+  if (dest !== selfDest && !serverApproved) {
+    return {
+      ok: false,
+      reason: 'UNAUTHORIZED_DESTINATION',
+      detail:
+        'The destination is neither the active wallet nor a server-approved destination. Re-run the analysis from the current wallet.',
     };
   }
 

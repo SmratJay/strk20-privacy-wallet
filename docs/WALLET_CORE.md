@@ -552,6 +552,21 @@ WalletPrivacySession → Strk20Adapter → STRK20 SDK (privacy)
 - There is no server-side wallet session; the AI analyze route accepts client-claimed Wallet
   Core addresses and the execution gate re-checks current state + requires the user's signature.
 
+## 16g. AI / server trust model (analysis ≠ authorization ≠ execution)
+
+- `/api/ai/analyze` accepts client-claimed `userAddress` / `privateTreasuryAddress` for **advisory
+  analysis only** (`verification: 'client-claimed'`). It is never treated as authenticated
+  identity.
+- Execution is gated by the **ExecutionRouter** (`src/ai/execution.ts`), which re-checks fresh
+  state (balances unchanged), fresh prices, guardrail-snapshot integrity, re-runs the
+  deterministic policy, AND enforces a hard **destination-authorization** gate: the recipient must
+  be the authoritative Wallet Core session account (`WalletRuntime.getState().account`) or an
+  explicit server-configured destination (`AI_ALLOWED_DESTINATIONS`, returned by the API as
+  `serverAllowedDestinations`). A client-claimed address can never authorize a transfer to it —
+  rejected with `UNAUTHORIZED_DESTINATION` before any signature is produced.
+- Every value-movement operation is signed ONLY by the Wallet Core local signer
+  (`WalletRuntime.send` / `WalletRuntime.privateTransfer`).
+
 ## 17. Stage 3B+ boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution
