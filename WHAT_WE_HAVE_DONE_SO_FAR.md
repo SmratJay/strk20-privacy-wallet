@@ -1463,3 +1463,44 @@ actual product at `/wallet` and `/send`. Legacy runtimes remain compatibility-on
 **Verification.** `npm run typecheck` clean; `npm test` → 58 files / **577 tests** pass (14 new
 runtime tests); `npm run build` succeeds (`/wallet` + `/send` on Wallet Core). Real Sepolia
 integration tests still pass.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 11:07:28 IST
+
+### 🔴 [BIG CHANGE] — STAGE 2.5 FINAL POLISH: runtime hardening
+
+**Context.** Final polish of the Wallet Core primary runtime. No Stage 3. Goals: no stale async
+state, no raw private key in UI-facing state, clean /wallet + /send, network/session consistency.
+
+**Detailed technical explanation.**
+
+- **Stale-async protection.** `WalletRuntime` now guards every async flow (`refreshDeployment`,
+  `refreshPublicBalances`, `create`, `import`, `unlock`, `send`) with a
+  `(walletId, network, generation)` guard. Network switch, wallet switch, lock, delete, and reload
+  bump the generation and clear the session, so a stale result from wallet A / network A can never
+  update state after switching to wallet B / network B or locking.
+- **Safe UI-facing state.** `getState()` now returns a SAFE view
+  (`network, wallets, selectedWalletId, account { walletId, address, accountType, publicKey },
+  isUnlocked, deploymentStatus, publicBalances, recentTransactions, error`). The raw
+  `UnlockedWallet` (secret, signer, account) lives in a private field; it is never exposed through
+  React state. Methods unchanged: `create/import/unlock/lock/deleteWallet/selectWallet/send/
+  refreshDeployment/refreshPublicBalances`. New test proves the view JSON never contains the raw
+  private key.
+- **`/wallet` cleaned.** Removed all `WalletContext` / `PrivyWalletContext` / `useStarknetWallet`
+  / `ConnectWalletModal` / `ConnectGate` / Wallet API dependencies. Recent activity is now the
+  runtime's in-memory, session-scoped list (no legacy WalletContext). Visual design preserved
+  (create/import, stored-wallet list, selected account, network, deployment, public balances,
+  send/receive, lock/delete).
+- **`/send` cleaned.** Public send is always Wallet Runtime → Wallet Core local signer. Legacy /
+  Privy state only toggles the explicitly-labeled STRK20 private compatibility lane — it never
+  decides the active public wallet.
+- **Network/session consistency.** Network switch clears session + reloads registry; wallet
+  switch locks old session; lock cannot be undone by pending async work; reload keeps wallets but
+  never restores an unlocked session; balances/deployment correspond to active walletId + network.
+- **Guards.** Added architectural tests: `/wallet` page has no legacy wallet dependency; runtime
+  source has no Privy / legacy wallet-connect imports; runtime never uses the legacy no-walletId
+  unlock path.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 59 files / **584 tests** pass (7 new
+stale/safety tests); `npm run build` succeeds. Real Sepolia integration tests still pass.

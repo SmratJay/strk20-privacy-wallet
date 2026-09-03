@@ -52,10 +52,10 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   // The PRIMARY account shown in the header is the Wallet Core runtime session (self-custodial,
   // no Privy). The legacy `wallet` (Ready extension / Privy) is only a fallback for legacy pages.
   const runtime = useWalletRuntime();
-  const runtimeSession = runtime.getState().session;
-  const primaryAddress = runtimeSession?.address ?? wallet.address;
-  const primaryName = runtimeSession ? 'Orrange' : wallet.walletName || 'Wallet';
-  const hasPrimaryAccount = Boolean(runtimeSession || wallet.isConnected);
+  const runtimeAccount = runtime.getState().account;
+  const primaryAddress = runtimeAccount?.address ?? wallet.address;
+  const primaryName = runtimeAccount ? 'Orrange' : wallet.walletName || 'Wallet';
+  const hasPrimaryAccount = Boolean(runtimeAccount || wallet.isConnected);
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<AppTheme>('light');
@@ -138,7 +138,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             </button>
             {hasPrimaryAccount ? (
               <button type="button" onClick={handleCopyAddress} className="product-account-button" title="Copy wallet address">
-                <span className="product-account-avatar">{runtimeSession ? '◌' : (wallet.walletIcon || '◌')}</span>
+                <span className="product-account-avatar">{runtimeAccount ? '◌' : (wallet.walletIcon || '◌')}</span>
                 <span className="product-account-copy">
                   <strong>{primaryName}</strong>
                   <span>{copied ? <><Check aria-hidden="true" /> Copied</> : shortenAddress(primaryAddress!, 5)}</span>

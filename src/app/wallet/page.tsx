@@ -2,14 +2,12 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, ArrowDownLeft, Shield, ChevronRight, Copy, Check, Repeat, Lock } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Shield, Copy, Check, Repeat, Lock, ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
-import { TransactionList } from '@/components/wallet/TransactionList';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
-import { useWallet } from '@/context/WalletContext';
 import { priceService } from '@/services/priceService';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
 
@@ -26,25 +24,24 @@ const greeting = () => {
 };
 
 /**
- * Primary Orrange wallet page — Wallet Core runtime (create/import/unlock/select), no Privy.
- * Public balances come from the runtime (RPC). STRK20 private capabilities remain legacy lanes.
+ * Primary Orrange wallet page — Wallet Core runtime (create/import/unlock/select), no Privy, no
+ * legacy WalletContext. Public balances come from the runtime (RPC). STRK20 private capabilities
+ * remain legacy lanes.
  */
 export default function WalletPage() {
   const runtime = useWalletRuntime();
   const state = runtime.getState();
-  const session = state.session;
-  // Legacy context kept ONLY for the display-only recent-activity list.
-  const { transactions } = useWallet();
+  const account = state.account;
 
   const [usdTotal, setUsdTotal] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (session) void runtime.refreshPublicBalances();
-  }, [runtime, session?.walletId]);
+    if (account) void runtime.refreshPublicBalances();
+  }, [runtime, account?.walletId]);
 
   useEffect(() => {
-    if (!session) {
+    if (!account) {
       setUsdTotal(null);
       return;
     }
@@ -69,16 +66,16 @@ export default function WalletPage() {
     return () => {
       cancelled = true;
     };
-  }, [session, state.publicBalances]);
+  }, [account, state.publicBalances]);
 
   const handleCopy = useCallback(async () => {
-    if (!session) return;
-    const ok = await copyToClipboard(session.address);
+    if (!account) return;
+    const ok = await copyToClipboard(account.address);
     if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
-  }, [session]);
+  }, [account]);
 
   return (
     <AppShell>
@@ -88,19 +85,19 @@ export default function WalletPage() {
             <div className="product-eyebrow">ORRANGE / WALLET</div>
             <h1 className="product-page-title">{greeting()}</h1>
             <p className="product-page-description">
-              {session ? 'Your private money, at a glance.' : 'Create or import your Starknet wallet.'}
+              {account ? 'Your private money, at a glance.' : 'Create or import your Starknet wallet.'}
             </p>
           </div>
-          {session && (
+          {account && (
             <div className="product-summary-address" title="Orrange wallet address">
-              Orrange · {shortenAddress(session.address, 6)}
+              Orrange · {shortenAddress(account.address, 6)}
             </div>
           )}
         </div>
 
-        {!session && <WalletCoreGate />}
+        {!account && <WalletCoreGate />}
 
-        {session && (
+        {account && (
           <>
             <section className="product-summary" aria-label="Account balance summary">
               <div className="product-summary-top">
@@ -121,7 +118,7 @@ export default function WalletPage() {
                 <div className="product-card p-5">
                   <div className="text-xs uppercase tracking-widest text-zinc-500 mb-3">Account</div>
                   <dl className="space-y-2 text-sm">
-                    <Row label="Type" value={session.accountType} />
+                    <Row label="Type" value={account.accountType} />
                     <Row label="Network" value={state.network} />
                     <Row label="Deployment" value={state.deploymentStatus} />
                     <Row label="Private mode" value="signer ready (STRK20 legacy lanes)" />
@@ -181,10 +178,10 @@ export default function WalletPage() {
               </div>
               <div className="flex items-center gap-4">
                 <div className="bg-white p-2 rounded-lg shrink-0">
-                  <QRCodeSVG value={session.address} size={112} />
+                  <QRCodeSVG value={account.address} size={112} />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-mono text-xs text-zinc-300 break-all">{session.address}</div>
+                  <div className="font-mono text-xs text-zinc-300 break-all">{account.address}</div>
                   <button
                     onClick={handleCopy}
                     className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#F08A3C]"
@@ -207,13 +204,27 @@ export default function WalletPage() {
                   View all <ChevronRight className="w-4 h-4" />
                 </Link>
               </div>
-              <div className="mt-4"><TransactionList transactions={transactions} limit={3} /></div>
+              {state.recentTransactions.length === 0 ? (
+                <p className="text-xs text-zinc-500 mt-3">
+                  No activity yet this session. Activity tracking for the Wallet Core runtime is
+                  in-memory and session-scoped.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-2">
+                  {state.recentTransactions.map((tx) => (
+                    <li key={tx.hash} className="flex items-center justify-between text-xs">
+                      <span className="font-mono text-zinc-400">{shortenAddress(tx.hash, 8)}</span>
+                      <span className="text-zinc-500">{new Date(tx.at).toLocaleTimeString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <div className="product-card-flat p-5 sm:p-6 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm">
                 <Lock className="w-4 h-4 text-zinc-500" />
-                <span className="text-zinc-300">Wallet unlocked · {session.accountType}</span>
+                <span className="text-zinc-300">Wallet unlocked · {account.accountType}</span>
               </div>
               <div className="flex gap-2">
                 <button
@@ -223,7 +234,7 @@ export default function WalletPage() {
                   Lock
                 </button>
                 <button
-                  onClick={() => runtime.deleteWallet(session.walletId)}
+                  onClick={() => runtime.deleteWallet(account.walletId)}
                   className="rounded-md border border-red-900 px-3 py-1.5 text-sm text-red-300"
                 >
                   Delete local state

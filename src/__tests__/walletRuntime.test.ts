@@ -42,7 +42,8 @@ describe("runtime lifecycle", () => {
     const { runtime } = makeRuntime();
     const s = runtime.getState();
     expect(s.wallets).toHaveLength(0);
-    expect(s.session).toBeNull();
+    expect(s.isUnlocked).toBe(false);
+    expect(s.account).toBeNull();
     expect(s.selectedWalletId).toBeNull();
   });
 
@@ -50,7 +51,8 @@ describe("runtime lifecycle", () => {
     const { runtime, storage } = makeRuntime();
     const wallet = await createdWallet(runtime);
     const s = runtime.getState();
-    expect(s.session?.walletId).toBe(wallet.walletId);
+    expect(s.account?.walletId).toBe(wallet.walletId);
+    expect(s.isUnlocked).toBe(true);
     expect(s.wallets).toHaveLength(1);
     expect(s.selectedWalletId).toBe(wallet.walletId);
     expect(readWalletId(storage)).toContain(wallet.walletId);
@@ -61,7 +63,7 @@ describe("runtime lifecycle", () => {
     const secret = canonicalizeSecret(generateSecretKey());
     const wallet = await runtime.import({ accountType: "ready-v0.4.0", secret, password: PASSWORD });
     expect(getPublicKey(secret).toLowerCase()).toBe(wallet.publicKey.toLowerCase());
-    expect(runtime.getState().session?.walletId).toBe(wallet.walletId);
+    expect(runtime.getState().account?.walletId).toBe(wallet.walletId);
   });
 
   it("import Braavos (ownership verified) → same address appears", async () => {
@@ -87,7 +89,7 @@ describe("runtime lifecycle", () => {
       address,
     });
     expect(wallet.address.toLowerCase()).toBe(address.toLowerCase());
-    expect(braavosRuntime.getState().session?.walletId).toBe(wallet.walletId);
+    expect(braavosRuntime.getState().account?.walletId).toBe(wallet.walletId);
   });
 
   it("multiple wallets: selecting walletId + unlock loads the exact wallet", async () => {
@@ -101,7 +103,7 @@ describe("runtime lifecycle", () => {
     runtime.lock();
     runtime.selectWallet(walletB.walletId);
     expect(runtime.getState().selectedWalletId).toBe(walletB.walletId);
-    expect(runtime.getState().session).toBeNull();
+    expect(runtime.getState().account).toBeNull();
 
     const unlocked = await runtime.unlock(PASSWORD);
     expect(unlocked.walletId).toBe(walletB.walletId);
@@ -115,21 +117,22 @@ describe("runtime lifecycle", () => {
     const reloaded = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
     const s = reloaded.getState();
     expect(s.wallets).toHaveLength(1);
-    expect(s.session).toBeNull();
+    expect(s.isUnlocked).toBe(false);
+    expect(s.account).toBeNull();
   });
 
   it("lock → signing unavailable; unlock → exact wallet restored", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
     runtime.lock();
-    expect(runtime.getState().session).toBeNull();
+    expect(runtime.getState().account).toBeNull();
     await expect(runtime.send({ contractAddress: "0x1", entrypoint: "noop", calldata: [] } as never)).rejects.toThrow(/locked/i);
 
     const restored = await runtime.unlock(PASSWORD);
     expect(restored.walletId).toBe(wallet.walletId);
     // Signing works again.
-    const session = runtime.getState().session!;
-    (session.account as any).execute = vi.fn(async () => ({ transaction_hash: "0xtx" }));
+    const restoredAccount = restored.account;
+    (restoredAccount as any).execute = vi.fn(async () => ({ transaction_hash: "0xtx" }));
     const result = await runtime.send({ contractAddress: "0x1", entrypoint: "noop", calldata: [] } as never);
     expect(result.transactionHash).toBe("0xtx");
   });
@@ -137,9 +140,8 @@ describe("runtime lifecycle", () => {
   it("send uses the Wallet Core local-signer account", async () => {
     const { runtime } = makeRuntime();
     const wallet = await createdWallet(runtime);
-    const session = runtime.getState().session!;
     const execute = vi.fn(async () => ({ transaction_hash: "0xtxlocal" }));
-    (session.account as any).execute = execute;
+    (wallet.account as any).execute = execute;
     (wallet.account as any).execute = execute;
 
     const call = {
@@ -167,7 +169,8 @@ describe("runtime lifecycle", () => {
     runtime.deleteWallet(wallet.walletId);
     const s = runtime.getState();
     expect(s.wallets).toHaveLength(0);
-    expect(s.session).toBeNull();
+    expect(s.isUnlocked).toBe(false);
+    expect(s.account).toBeNull();
     expect(s.selectedWalletId).toBeNull();
   });
 });
@@ -223,7 +226,7 @@ describe("runtime authority + Privy isolation", () => {
   it("the runtime never uses the legacy no-walletId unlock path (source-level)", () => {
     const source = readFileSync(join(__dirname, "..", "wallet", "runtime.ts"), "utf8");
     // The only unlockWallet call site in the runtime always passes the exact walletId.
-    const callSite = source.match(/unlockWallet\(\{\s*network:\s*this\.state\.network,\s*walletId,/);
+    const callSite = source.match(/unlockWallet\(\{\s*network:\s*this\.view\.network,\s*walletId,/);
     expect(callSite).not.toBeNull();
     // It never calls the legacy two-argument form without a walletId.
     expect(source).not.toMatch(/unlockWallet\(\{\s*network:\s*[^}]*?password:[\s\S]*?\}\)\s*(?!,)/);
@@ -237,6 +240,22 @@ describe("runtime authority + Privy isolation", () => {
     expect(source).not.toContain("usePrivyWallet");
     expect(source).not.toContain("useStarknetWallet");
     expect(source).not.toContain("PrivyWalletContext");
+  });
+
+  it("the primary /wallet page has no legacy wallet dependency", () => {
+    const source = readFileSync(join(__dirname, "..", "app", "wallet", "page.tsx"), "utf8");
+    const forbidden = [
+      "@/context/PrivyWalletContext",
+      "@/context/WalletContext",
+      "@/hooks/useStarknetWallet",
+      "@/services/strk20WalletApiService",
+      "ConnectWalletModal",
+      "ConnectGate",
+      "usePrivyWallet",
+    ];
+    for (const needle of forbidden) {
+      expect(source, `/wallet must not import ${needle}`).not.toContain(needle);
+    }
   });
 });
 

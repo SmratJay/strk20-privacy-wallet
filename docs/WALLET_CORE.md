@@ -336,6 +336,28 @@ Wallet Core account/signer to the STRK20 adapter. Public balances flow via RPC (
 Privy-free). Private STRK20 (viewing keys, proofs) still requires the legacy Ready/Wallet API lane
 until a Wallet Core-native viewing-key derivation lands (later stage).
 
+### 14e. Runtime hardening (final polish)
+
+- **Safe UI-facing state.** `WalletRuntime.getState()` returns a SAFE view
+  (`network, wallets, selectedWalletId, account { walletId, address, accountType, publicKey },
+  isUnlocked, deploymentStatus, publicBalances, recentTransactions, error`). The raw
+  `UnlockedWallet` (secret, signer, account) is held in a private field and never enters React
+  state. A test asserts the view JSON never contains the raw private key.
+- **Stale-async protection.** Every async flow (`refreshDeployment`, `refreshPublicBalances`,
+  `create`, `import`, `unlock`, `send`) captures a `(walletId, network, generation)` guard and
+  drops its result if the guard is stale (network/wallet switched, or locked, while awaiting).
+  Regression-tested: stale deployment/balance results after wallet switch, network switch, and
+  lock are ignored.
+- **Consistency.** Network switch clears the session and reloads that network's registry; wallet
+  switch locks the old session and requires unlock; lock clears the session and cannot be undone
+  by pending async work; reload keeps wallets but never restores an unlocked session; balances and
+  deployment always correspond to the active `walletId + network`.
+- **`/wallet` is clean.** It imports no `WalletContext`, `PrivyWalletContext`, `useStarknetWallet`,
+  `ConnectWalletModal`, `ConnectGate`, or Wallet API connect code (architectural guard test).
+  Recent activity is now the runtime's in-memory, session-scoped list (no legacy WalletContext
+  dependency). `/send` public sends are always Wallet Runtime → Wallet Core; legacy/Privy state
+  only toggles the explicitly-labeled STRK20 private compatibility lane.
+
 ## 15. Stage 3 boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution

@@ -26,13 +26,16 @@ function SendContent() {
 
   const legacy = useWallet();
   const privy = usePrivyWallet();
+  // NOTE: legacy/Privy state NEVER decides the active PUBLIC wallet (that is always the Wallet
+  // Runtime session). It only toggles the availability of the explicitly-labeled STRK20 private
+  // compatibility lane below.
   const legacyLaneAvailable = legacy.wallet.isConnected || (privy.authenticated && privy.account !== null);
 
   const modeParam = searchParams.get('mode');
   const privateMode = modeParam === 'deposit' ? 'DEPOSIT' : modeParam === 'withdraw' ? 'WITHDRAW' : 'SEND';
   const [tab, setTab] = useState<'public' | 'private'>(privateMode === 'SEND' ? 'public' : 'private');
 
-  if (!state.session) {
+  if (!state.isUnlocked) {
     return (
       <div className="product-page">
         <div className="product-page-intro">

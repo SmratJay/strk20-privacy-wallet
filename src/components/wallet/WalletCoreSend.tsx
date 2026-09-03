@@ -15,7 +15,7 @@ import { getNetworkConfig } from '@/config/networks';
 export const WalletCoreSend: React.FC = () => {
   const runtime = useWalletRuntime();
   const state = runtime.getState();
-  const session = state.session!;
+  const account = state.account!;
 
   const networkConfig = getNetworkConfig(state.network);
   const strk = networkConfig.tokens.find((t) => t.symbol === 'STRK') ?? networkConfig.tokens[0];
@@ -51,7 +51,7 @@ export const WalletCoreSend: React.FC = () => {
     <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
       <h2 className="text-sm font-semibold text-zinc-200 mb-1">Send STRK</h2>
       <p className="text-xs text-zinc-500 mb-4">
-        Signed locally by your Orrange wallet ({session.accountType}) — no third party involved.
+        Signed locally by your Orrange wallet ({account.accountType}) — no third party involved.
       </p>
 
       {error && <div className="rounded-md border border-red-900 bg-red-950/40 text-red-300 text-sm p-3 mb-4">{error}</div>}
