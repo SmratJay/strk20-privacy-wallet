@@ -1542,3 +1542,122 @@ private transfer / withdraw), all signed/managed by Wallet Core. No NEAR/TEE/cro
 
 **Verification.** `npm run typecheck` clean; `npm test` → 60 files / **602 tests** pass; `npm run
 build` succeeds. Real Sepolia integration tests pass.
+
+## 📅 Thursday, September 03, 2026 — 13:03:23 IST
+### Stage 3A.5 — Restore the full wallet dashboard + harden STRK20 privacy (Wallet Core)
+
+#### 🔴 [BIG CHANGE] — Fix the `/wallet` Unlock → Dashboard state-propagation regression
+
+**Root cause (found by reproducing the exact UI flow in a headless browser, NOT by assumption).**
+`WalletRuntimeProvider` notified React via a `useReducer` `forceUpdate`. Because the provider
+renders `{children}` with a *stable element reference*, React bailed out of re-rendering the page
+subtree — so `/wallet` stayed frozen on its first snapshot. After a successful unlock the runtime
+was unlocked (the header even showed the account, because `AppShell` happened to re-render via
+other context subscriptions) but the page never re-rendered to the dashboard: "clicking Unlock
+does nothing". This also affected the create flow.
+
+**Detailed Technical Explanation.**
+- `src/context/WalletRuntimeContext.tsx`: `useWalletRuntime()` now returns `{ runtime, state }`
+  and subscribes through `useSyncExternalStore(runtime.subscribe, () => runtime.getState(), …)`.
+  Every component that calls the hook re-renders when the runtime emits, independent of any
+  `{children}` bail-out. `WalletRuntime.getState()` returns a stable snapshot reference (the view
+  object is replaced wholesale on every mutation), which is what `useSyncExternalStore` requires.
+- All consumers updated: `app/wallet/page.tsx`, `app/send/page.tsx`, `AppShell.tsx`,
+  `WalletCoreGate.tsx`, `WalletCoreSend.tsx`, `WalletCorePrivacyPanel.tsx`.
+- Regression test `walletStage3a.test.ts`: stored wallet → unlock → `isUnlocked`/account
+  transition with the exact `walletId`/`address`; wrong password keeps the gate + readable error;
+  source-level check that the hook uses `useSyncExternalStore` and the page derives account from
+  the reactive snapshot.
+
+#### 🔴 [BIG CHANGE] — Full Wallet Core dashboard + first-use deployment lifecycle
+
+**Detailed Technical Explanation.**
+- `/wallet` dashboard now derives 100% of its state from `WalletRuntime` (single source of truth):
+  account address/type/network, deployment badge, Public + Private balances, STRK20 privacy status,
+  public send, shield / private send / withdraw, activity, wallet selector, Lock, Delete.
+- `WalletRuntime.deploy(options)` runs the Wallet Core deployment state machine and surfaces the
+  lifecycle `pending → finalizing → deployed` via `DeployAccountOptions.onStatus`. Fail-closed:
+  unknown probe refuses to deploy; RPC error → `unknown`; finality timeout reconciles and never
+  claims `deployed` without an on-chain class-hash probe. `walletCore.ts` `deployAccount` gained an
+  `onStatus` callback.
+- New runtime test seams: `accountAdapterFactory` (deterministic deploy/probe for tests).
+- UI badges: `Ready` / `Deployment pending` / `Deploying…` / `Confirming…` / `Deployment failed` /
+  `Unknown` with a "Deploy account" action.
+- `decryptSecret` now reports "Incorrect password or corrupted keystore." instead of leaking the
+  underlying WebCrypto error (better unlock UX, honest).
+
+#### 🔴 [BIG CHANGE] — Honest first-use STRK20 privacy setup + private balances
+
+**Detailed Technical Explanation.**
+- Fixed a real client-bundle bug: `resolveWalletPrivacyConfig` read env through an aliased
+  `env = process.env` default parameter, which Next.js does NOT statically inline into client
+  bundles — so privacy always looked "unavailable" in the browser even though
+  `NEXT_PUBLIC_STRK20_*` were configured. It now reads literal `process.env.NEXT_PUBLIC_*` member
+  expressions (inlined by Next) while still honoring an explicit `env` argument for tests.
+- `WalletRuntime.refreshPrivacyRegistration()` probes the wallet's viewing-key registration via
+  the STRK20 discovery service and reports honest state: `available + registered`,
+  `available + not registered yet (first shield auto-registers)`, or `error + reason`. Discovery
+  and balance calls are time-bounded (`withTimeout`, 20 s) so a hung operator surfaces
+  "Privacy setup unavailable: … timed out" instead of spinning forever.
+- Private balances come from `WalletPrivacySession → wallet-native viewing key → STRK20
+  discovery`. Unavailable privacy never becomes a fake zero row; stale results are dropped by the
+  `(walletId, network, generation)` guard on lock / wallet switch.
+
+#### 🔴 [BIG CHANGE] — Privacy-operation lifecycle + serialization
+
+**Detailed Technical Explanation.**
+- `state.privacyOp` exposes an honest lifecycle for the latest privacy operation:
+  `preparing → approving → proving → submitted → pending → success/reverted/rejected/failed`.
+  The runtime submits the tx, then polls the RPC for finality and only reports `success` after
+  on-chain reconciliation confirms it. A finality timeout stays honestly `pending`.
+- `WalletPrivacySession` serializes all mutating privacy ops (shield / privateTransfer / withdraw
+  / register) behind a single async mutex (smallest promise-chain tail), so concurrent operations
+  can never race on the cached private-transfers context or pool nonce. Read-only balance discovery
+  stays concurrent.
+- Approval phases surface through `onApprovalStatus` (adapter allowance callback) forwarded from
+  the runtime.
+- Tests: two concurrent shields — B waits for A; stale shield/private-balance results ignored
+  after lock/switch; op lifecycle phases.
+
+#### 🔴 [BIG CHANGE] — STRK20 operational hardening (viewing key / logging / cache / fees)
+
+**Detailed Technical Explanation.**
+- **A. Viewing key internal-only.** `WalletPrivacySession.getViewingKey()` removed — no public
+  accessor. The adapter receives the key via an internal provider closure. Runtime/UI state never
+  contains it (asserted).
+- **C. Production logging sanitized.** `Strk20Adapter` + `strk20/allowance.ts` now use a
+  dev-only logger (no-op when `NODE_ENV === "production"`, so it is dead-code-eliminated from
+  production bundles). No wallet address, prover/discovery URL, amount, calldata, proof, note,
+  viewing key, or private balance is ever logged; stage-level diagnostics only.
+- **D. Cache-context safety.** `transfersCache` key now includes
+  `chainId | pool | prover | discovery | feeToken | address` so a cached STRK20 context can never
+  be reused across incompatible networks/pools/configurations.
+- **E. Fee/resource-bound fallback.** Real fee estimation stays preferred; the gas-price fallback
+  (capped amounts: L2 1_210_000_000, L1 1, L1-data 10_000; 2× price headroom) is only used when the
+  node rejects the PROOF0 proof version; insufficient-resource failures are never swallowed.
+  Tests cover register/shield/transfer/withdraw shapes + both fee paths + bounded fallback.
+- **F. Viewing-key derivation frozen.** `ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1`
+  (`canonicalize(poseidon(masterSecret, starknetKeccak(domain:<network>)))`) retained and fully
+  documented (input material, domain/network separation, output canonicalization, recovery).
+  Changing it now would orphan wallets whose viewing key is already registered in the pool — no
+  second derivation introduced.
+- **G/H. SDK + discovery honesty.** Vendored SDK documented as
+  `@starkware-libs/starknet-privacy-sdk 0.14.3-rc.5` (PRIVACY-0.14.3-RC.5). Discovery currently
+  goes **direct HTTPS**; the vendored SDK exposes an OHTTP client and the *proving* provider
+  accepts `ohttp`, but the discovery provider config does not expose OHTTP in this revision — no
+  custom OHTTP implementation invented. Discovery operator can observe the wallet IP/address and
+  viewing-key-scoped queries today. `PrivateIdentity.id` documented as an app-level namespace, not
+  an anonymity primitive.
+
+**Tests.** `walletStage3a.test.ts` (26 tests) + `strk20AdapterHardening.test.ts` (11 tests):
+unlock→dashboard transition, deployment lifecycle + fail-closed, privacy registration honesty,
+no-fake-zero, op serialization, stale isolation, no public getViewingKey, logging hygiene,
+cache-context safety, bounded fee fallback, `/wallet` no-Privy boundary. Full suite:
+**641 tests pass.**
+
+**Real Sepolia / browser verification.** Headless-Chrome reproduction of the exact reported flow
+now works end to end: create → dashboard (Deployment pending, PUBLIC/PRIVATE, Lock) → lock → gate
+→ unlock → dashboard with the correct address. With `NEXT_PUBLIC_STRK20_*` configured, the
+dashboard probes the real discovery service and honestly reports "Privacy setup unavailable:
+STRK20 registration discovery timed out" from this environment (discovery.orrange.xyz is not
+reachable from the sandbox; the prover endpoint is reachable). No fake zero, no fake privacy.

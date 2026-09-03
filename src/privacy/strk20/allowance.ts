@@ -39,6 +39,21 @@ export interface AllowanceResult {
 
 const U128_MAX = (1n << 128n) - 1n;
 
+/** Development-only diagnostic logger — never logs in production. */
+function isDev(): boolean {
+  try {
+    return typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
+  } catch {
+    return false;
+  }
+}
+const DEBUG = isDev();
+function debug(...args: unknown[]): void {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.debug("[Strk20Allowance]", ...args);
+}
+
 function accountProvider(account: AccountInterface): ProviderInterface {
   const provider = (account as unknown as { provider?: ProviderInterface }).provider;
   if (!provider) {
@@ -90,13 +105,6 @@ export async function readAllowance(
   return low + (high << 128n);
 }
 
-function allowanceParts(allowance: bigint): { low: string; high: string } {
-  return {
-    low: (allowance & U128_MAX).toString(),
-    high: (allowance >> 128n).toString(),
-  };
-}
-
 /**
  * Ensure the Privy account has approved enough STRK for the privacy pool to charge its fee.
  *
@@ -124,28 +132,9 @@ export async function ensurePrivacyPoolAllowance(
       ? requiredAmount
       : DEFAULT_STRK_ALLOWANCE_TARGET);
 
-  const log = (msg: string, data?: unknown) => {
-    // eslint-disable-next-line no-console
-    console.log(`[PrivyAllowance] ${msg}`, data === undefined ? "" : data);
-  };
-  const logErr = (msg: string, err: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[PrivyAllowance] ${msg}`,
-      err instanceof Error ? { message: err.message, stack: err.stack } : err,
-    );
-  };
-
-  log("provider", rpc);
-  log("owner", account.address);
-  log("token", tokenAddress);
-  log("spender", spender);
-  log("requiredAmount", requiredAmount.toString());
-  log("targetAllowance", target.toString());
-
+  debug("allowance check", { rpc });
   opts.onStatus?.("checking");
   const allowance = await readAllowance(provider, account.address, tokenAddress, spender);
-  log("initialAllowance", allowance.toString());
   if (allowance >= requiredAmount) {
     return { approved: false, allowance };
   }
@@ -161,24 +150,18 @@ export async function ensurePrivacyPoolAllowance(
     entrypoint: APPROVE_ENTRYPOINT,
     calldata: [spender, target, 0n],
   };
-  log(
-      "approve calldata",
-      JSON.stringify(approveCall.calldata.map((v) => (typeof v === "bigint" ? v.toString() : v))),
-    );
 
   let transactionHash: string;
   try {
-    log("account.execute start");
+    debug("approve execute start");
     const response = await account.execute(approveCall);
     transactionHash = response.transaction_hash;
-    log("account.execute returned transactionHash", transactionHash);
   } catch (err) {
-    logErr("account.execute FAILED", err);
+    debug("approve execute FAILED", { message: err instanceof Error ? err.message : err });
     throw new Error("Could not approve STRK spending for the privacy pool.");
   }
 
   opts.onStatus?.("submitted");
-  log("waitForTransaction start");
   let receipt: {
     execution_status?: string;
     finality_status?: string;
@@ -195,40 +178,28 @@ export async function ensurePrivacyPoolAllowance(
       transaction_failure_reason?: { revert_reason?: unknown };
     };
   } catch (err) {
-    logErr("waitForTransaction FAILED", err);
+    debug("approve waitForTransaction FAILED", { message: err instanceof Error ? err.message : err });
     throw new Error("Could not approve STRK spending for the privacy pool.");
   }
   const executionStatus = receipt?.execution_status ?? receipt?.status;
   const finalityStatus = receipt?.finality_status;
   const revertReason = receipt?.revert_reason ?? receipt?.transaction_failure_reason?.revert_reason;
-  log("receipt execution_status", executionStatus);
-  log("receipt finality_status", finalityStatus);
-  log("receipt revert_reason", revertReason ?? "(none)");
+  debug("approve receipt", { executionStatus, finalityStatus, revertReason: revertReason ?? "(none)" });
   if (executionStatus === "REVERTED" || executionStatus === "REJECTED") {
-    logErr("approve transaction reverted", revertReason ?? "(no revert reason)");
     throw new Error("Could not approve STRK spending for the privacy pool.");
   }
-  log("waitForTransaction complete");
   opts.onStatus?.("confirmed");
 
   // Authoritative on-chain gate: allowance must be >= fee. Re-read (briefly retrying in case the
   // node's "latest" lags the acceptance) before any privacy proof is allowed to start.
   let postAllowance = await readAllowance(provider, account.address, tokenAddress, spender);
-  log("postApprovalAllowance", postAllowance.toString());
-  log("postApprovalAllowance low", allowanceParts(postAllowance).low);
-  log("postApprovalAllowance high", allowanceParts(postAllowance).high);
 
   for (let attempt = 0; attempt < 3 && postAllowance < requiredAmount; attempt++) {
     await new Promise((r) => setTimeout(r, 2000));
     postAllowance = await readAllowance(provider, account.address, tokenAddress, spender);
-    log("postApprovalAllowance retry", postAllowance.toString());
   }
 
   if (postAllowance < requiredAmount) {
-    logErr(
-      "approve did not produce sufficient on-chain allowance",
-      { required: requiredAmount.toString(), actual: postAllowance.toString() },
-    );
     throw new Error("Could not approve STRK spending for the privacy pool.");
   }
 

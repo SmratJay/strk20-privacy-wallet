@@ -97,6 +97,38 @@ type CreatePrivateTransfersFn = (params: Record<string, unknown>) => PrivateTran
  */
 const PROVING_SAFETY_MARGIN = 10;
 
+/**
+ * DEVELOPMENT-ONLY DIAGNOSTIC LOGGER.
+ *
+ * Privacy operations are sensitive: they involve the wallet's address, viewing key, private notes,
+ * proofs, and amounts. NONE of that may appear in production logs. This logger:
+ *   - is a no-op when NODE_ENV === "production" (the check is statically inlined by Next.js, so
+ *     the logging code is dead-code-eliminated from production bundles);
+ *   - is used ONLY for stage-level lifecycle diagnostics — never for keys, notes, proofs, private
+ *     balances, secrets, raw calldata, or full prover/discovery URLs.
+ */
+function isDev(): boolean {
+  try {
+    return typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
+  } catch {
+    return false;
+  }
+}
+
+const DEBUG = isDev();
+
+function debug(...args: unknown[]): void {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.debug("[Strk20Adapter]", ...args);
+}
+
+function debugWarn(...args: unknown[]): void {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.warn("[Strk20Adapter]", ...args);
+}
+
 let createPrivateTransfersFn: CreatePrivateTransfersFn | null = null;
 let openNoteSymbol: unknown = null;
 
@@ -140,31 +172,32 @@ export class Strk20Adapter {
 
   constructor(config: Strk20AdapterConfig) {
     this.config = config;
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.constructor]", {
-      poolContractAddress: config.poolContractAddress,
-      chainId: config.chainId,
-      proverUrl: config.proverUrl,
-      discoveryUrl: config.discoveryUrl,
-      feeTokenAddress: config.feeTokenAddress ?? STRK_TOKEN_ADDRESS,
-    });
+    debug("adapter initialized", { chainId: config.chainId, rpc: "per-account" });
+  }
+
+  /**
+   * Cache a private-transfers context per (address + full STRK20 context). The key includes the
+   * chain id, pool, prover, discovery, and fee token so a cached context can NEVER be reused across
+   * incompatible networks/pools/configurations (a wrong-network private-transfers context would
+   * silently discover/prove against the wrong deployment).
+   */
+  private cacheKey(user: Strk20User): string {
+    return [
+      this.config.chainId,
+      this.config.poolContractAddress.toLowerCase(),
+      this.config.proverUrl.toLowerCase(),
+      this.config.discoveryUrl.toLowerCase(),
+      (this.config.feeTokenAddress ?? STRK_TOKEN_ADDRESS).toLowerCase(),
+      user.address.toLowerCase(),
+    ].join("|");
   }
 
   async getTransfers(user: Strk20User): Promise<PrivateTransfersLike> {
-    const key = user.address.toLowerCase();
+    const key = this.cacheKey(user);
     const existing = this.transfersCache.get(key);
     if (existing) return existing;
 
     const createPrivateTransfers = await loadCreatePrivateTransfers();
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.getTransfers]", {
-      userAddress: user.address,
-      provingProvider: { url: this.config.proverUrl, chainId: this.config.chainId },
-      discoveryProvider: { url: this.config.discoveryUrl },
-      poolContractAddress: this.config.poolContractAddress,
-      // The SDK discovery provider queries these endpoints BEFORE the prover is contacted.
-      discoveryPaths: ["/v1/sync/outgoing_state", "/v1/sync/incoming_state"],
-    });
     const transfers = createPrivateTransfers({
       account: { address: user.address, signer: user.account.signer },
       viewingKeyProvider: { getViewingKey: async () => user.viewingKey },
@@ -195,14 +228,7 @@ export class Strk20Adapter {
     // Prove against a block safely behind the current chain head so account validation does not
     // reject the proof as "too recent" (do NOT prove against `latest`).
     const provingBlockId = await this.getSafeProvingBlock(user);
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.shield]", {
-      token,
-      amountBase: amountBase.toString(),
-      provingBlockId,
-      proverUrl: this.config.proverUrl,
-      discoveryUrl: this.config.discoveryUrl,
-    });
+    debug("shield starting", { provingBlockId });
     return this.runWithBounds(
       user,
       (t, node) =>
@@ -330,18 +356,15 @@ export class Strk20Adapter {
     const transfers = await this.getTransfers(user);
     const node = this.getNode(user);
 
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.runWithBounds]", { stage: "simulate", starting: true });
+    debug("runWithBounds stage=simulate start");
     const sim = await buildSim(transfers, node);
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.runWithBounds]", { stage: "simulate", completed: true });
+    debug("runWithBounds stage=simulate complete");
     let resourceBounds: ResourceBoundsBN;
     try {
       resourceBounds = await this.estimateFee(user, sim.callAndProof.call, sim.callAndProof.proof);
     } catch (err) {
       if (this.isProofVersionRejected(err)) {
-        // eslint-disable-next-line no-console
-        console.warn("[PrivyStrk20Adapter] estimateFee rejected the PROOF0 proof version; using gas-price resource bounds.", {
+        debugWarn("estimateFee rejected the PROOF0 proof version; using gas-price resource bounds.", {
           message: err instanceof Error ? err.message : err,
         });
         resourceBounds = await this.resolveResourceBounds(user);
@@ -350,27 +373,15 @@ export class Strk20Adapter {
       }
     }
 
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.runWithBounds]", {
-      stage: "execute",
-      starting: true,
-      // execute() runs SDK discovery (outgoing_state / incoming_state) BEFORE the prover call.
-      note: "discovery precedes CAPTURE_PROVER_REQUEST",
-    });
+    debug("runWithBounds stage=execute start");
     let result: ExecuteResultLike;
     try {
       result = await buildExec(transfers);
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("[Strk20Adapter.runWithBounds]", {
-        stage: "execute",
-        failed: true,
-        message: err instanceof Error ? err.message : err,
-      });
+      debug("runWithBounds stage=execute FAILED", { message: err instanceof Error ? err.message : err });
       throw err;
     }
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.runWithBounds]", { stage: "execute", completed: true });
+    debug("runWithBounds stage=execute complete");
     return this.submit(user, result, resourceBounds);
   }
 
@@ -405,11 +416,7 @@ export class Strk20Adapter {
     const l2GasAmount = 1_210_000_000n;
     const l1GasAmount = 1n;
     const l1DataGasAmount = 10_000n;
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.resolveResourceBounds]", {
-      l1GasPrice: l1.toString(),
-      l2GasPrice: l2.toString(),
-      l1DataGasPrice: l1Data.toString(),
+    debug("resolveResourceBounds", {
       l2GasMaxAmount: l2GasAmount.toString(),
       l1GasMaxAmount: l1GasAmount.toString(),
       l1DataGasMaxAmount: l1DataGasAmount.toString(),
@@ -467,12 +474,7 @@ export class Strk20Adapter {
     const provider = this.getNode(user);
     const currentBlock = await provider.getBlockNumber();
     const provingBlock = Math.max(currentBlock - PROVING_SAFETY_MARGIN, 0);
-    // eslint-disable-next-line no-console
-    console.log("[Strk20Adapter.getSafeProvingBlock]", {
-      currentBlock,
-      safetyMargin: PROVING_SAFETY_MARGIN,
-      provingBlock,
-    });
+    debug("getSafeProvingBlock", { currentBlock, safetyMargin: PROVING_SAFETY_MARGIN, provingBlock });
     return provingBlock;
   }
 
@@ -527,29 +529,21 @@ export class Strk20Adapter {
   ): Promise<ResourceBoundsBN> {
     const proofFacts = proof?.proofFacts?.length ? proof.proofFacts : [];
     const calldata = (call.calldata ?? []) as unknown[];
-    // eslint-disable-next-line no-console
-    console.log(`[Strk20Adapter.estimateFee] request`, {
-      contractAddress: call.contractAddress,
+    debug("estimateFee request", {
       entrypoint: call.entrypoint,
       calldataLength: calldata.length,
       proofFactsCount: proofFacts.length,
       proofBlobPresent: Boolean(proof?.data),
-      accountAddress: user.address,
     });
     try {
       const estimate = await user.account.estimateInvokeFee(call, { tip: 0n, proofFacts });
-      // eslint-disable-next-line no-console
-      console.log(`[Strk20Adapter.estimateFee] response`, {
+      debug("estimateFee response", {
         overallFee: estimate.overall_fee?.toString?.(),
         resourceBounds: estimate.resourceBounds,
       });
       return estimate.resourceBounds;
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[Strk20Adapter.estimateFee] FAILED`,
-        err instanceof Error ? { message: err.message, stack: err.stack } : err,
-      );
+      debugWarn("estimateFee FAILED", { message: err instanceof Error ? err.message : err });
       throw err;
     }
   }
@@ -564,39 +558,6 @@ export class Strk20Adapter {
       ? { proofFacts: callAndProof.proof.proofFacts, proof: callAndProof.proof.data }
       : {};
 
-    const log = (msg: string, data?: unknown) => {
-      // eslint-disable-next-line no-console
-      console.log(`[Strk20Adapter.submit] ${msg}`, data === undefined ? "" : data);
-    };
-    const logError = (msg: string, err: unknown) => {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[Strk20Adapter.submit] ${msg}`,
-        err instanceof Error ? { message: err.message, stack: err.stack } : err,
-      );
-    };
-
-    const calldataArr = (callAndProof.call.calldata ?? []) as unknown[];
-    log("apply_actions call", {
-      contractAddress: callAndProof.call.contractAddress,
-      entrypoint: callAndProof.call.entrypoint,
-      calldataLength: calldataArr.length,
-      calldataHead: calldataArr.slice(0, 6),
-      calldataTail: calldataArr.slice(-4),
-    });
-    log("proof shape", {
-      proofFactsCount: callAndProof.proof?.proofFacts?.length ?? 0,
-      proofDataType: typeof callAndProof.proof?.data,
-      proofDataLength: String(callAndProof.proof?.data ?? "").length,
-    });
-    log("details passed to Account.execute", {
-      tip: "0n",
-      proofFactsCount: proofDetails.proofFacts?.length ?? 0,
-      proofLength: String(proofDetails.proof ?? "").length,
-      resourceBounds,
-      accountAddress: user.address,
-    });
-
     // starknet.js Account.execute uses `this.prepareInvoke`, so it must stay bound to the
     // account instance. (AccountInterface types execute() with InvocationsDetails, which
     // lacks proofFacts/proof, hence the cast.)
@@ -606,8 +567,9 @@ export class Strk20Adapter {
     ) => Promise<{ transaction_hash: string }>;
 
     // Instrument the stages INSIDE starknet.js Account.execute so the exact failure point is
-    // recorded: nonce lookup, Privy signing, and RPC submission. (Fee estimation is skipped
-    // here because resourceBounds are supplied.)
+    // recorded: nonce lookup, signing, and RPC submission. (Fee estimation is skipped here
+    // because resourceBounds are supplied.) Stage names only — no call data, proof blobs, or
+    // secrets are ever logged.
     const provider = (user.account as unknown as { provider?: unknown }).provider;
     const signer = (user.account as unknown as { signer?: unknown }).signer;
     const originals = new Map<string, unknown>();
@@ -616,13 +578,13 @@ export class Strk20Adapter {
       const original = obj?.[key];
       if (typeof original !== "function") return;
       const wrapped = async (...args: unknown[]) => {
-        log(`stage → ${key} (start)`);
+        debug(`stage → ${key} (start)`);
         try {
           const out = await (original as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
-          log(`stage → ${key} (ok)`);
+          debug(`stage → ${key} (ok)`);
           return out;
         } catch (err) {
-          logError(`stage → ${key} (FAILED)`, err);
+          debug(`stage → ${key} (FAILED)`, { message: err instanceof Error ? err.message : err });
           throw err;
         }
       };
@@ -649,7 +611,7 @@ export class Strk20Adapter {
         ...proofDetails,
       });
       const transactionHash = response.transaction_hash;
-      log("submission ok", { transactionHash });
+      debug("submission ok", { transactionHash });
       return {
         transactionHash,
         status: "PENDING",
@@ -657,7 +619,7 @@ export class Strk20Adapter {
         warnings: result.warnings ?? [],
       };
     } catch (err) {
-      logError("Account.execute FAILED (post-proof submission)", err);
+      debug("Account.execute FAILED (post-proof submission)", { message: err instanceof Error ? err.message : err });
       throw err;
     } finally {
       restore(provider);

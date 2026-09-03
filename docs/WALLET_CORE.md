@@ -412,7 +412,93 @@ runtime). If the operator proving/discovery services are not configured, privacy
 Sepolia integration verifies the STRK20 pool is deployed, wallet-native viewing keys are
 canonical, and privacy reports unavailable without operator services.
 
-## 16. Stage 3B+ boundaries (do NOT touch yet)
+## 16. Stage 3A.5 polish — full wallet dashboard + STRK20 hardening
+
+### 16a. `/wallet` dashboard (Wallet Runtime driven)
+
+The dashboard is fully derived from `WalletRuntime` state (single source of truth — no duplicate
+wallet state):
+
+```
+/wallet
+  ↓
+WalletRuntime (useWalletRuntime → useSyncExternalStore)
+  ↓
+Wallet Core (create/import/unlock/select/lock/delete/deploy/send)
+  ↓
+WalletPrivacySession (wallet-native viewing key, in-memory)
+  ↓
+Strk20Adapter → STRK20 SDK → Wallet Core local signer
+```
+
+- Unlock/UI propagation regression fixed: the context hook now subscribes via
+  `useSyncExternalStore`, so every consumer re-renders when the runtime emits. The old
+  "provider forceUpdate" froze `{children}` (stable element reference), so the page stayed on the
+  gate even after a successful unlock.
+- Dashboard shows: account address + type + network, deployment lifecycle badge
+  (`Ready` / `Deployment pending` / `Deploying…` / `Confirming…` / `Deployment failed` / `Unknown`),
+  Public + Private balances, STRK20 privacy status (available/registered/unavailable+reason),
+  public send, shield / private send / withdraw (Wallet Core signer), activity, wallet selector,
+  Lock, Delete.
+- First-use flow: `Create wallet → Deploy account → Ready`; `Deploy` runs the Wallet Core
+  deployment state machine (fail-closed — RPC error/class-hash mismatch → `unknown`, finality
+  timeout → reconcile before ever claiming `deployed`).
+
+### 16b. STRK20 privacy lifecycle (honest)
+
+- Operator not configured → privacy **unavailable** with a reason (never a fake zero balance).
+- Operator configured → registration probed via the discovery service; shows `ready`,
+  `not registered yet (first shield auto-registers)`, or an **error + reason** when discovery is
+  unreachable. All discovery calls are time-bounded so a hung service surfaces an honest error
+  instead of spinning forever.
+- Private balances come from `WalletPrivacySession → wallet-native viewing key → STRK20
+  discovery`. Stale results are dropped by the `(walletId, network, generation)` guard on lock /
+  wallet switch / network switch.
+- Privacy operations expose an honest lifecycle in `state.privacyOp`:
+  `preparing → approving → proving → submitted → pending → success/reverted/rejected/failed`.
+  Success is never reported before on-chain reconciliation confirms it.
+
+### 16c. STRK20 hardening applied
+
+- **Viewing key is internal**: `WalletPrivacySession` has NO public `getViewingKey()` API; the
+  adapter receives it via an internal provider closure. Runtime/UI state never contains it.
+- **Operations serialized**: mutating privacy ops (`shield / privateTransfer / withdraw /
+  register`) run behind a single async mutex per session — two ops can never race on a cached
+  private-transfers context or the pool nonce.
+- **Production logging sanitized**: the STRK20 adapter + allowance helpers use a
+  dev-only logger (no-op under `NODE_ENV === "production"`); wallet addresses, prover/discovery
+  URLs, amounts, calldata, proofs, notes, viewing keys and private balances are never logged.
+- **Cache-context safety**: the private-transfers cache key includes `chainId | pool |
+  prover | discovery | feeToken | address`, so a cached context can never be reused across
+  incompatible networks/pools/configurations.
+- **Fee/resource fallback bounded**: real fee estimation is preferred; the gas-price fallback
+  (2x headroom, capped amounts) is only used when the node rejects the STRK20 PROOF0 proof
+  version, and insufficient-resource failures are never silently swallowed.
+
+### 16d. Vendored SDK revision & discovery privacy
+
+- **Vendored STRK20 SDK**: `@starkware-libs/starknet-privacy-sdk` **`0.14.3-rc.5`**, vendored at
+  `vendor/starknet-privacy-sdk` (build of `github.com/starkware-libs/starknet-privacy`, `sdk/` @
+  tag `PRIVACY-0.14.3-RC.5`, Apache-2.0). This is the ONLY SDK surface the adapter targets; code
+  must not assume APIs from a newer SDK revision unless that revision is actually vendored.
+- **Discovery transport**: the indexer discovery provider (`IndexerDiscoveryProvider`) currently
+  goes **direct HTTPS** to `NEXT_PUBLIC_STRK20_DISCOVERY_URL` (`https://discovery.orrange.xyz/`).
+  The vendored SDK exposes `OhttpClient` (RFC 9458 OHTTP envelope encryption, `ohttp-ts`) and the
+  **proving** provider config accepts `ohttp?: OhttpOption`; the **discovery** provider config does
+  NOT expose an OHTTP option in this revision. No custom OHTTP implementation is introduced.
+- **What the discovery service can observe today (direct HTTPS)**: the operator that runs the
+  discovery endpoint can see the requesting wallet's IP, its address, and the viewing-key-scoped
+  queries it makes (note/channel sync, registration preflight). The viewing key itself is only
+  ever held client-side and sent inside the request payloads the operator serves, so an honest
+  (but non-OHTTP) operator can associate a wallet address with its private-note queries. Enabling
+  OHTTP/relay discovery is a future infrastructure task gated on operator support; the adapter is
+  structured so the SDK's `OhttpOption` can be wired in when the discovery provider supports it.
+- **PrivateIdentity semantics (honest)**: `PrivateIdentity.id` is an application-level namespace
+  (`poseidon(owner, purpose)`); it is NOT an anonymity primitive. The actual STRK20 privacy
+  primitives are the shadow-account commitments (`partialCommitment` / `commitmentNonce0`).
+  PrivateIdentity alone provides no anonymity/unlinkability guarantee.
+
+## 17. Stage 3B+ boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution
 - TEE infrastructure · solver infrastructure · cross-chain shadow execution

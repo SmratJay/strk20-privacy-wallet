@@ -12,8 +12,7 @@ import { shortenAddress } from '@/utils/formatters';
  * Ready/Braavos account (ownership verified on-chain, encrypted persistence, same address).
  */
 export const WalletCoreGate: React.FC = () => {
-  const runtime = useWalletRuntime();
-  const state = runtime.getState();
+  const { runtime, state } = useWalletRuntime();
 
   const [mode, setMode] = useState<'create' | 'import'>('create');
   const [password, setPassword] = useState('');

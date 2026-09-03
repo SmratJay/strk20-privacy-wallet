@@ -203,11 +203,20 @@ export async function decryptSecret(keystore: EncryptedKeystore, password: strin
   const salt = fromBase64(keystore.kdf.salt);
   const iv = fromBase64(keystore.cipher.iv);
   const key = await deriveEncryptionKey(password, salt, keystore.kdf.iterations);
-  const plain = await subtle().decrypt(
-    { name: "AES-GCM", iv: iv as unknown as BufferSource },
-    key,
-    fromBase64(keystore.cipher.ciphertext) as unknown as BufferSource,
-  );
+  let plain: Uint8Array;
+  try {
+    plain = new Uint8Array(
+      await subtle().decrypt(
+        { name: "AES-GCM", iv: iv as unknown as BufferSource },
+        key,
+        fromBase64(keystore.cipher.ciphertext) as unknown as BufferSource,
+      ),
+    );
+  } catch {
+    // AES-GCM authenticates the ciphertext: a wrong password (or tampered keystore) fails here.
+    // Report it as the clear, honest cause instead of leaking the underlying crypto error.
+    throw new Error("Incorrect password or corrupted keystore.");
+  }
   const secret = new TextDecoder().decode(plain);
   // Sanity: the decrypted value must be a plausible secret deriving the recorded public key.
   const expected = getPublicKey(secret);

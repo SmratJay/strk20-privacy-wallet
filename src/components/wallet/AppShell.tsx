@@ -51,8 +51,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const { wallet } = useWallet();
   // The PRIMARY account shown in the header is the Wallet Core runtime session (self-custodial,
   // no Privy). The legacy `wallet` (Ready extension / Privy) is only a fallback for legacy pages.
-  const runtime = useWalletRuntime();
-  const runtimeAccount = runtime.getState().account;
+  const { state: runtimeState } = useWalletRuntime();
+  const runtimeAccount = runtimeState.account;
   const primaryAddress = runtimeAccount?.address ?? wallet.address;
   const primaryName = runtimeAccount ? 'Orrange' : wallet.walletName || 'Wallet';
   const hasPrimaryAccount = Boolean(runtimeAccount || wallet.isConnected);

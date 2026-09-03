@@ -22,8 +22,7 @@ import { usePrivyWallet } from '@/context/PrivyWalletContext';
  */
 function SendContent() {
   const searchParams = useSearchParams();
-  const runtime = useWalletRuntime();
-  const state = runtime.getState();
+  const { runtime, state } = useWalletRuntime();
 
   const legacy = useWallet();
   const privy = usePrivyWallet();

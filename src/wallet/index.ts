@@ -58,6 +58,8 @@ export {
   type UnlockWalletOptions,
   type ImportWalletOptions,
   type ImportResult,
+  type DeployAccountResult,
+  type DeployAccountOptions,
   type WalletAccountType,
   type WalletDeploymentStatus,
 } from "./walletCore";

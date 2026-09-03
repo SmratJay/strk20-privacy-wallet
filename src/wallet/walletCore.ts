@@ -106,6 +106,8 @@ export interface DeployAccountOptions {
   /** Finality-wait tuning (primarily for tests; production uses the module defaults). */
   finalityPollMs?: number;
   finalityTimeoutMs?: number;
+  /** UX callback fired at each deployment lifecycle stage. */
+  onStatus?: (status: "pending" | "finalizing" | "deployed" | "error") => void;
 }
 
 function makeProvider(network: WalletNetworkId): RpcProvider {
@@ -427,15 +429,18 @@ export async function deployAccount(
   const probe = await wallet.adapter.probeDeployment(wallet.provider);
   if (probe === "deployed") {
     updateDeploymentStatus(store, wallet.network, "deployed");
+    options?.onStatus?.("deployed");
     return { transactionHash: "", contractAddress: wallet.address };
   }
   if (probe === "unknown") {
     updateDeploymentStatus(store, wallet.network, "unknown");
+    options?.onStatus?.("error");
     throw new Error(
       "Could not verify on-chain account state; refusing to deploy. Check the RPC and retry.",
     );
   }
   updateDeploymentStatus(store, wallet.network, "pending");
+  options?.onStatus?.("pending");
   const deployment = await wallet.adapter.deploy(wallet.account);
   const receipt = await wallet.provider.waitForTransaction(deployment.transactionHash, {
     retryInterval: 4000,
@@ -445,13 +450,16 @@ export async function deployAccount(
     (receipt as { status?: unknown })?.status;
   if (exec === "REVERTED" || exec === "REJECTED") {
     updateDeploymentStatus(store, wallet.network, "error");
+    options?.onStatus?.("error");
     throw new Error("Account deployment reverted on-chain.");
   }
   const deployedAtBlock = Number((receipt as { block_number?: unknown })?.block_number ?? 0);
   updateDeploymentStatus(store, wallet.network, "finalizing");
+  options?.onStatus?.("finalizing");
   try {
     await waitForDeploymentFinality(wallet.provider, deployedAtBlock, undefined, finalityOpts);
     updateDeploymentStatus(store, wallet.network, "deployed");
+    options?.onStatus?.("deployed");
   } catch (err) {
     // Finality was not confirmed. Reconcile with the chain and NEVER claim deployed unless the
     // on-chain probe actually verifies the class hash.
@@ -460,8 +468,10 @@ export async function deployAccount(
     );
     if (recheck === "deployed") {
       updateDeploymentStatus(store, wallet.network, "deployed");
+      options?.onStatus?.("deployed");
     } else {
       updateDeploymentStatus(store, wallet.network, recheck === "not_deployed" ? "finalizing" : "unknown");
+      options?.onStatus?.(recheck === "not_deployed" ? "finalizing" : "error");
     }
     throw err;
   }

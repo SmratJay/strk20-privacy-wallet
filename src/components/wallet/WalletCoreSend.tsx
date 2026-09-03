@@ -13,8 +13,7 @@ import { getNetworkConfig } from '@/config/networks';
  * the exact integer-only `parseAmountToBase` from Wallet Core.
  */
 export const WalletCoreSend: React.FC = () => {
-  const runtime = useWalletRuntime();
-  const state = runtime.getState();
+  const { runtime, state } = useWalletRuntime();
   const account = state.account!;
 
   const networkConfig = getNetworkConfig(state.network);

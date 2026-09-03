@@ -115,4 +115,27 @@ describe("real Starknet Sepolia network", () => {
       if (savedDiscovery) process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = savedDiscovery;
     }
   });
+
+  it("creates a wallet against the real chain and reconciles deployment to not_deployed (first-use probe)", async (ctx) => {
+    if (!(await rpcReachable())) return ctx.skip();
+    const { WalletRuntime } = await import("../wallet/runtime");
+    const { createMemoryStorage } = await import("../wallet/storage");
+    const { getPublicKey } = await import("../wallet/crypto");
+    const { computeReadyAccountAddress } = await import("../wallet/account");
+
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    runtime.init();
+    const wallet = await runtime.create("correct horse battery staple");
+    const s = runtime.getState();
+
+    // The active account is a real counterfactual Ready address derived from the created key.
+    const derived = computeReadyAccountAddress(getPublicKey(wallet.secret), READY_SEPOLIA_CLASS_HASH);
+    expect(wallet.address.toLowerCase()).toBe(derived.toLowerCase());
+    expect(s.account?.address.toLowerCase()).toBe(derived.toLowerCase());
+
+    // The on-chain probe against the real chain must report not_deployed (a brand-new key cannot
+    // already host a deployed account) — the first-use "Deployment pending" state.
+    await runtime.refreshDeployment();
+    expect(runtime.getState().deploymentStatus).toBe("not_deployed");
+  });
 });
