@@ -1,5 +1,12 @@
 'use client';
 
+/**
+ * LEGACY / COMPATIBILITY — external privacy-wallet (Ready extension) connector via the Wallet
+ * API. This is NOT the primary wallet runtime: the Wallet Core runtime (`WalletRuntime` /
+ * `/wallet`) is authoritative. This hook remains only for legacy pages and legacy STRK20 Wallet
+ * API flows. New application code must not depend on it.
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { constants } from 'starknet';
 import { createStore, Store } from '@starknet-io/get-starknet-discovery';

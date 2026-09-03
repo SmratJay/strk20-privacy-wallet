@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * LEGACY / COMPATIBILITY — Privy embedded-wallet runtime.
+ *
+ * NOT the primary wallet runtime. The Wallet Core runtime (`WalletRuntime` / `/wallet`) is the
+ * self-custodial Orrange wallet. This context remains only for legacy pages and legacy STRK20
+ * flows. A logged-in Privy browser session MUST NOT automatically become the Orrange wallet; the
+ * new runtime is deterministic from Orrange's own wallet registry.
+ */
+
 import React, {
   createContext,
   useCallback,

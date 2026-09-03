@@ -1423,3 +1423,43 @@ regression tests); `npm run build` succeeds. Real Sepolia integration tests stil
 
 **Verification.** `npm run typecheck` clean; `npm test` → 57 files / **563 tests** pass (13 new);
 `npm run build` succeeds. Real Sepolia integration tests still pass.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 10:49:06 IST
+
+### 🔴 [BIG CHANGE] — STAGE 2.5: Wire Wallet Core into the primary Orrange runtime
+
+**Context.** The main Orrange product still ran the legacy runtime (Privy / external Ready wallet
+/ Wallet API). This stage makes the self-custodial Wallet Core the primary wallet runtime of the
+actual product at `/wallet` and `/send`. Legacy runtimes remain compatibility-only.
+
+**Detailed technical explanation.**
+
+- **New runtime.** `src/wallet/runtime.ts` — `WalletRuntime`, a framework-agnostic (headless
+  testable) application runtime owning network, wallet registry, selected walletId, in-memory
+  unlocked session, create/import/unlock/lock/delete, deployment status, public balances (RPC),
+  and `send()` via the Wallet Core local signer. It never uses the legacy no-walletId unlock path
+  and never imports Privy / Wallet API connect code. `src/context/WalletRuntimeContext.tsx`
+  provides `useWalletRuntime()`; lazy-init via a client effect so server/prerender output stays
+  deterministic (no hydration mismatch) and a page reload always returns to "wallet exists →
+  locked" (no persisted session).
+- **Primary entry.** `/wallet` now uses the runtime: no wallet → Create / Import (Ready/Braavos,
+  ownership verified on-chain); stored wallets → select + unlock by exact walletId; unlocked →
+  account/network/deployment/public balances + public receive (QR) + local-signed send. `/send`
+  uses `WalletCoreSend` for public STRK sends (exact `parseAmountToBase`, local signing); STRK20
+  private transfers remain the LEGACY lane rendered only when a legacy-compatible wallet is
+  connected, else an explicit compatibility note. `AppShell` header shows the Wallet Core session
+  or links to `/wallet`.
+- **Legacy quarantine.** `useStarknetWallet`, `PrivyWalletContext`, `ConnectWalletModal`,
+  `ConnectGate`, and the Wallet API connect flow are explicitly marked LEGACY/compatibility-only.
+  A logged-in Privy session never becomes the Orrange wallet (runtime is deterministic from
+  Orrange's own registry). The legacy modal stays reachable only from legacy pages (settings).
+- **STRK20 without Privy.** Public balances flow via the Privy-free `privacyService` (RPC);
+  `buildStrk20User` bridges a Wallet Core account/signer to the STRK20 adapter. Private STRK20
+  (viewing keys/proofs) still requires the legacy Ready/Wallet API lane until a Wallet Core-native
+  viewing-key derivation lands.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 58 files / **577 tests** pass (14 new
+runtime tests); `npm run build` succeeds (`/wallet` + `/send` on Wallet Core). Real Sepolia
+integration tests still pass.

@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * LEGACY / COMPATIBILITY — old "connect privacy wallet / Continue with Google" gate.
+ * The primary `/wallet` entry is now the Wallet Core gate (Create / Import); this legacy gate
+ * remains only for legacy pages that still render it.
+ */
+
 import React from 'react';
 import { ShieldCheck, Lock, Loader2 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';

@@ -3,6 +3,7 @@ import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 import { NetworkProvider } from '@/context/NetworkContext';
 import { WalletProvider } from '@/context/WalletContext';
+import { WalletRuntimeProvider } from '@/context/WalletRuntimeContext';
 import { PrivyAuthProvider } from '@/providers/PrivyAuthProvider';
 import { PrivyWalletProvider } from '@/context/PrivyWalletContext';
 
@@ -36,7 +37,9 @@ export default function RootLayout({
           <ToastProvider>
             <PrivyAuthProvider>
               <PrivyWalletProvider>
-                <WalletProvider>{children}</WalletProvider>
+                <WalletProvider>
+                  <WalletRuntimeProvider>{children}</WalletRuntimeProvider>
+                </WalletProvider>
               </PrivyWalletProvider>
             </PrivyAuthProvider>
           </ToastProvider>

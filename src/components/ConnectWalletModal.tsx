@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * LEGACY / COMPATIBILITY — external privacy-wallet (Ready extension) + Privy connect modal.
+ * NOT the primary Orrange wallet entry (Wallet Core at `/wallet` is). Kept so legacy pages
+ * (settings, legacy SendForm) that still call `wallet.openConnectModal()` keep working.
+ */
+
 import React, { useState } from 'react';
 import { X, ShieldCheck, ExternalLink, CheckCircle2, AlertCircle, RefreshCw, Wallet, Loader2 } from 'lucide-react';
 import { SupportedWalletMeta } from '@/hooks/useStarknetWallet';

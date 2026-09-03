@@ -294,7 +294,49 @@ real deployed account with a throwaway key.
 - PrivateIdentity commitments are derivable without an anonymizer wired, but shadow execution is
   NOT available until the anonymizer + operator infra is configured (Stage 3+).
 
-## 14. Stage 3 boundaries (do NOT touch yet)
+## 14. Stage 2.5 — Wire Wallet Core into the primary Orrange runtime
+
+Status: **implemented.** The actual Orrange product now runs on Wallet Core; legacy Privy /
+external-wallet runtimes are compatibility-only.
+
+### 14a. New runtime
+
+- `src/wallet/runtime.ts` — `WalletRuntime`, the framework-agnostic application runtime (headless
+  testable). Owns network, wallet registry, selected walletId, unlocked session (in-memory only),
+  create/import/unlock/lock/delete, deployment status, public balances (RPC), and `send()`
+  (Wallet Core local signer). No Privy, no legacy Wallet API connect path; unlocks always use
+  `unlockWallet({ network, walletId, password })`.
+- `src/context/WalletRuntimeContext.tsx` — React provider + `useWalletRuntime()`. Lazy-init via a
+  client effect so server/prerender output is deterministic (no hydration mismatch). A page
+  reload returns to "wallet exists → locked" (no persisted session).
+
+### 14b. Primary entry
+
+- `/wallet` uses the runtime: no wallet → **Create wallet / Import existing wallet** (Ready /
+  Braavos, ownership verified); stored wallets → select + unlock by exact walletId; unlocked →
+  account/network/deployment/public balances + public receive + local-signed send.
+- `/send` uses the runtime for public STRK sends (`WalletCoreSend`, exact `parseAmountToBase`,
+  local signing). STRK20 private transfers remain the LEGACY lane, rendered only when a
+  legacy-compatible wallet is connected; otherwise an explicit compatibility note.
+- `AppShell` header shows the Wallet Core session (or links to `/wallet`); the legacy
+  ConnectWalletModal is kept only for legacy pages (settings / legacy SendForm).
+
+### 14c. Legacy quarantine
+
+`useStarknetWallet`, `PrivyWalletContext`, `ConnectWalletModal`, `ConnectGate`, and the Wallet API
+connect flow are marked LEGACY / compatibility-only. They remain for legacy pages and legacy
+STRK20 flows, but the new `/wallet` runtime does not depend on them. A logged-in Privy session
+never becomes the Orrange wallet. Architectural guard tests assert the runtime source imports no
+Privy / legacy Wallet API connection code.
+
+### 14d. STRK20 without Privy
+
+`buildStrk20User(wallet, viewingKey)` (`src/privacy/identity/strk20User.ts`) already bridges a
+Wallet Core account/signer to the STRK20 adapter. Public balances flow via RPC (`privacyService`,
+Privy-free). Private STRK20 (viewing keys, proofs) still requires the legacy Ready/Wallet API lane
+until a Wallet Core-native viewing-key derivation lands (later stage).
+
+## 15. Stage 3 boundaries (do NOT touch yet)
 
 - NEAR Intents, cross-chain private trading, Solana/Base execution
 - TEE infrastructure · solver infrastructure · cross-chain shadow execution
