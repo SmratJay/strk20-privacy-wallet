@@ -10,6 +10,7 @@ export function HeroNav() {
       </Link>
 
       <nav className="orrange-nav-links" aria-label="Primary navigation">
+        <Link href="/own-wallet">Own wallet</Link>
         <Link href="/docs">Docs</Link>
         <a href="https://github.com/SmratJay/strk20-privacy-wallet" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>

@@ -1218,3 +1218,47 @@ Two intentionally separate STRK20 lanes now exist:
 * Expanded every terminal feature: Shield lanes, Swap (AVNU aggregator, slippage, server-only paymaster), Launchpad V2 (bonding curve math, executor, factory, graduation router, on-chain verification), Hamster AI treasury (deterministic policy engine, bounded agent loop, health, execution guardrails, shadow accounts), and PEL perps (Garaga verifiers, Rust risk engine, real OPEN E2E).
 * Added a **project structure** map, a **configuration** table from `.env.example`, and documented the two STRK20 integration lanes (Lane A wallet API vs Lane B PEL SDK).
 * No application code changed; docs only.
+
+---
+
+## 📅 Thursday, September 03, 2026 — 09:21:04 IST
+
+### 🔴 [BIG CHANGE] — STAGE 1 PIVOT: Own Wallet Core (self-custodial Starknet wallet)
+
+**Context.** Direct feedback from a Starknet representative: the app was built around Privy
+embedded wallets, while the RFP expects a **real self-custodial Starknet wallet** (role:
+Ready/Braavos). This stage pivots the project to **"a self-custodial Starknet wallet whose
+native privacy layer is STRK20"** — Wallet Core only; no STRK20 changes; legacy systems isolated,
+not deleted.
+
+**Detailed technical explanation.**
+
+- New `src/wallet/` module (the self-custodial core, no Privy dependency):
+  - `crypto.ts` — local STARK key generation (`generateSecretKey`, canonical `[1, n/2]` range),
+    deterministic pubkey derivation (`getPublicKey`), and x-coordinate signature verification via
+    public-key recovery (`verifySignature`, matching the on-chain `get_stark_key` check).
+  - `keystore.ts` — password-encrypted keystore using WebCrypto primitives only (PBKDF2 SHA-256
+    @250k → AES-256-GCM); versioned, self-contained, wrong-password fails loudly.
+  - `account/` — `AccountAdapter` seam (`types.ts`) + `ReadyAccountAdapter` (`ready.ts`). The
+    Ready (Argent v0.4.0) account implementation was moved here from the legacy Privy lane and
+    becomes the wallet's account contract. Braavos can be added behind the same seam in Stage 2.
+  - `storage.ts` — strict separation of PUBLIC wallet state (address, pubkey, network,
+    deployment status, account type) from PRIVATE state (the encrypted keystore). Privacy state
+    (STRK20 viewing keys/notes) is out of scope for the core.
+  - `walletCore.ts` — `createWallet` / `unlockWallet` / `deployAccount` / `getDeploymentStatus` /
+    `signTransaction` / `sendTransaction` / `exportSecret` / `clearWallet` / `lockWallet`.
+    Signing is local via `new Signer(secret)`; deployment is a real `DEPLOY_ACCOUNT`
+    (salt = publicKey) with ~10-block finality wait.
+- Legacy `src/privacy/privy/ready.ts` re-pointed to re-export from `@/wallet/account/ready`
+  (backward-compatible alias; marked as a legacy adapter boundary).
+- Minimal Stage 1 UI at `/own-wallet` (create / unlock / state / deploy / send STRK) built ONLY
+  on Wallet Core; linked from the landing nav. Proves the chain:
+  UI → Wallet Core → local signer → Account → Starknet, without Privy.
+- `docs/WALLET_CORE.md` — architecture, key management, storage model, account strategy,
+  signing-without-Privy, legacy boundary, test status, remaining security gaps, Stage 2
+  boundaries.
+- Tests: `src/__tests__/walletCore.test.ts` — 28 tests covering all 12 required areas including a
+  module-graph guard that `src/wallet/*` never imports Privy/external-wallet/Wallet-API code.
+
+**Verification.** `npm run typecheck` clean; `npm test` → 52 files / 482 tests pass; `npm run
+build` succeeds (adds static `/own-wallet` route). STRK20 flows untouched and passing.
