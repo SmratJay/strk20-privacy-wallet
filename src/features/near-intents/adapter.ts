@@ -25,7 +25,7 @@ import type { WalletPrivacySession } from "@/wallet/privacy";
 import type { WalletNetworkId } from "@/wallet";
 import type { ShadowCallLike } from "@/privacy/strk20";
 import { NearIntentClient, type OneClickStatusResponse } from "./client";
-import { crossChainConfigFor } from "./config";
+import { crossChainConfigFor, type CrossChainNetworkConfig } from "./config";
 import {
   resolveNearIntentRoute,
   type NearIntentRoute,
@@ -74,6 +74,8 @@ export interface NearIntentAdapterOptions {
   network: WalletNetworkId;
   /** Test seam: inject a client (deterministic HTTP). */
   client?: NearIntentClient;
+  /** Test seam: inject a cross-chain network config (to force settlement in tests). */
+  config?: CrossChainNetworkConfig;
 }
 
 /** Encode an ERC20 u256 `transfer(recipient, amount)` calldata for the shadow account. */
@@ -88,13 +90,14 @@ export class NearIntentAdapter {
   private readonly privacySession: WalletPrivacySession;
   private readonly network: WalletNetworkId;
   private readonly client: NearIntentClient;
+  private readonly config: CrossChainNetworkConfig;
 
   constructor(options: NearIntentAdapterOptions) {
     this.wallet = options.wallet;
     this.privacySession = options.privacySession;
     this.network = options.network;
-    const config = crossChainConfigFor(this.network);
-    this.client = options.client ?? new NearIntentClient({ baseUrl: config.nearBaseUrl });
+    this.config = options.config ?? crossChainConfigFor(this.network);
+    this.client = options.client ?? new NearIntentClient({ baseUrl: this.config.nearBaseUrl });
   }
 
   /** Resolve the single supported route for an intent (throws on unknown routes). */
@@ -114,15 +117,27 @@ export class NearIntentAdapter {
   }
 
   /**
-   * Gate the feature on the authoritative per-network configuration. Cross-chain is ENABLED only
-   * where the STRK20 privacy layer is live; otherwise it reports unavailability — it NEVER falls
-   * back to a public root-wallet execution.
+   * Gate the API layer (quote / reserve deposit address / status) on the STRK20 stack being
+   * configured for this network. Reports unavailability — never a public fallback.
    */
   private requireAvailable(): void {
-    const config = crossChainConfigFor(this.network);
-    if (!config.enabled) {
+    if (!this.config.available) {
       throw new NearIntentError(
-        `Cross-chain intents are unavailable on ${this.network}${config.reason ? `: ${config.reason}` : "."}`,
+        `Cross-chain intents are unavailable on ${this.network}${this.config.reason ? `: ${this.config.reason}` : "."}`,
+      );
+    }
+  }
+
+  /**
+   * Gate REAL SETTLEMENT (funding a NEAR deposit from the shadow account) on the full stack being
+   * present: MAINNET STRK20 + MAINNET private paymaster + funded account. On any other network the
+   * adapter REFUSES to fund — it never sends real STRK toward a mainnet NEAR deposit from a network
+   * NEAR cannot see (which would strand funds).
+   */
+  private requireSettlementEnabled(): void {
+    if (!this.config.settlementEnabled) {
+      throw new NearIntentError(
+        `Cross-chain settlement is not enabled on ${this.network}${this.config.reason ? `: ${this.config.reason}` : "."}`,
       );
     }
   }
@@ -250,19 +265,28 @@ export class NearIntentAdapter {
     if (intent.expiry !== undefined && intent.expiry <= Date.now()) {
       throw new NearIntentError("Cross-chain intent has expired.");
     }
-    this.requireAvailable();
+    this.requireSettlementEnabled();
     const route = this.resolveRoute(intent);
 
     // Defensive re-validation: the prepared object must match the intent exactly (never trust a
-    // mutated/foreign prepared object).
-    if (prepared.sourceAsset !== intent.sourceAsset || prepared.sourceAmount !== intent.sourceAmount) {
-      throw new NearIntentError("The prepared intent does not match the source asset/amount.");
+    // mutated/foreign prepared object). This is the immutable execution tuple.
+    if (prepared.sourceChain !== intent.sourceChain || prepared.sourceAsset !== intent.sourceAsset) {
+      throw new NearIntentError("The prepared intent does not match the source chain/asset.");
+    }
+    if (prepared.sourceAmount !== intent.sourceAmount) {
+      throw new NearIntentError("The prepared intent does not match the source amount.");
+    }
+    if (prepared.destinationChain !== intent.destinationChain || prepared.destinationAsset !== intent.destinationAsset) {
+      throw new NearIntentError("The prepared intent does not match the destination chain/asset.");
     }
     if (prepared.destinationAddress.toLowerCase() !== intent.destinationAddress.toLowerCase()) {
       throw new NearIntentError("The prepared intent does not match the destination address.");
     }
     if (!prepared.depositAddress || !isValidStarknetAddress(prepared.depositAddress)) {
       throw new NearIntentError("The prepared intent is missing a valid deposit address.");
+    }
+    if (!prepared.intentId) {
+      throw new NearIntentError("The prepared intent is missing its NEAR correlation id.");
     }
 
     // Resolve the shadow identity (authority + private execution identity). The root wallet is
@@ -313,6 +337,10 @@ export class NearIntentAdapter {
       shadowAddress: result.shadowAddress,
       commitment: result.commitment,
       transactionHash: result.transactionHash,
+      nearTxHashes: status.nearTxHashes,
+      destinationChainTxHashes: status.destinationChainTxHashes,
+      refundedAmount: status.refundedAmount,
+      refundReason: status.refundReason,
     };
   }
 

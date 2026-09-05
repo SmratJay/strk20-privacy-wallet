@@ -54,6 +54,10 @@ const nearState = vi.hoisted(() => ({
   statusFails: false,
   quoteCount: 0,
   submitCount: 0,
+  refundedAmount: "0",
+  refundReason: null as string | null,
+  nearTxHashes: [] as string[],
+  destinationTxHashes: [] as string[],
   reset() {
     this.amountOut = 1_000_000n;
     this.depositAddress = "0x00999ae4dce7c80dd630d49ffd005912672af71cac81b20e790df4d741fc1b58";
@@ -61,6 +65,10 @@ const nearState = vi.hoisted(() => ({
     this.statusFails = false;
     this.quoteCount = 0;
     this.submitCount = 0;
+    this.refundedAmount = "0";
+    this.refundReason = null;
+    this.nearTxHashes = [];
+    this.destinationTxHashes = [];
   },
 }));
 
@@ -165,10 +173,22 @@ import {
   NEAR_INTENT_STRK_ASSET_ID,
   NEAR_INTENT_BASE_USDC_ASSET_ID,
 } from "../features/near-intents";
-import type { CrossChainPrivateIntent } from "../features/near-intents";
+import type { CrossChainPrivateIntent, CrossChainNetworkConfig } from "../features/near-intents";
 
 const PASSWORD = "correct horse battery staple";
 const VALID_SRC5 = ["0x56614c4944"];
+
+/** A settlement-enabled config (test seam) so the full source-funding + tracking path can run. */
+function settlementConfig(): CrossChainNetworkConfig {
+  return {
+    network: "mainnet",
+    nearBaseUrl: "https://1click.chaindefuser.com",
+    configured: true,
+    available: true,
+    settlementEnabled: true,
+    reason: null,
+  };
+}
 
 function makeProvider() {
   return {
@@ -189,9 +209,13 @@ function patchWalletAccount(wallet: { account: { provider: unknown; execute: unk
   (wallet.account as { execute: unknown }).execute = vi.fn(async () => ({ transaction_hash: "0xroot" }));
 }
 
-function makeRuntime() {
+function makeRuntime(config?: CrossChainNetworkConfig | null) {
   const storage = createMemoryStorage();
-  const runtime = new WalletRuntime({ storage, providerFactory: () => makeProvider() });
+  const runtime = new WalletRuntime({
+    storage,
+    providerFactory: () => makeProvider(),
+    crossChainConfig: config !== undefined ? config : settlementConfig(),
+  });
   return { runtime, storage };
 }
 
@@ -261,13 +285,13 @@ function stubNetwork() {
             correlationId: "test-intent-id",
             swapDetails: {
               intentHashes: [],
-              nearTxHashes: [],
+              nearTxHashes: code === "SUCCESS" ? nearState.nearTxHashes : [],
               originChainTxHashes: code === "SUCCESS" ? ["0xsrc"] : [],
-              destinationChainTxHashes: code === "SUCCESS" ? ["0xdest"] : [],
+              destinationChainTxHashes: code === "SUCCESS" ? nearState.destinationTxHashes : [],
               amountIn: code === "SUCCESS" ? "100" : null,
               amountOut: code === "SUCCESS" ? nearState.amountOut.toString() : null,
-              refundedAmount: "0",
-              refundReason: null,
+              refundedAmount: nearState.refundedAmount,
+              refundReason: nearState.refundReason,
             },
           });
         }
@@ -459,6 +483,20 @@ describe("execution + status reconciliation", () => {
     expect(runtime.getState().nearIntentOp.phase).toBe("success");
   });
 
+  it("retains destination settlement evidence on SUCCESS (destination + NEAR tx hashes)", async () => {
+    nearState.destinationTxHashes = ["0xbase-dest"];
+    nearState.nearTxHashes = ["0xnear"];
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    const prepared = await runtime.createCrossChainIntent(validIntent());
+    const receipt = await runtime.executeCrossChainIntent(validIntent(), prepared, { pollMs: 1 });
+    expect(receipt.status).toBe("SUCCESS");
+    expect(receipt.destinationChainTxHashes).toEqual(["0xbase-dest"]);
+    expect(receipt.nearTxHashes).toEqual(["0xnear"]);
+    expect(runtime.getState().nearIntentOp.destinationTxHashes).toEqual(["0xbase-dest"]);
+  });
+
   it("reports a REFUNDED settlement as refunded (never success)", async () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
@@ -468,6 +506,27 @@ describe("execution + status reconciliation", () => {
     const receipt = await runtime.executeCrossChainIntent(validIntent(), prepared, { pollMs: 1 });
     expect(receipt.status).toBe("REFUNDED");
     expect(runtime.getState().nearIntentOp.phase).toBe("refunded");
+  });
+
+  it("carries refund accounting and a recovery-required message (NEVER 'private balance restored')", async () => {
+    nearState.statusQueue = ["REFUNDED"];
+    nearState.refundedAmount = "100";
+    nearState.refundReason = "slippage exceeded";
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    const prepared = await runtime.createCrossChainIntent(validIntent());
+    const receipt = await runtime.executeCrossChainIntent(validIntent(), prepared, { pollMs: 1 });
+    expect(receipt.status).toBe("REFUNDED");
+    expect(receipt.refundedAmount).toBe(100n);
+    expect(receipt.refundReason).toBe("slippage exceeded");
+    const op = runtime.getState().nearIntentOp;
+    expect(op.phase).toBe("refunded");
+    expect(op.refundedAmount).toBe(100n);
+    expect(op.refundReason).toBe("slippage exceeded");
+    expect(op.message).toMatch(/recovery required|recovery to the shadow account/i);
+    const json = (v: unknown) => JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val));
+    expect(json(op)).not.toMatch(/private balance restored/i);
   });
 
   it("reports a FAILED settlement as failed (never success)", async () => {
@@ -603,17 +662,59 @@ describe("status machine + availability", () => {
     expect(phases.at(-1)).toBe("success");
   });
 
-  it("cross-chain is enabled on Sepolia but unavailable (not public-fallback) on mainnet", async () => {
-    expect(crossChainConfigFor("sepolia").enabled).toBe(true);
-    expect(crossChainConfigFor("mainnet").enabled).toBe(false);
-    expect(crossChainConfigFor("mainnet").reason).toMatch(/mainnet/i);
-    // The adapter refuses on mainnet without touching any wallet/signing.
+  it("three-way gate: Sepolia API-available but not settlement; mainnet unconfigured", async () => {
+    const sepolia = crossChainConfigFor("sepolia");
+    expect(sepolia.configured).toBe(true);
+    expect(sepolia.available).toBe(true);
+    expect(sepolia.settlementEnabled).toBe(false); // NEAR is mainnet-only; Sepolia cannot settle
+
+    const mainnet = crossChainConfigFor("mainnet");
+    expect(mainnet.configured).toBe(false); // mainnet STRK20 operator not set → does NOT inherit Sepolia
+    expect(mainnet.available).toBe(false);
+    expect(mainnet.settlementEnabled).toBe(false);
+    expect(mainnet.reason).toMatch(/not configured/i);
+
+    // The adapter refuses on mainnet (unavailable) without touching any wallet/signing.
     const adapter = new NearIntentAdapter({
       wallet: null as never,
       privacySession: null as never,
       network: "mainnet",
     });
     await expect(adapter.quote(validIntent())).rejects.toThrow(/unavailable on mainnet/i);
+  });
+
+  it("execute refuses to fund without settlement enabled (no cross-network deposit stranding)", async () => {
+    const { runtime } = makeRuntime(null); // null → resolve from env (Sepolia) → settlement disabled
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    await expect(
+      runtime.executeCrossChainIntent(
+        validIntent(),
+        {
+          sourceChain: "starknet",
+          sourceAsset: "strk",
+          sourceAmount: 100n,
+          destinationChain: "base",
+          destinationAsset: "usdc",
+          destinationAddress: DEST,
+          amountOut: 1_000_000n,
+          minAmountOut: 990_000n,
+          refundFee: 0n,
+          withdrawFee: 0n,
+          timeEstimate: 0,
+          deadline: "",
+          route: "",
+          slippageBps: 100,
+          depositAddress: DEPOSIT,
+          depositAddressDeadline: "",
+          intentId: "test-intent-id",
+          sourceTokenAddress: STRK,
+        },
+        { pollMs: 1 },
+      ),
+    ).rejects.toThrow(/settlement is not enabled/i);
+    // No shadow funding happened (the paymaster relay never fired).
+    expect(sdkState.paymasterExecutions).toBe(0);
   });
 });
 

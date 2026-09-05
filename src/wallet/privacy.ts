@@ -109,6 +109,13 @@ export interface WalletPrivacyConfig {
 /**
  * True when the proving/discovery infrastructure is configured (otherwise privacy is unavailable).
  *
+ * NETWORK SCOPING — a network NEVER inherits another network's operator endpoints:
+ *   - mainnet  → `NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET` / `..._DISCOVERY_URL_MAINNET` (explicit only).
+ *   - sepolia  → `..._SEPOLIA`, falling back to the legacy generic `..._PROVER_URL`/`..._DISCOVERY_URL`
+ *                (which have historically been the Sepolia operator).
+ * Mainnet has NO generic fallback: an unset mainnet operator resolves to "unavailable", never to the
+ * Sepolia alpha endpoints.
+ *
  * NOTE: env vars MUST be read via literal `process.env.NEXT_PUBLIC_*` member expressions so
  * Next.js can inline them into client bundles. Reading through an aliased `env = process.env`
  * parameter defeats that inlining and privacy would appear "unavailable" in the browser even
@@ -119,8 +126,20 @@ export function resolveWalletPrivacyConfig(
   network: WalletNetworkId,
   env?: Record<string, string | undefined>,
 ): WalletPrivacyConfig | null {
-  const proverUrl = (env?.NEXT_PUBLIC_STRK20_PROVER_URL ?? process.env.NEXT_PUBLIC_STRK20_PROVER_URL ?? "").trim();
-  const discoveryUrl = (env?.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? "").trim();
+  const proverUrl = (
+    network === "mainnet"
+      ? (env?.NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET ?? process.env.NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET ?? "")
+      : ((env?.NEXT_PUBLIC_STRK20_PROVER_URL_SEPOLIA ?? process.env.NEXT_PUBLIC_STRK20_PROVER_URL_SEPOLIA) ??
+        (env?.NEXT_PUBLIC_STRK20_PROVER_URL ?? process.env.NEXT_PUBLIC_STRK20_PROVER_URL)) ??
+        ""
+  ).trim();
+  const discoveryUrl = (
+    network === "mainnet"
+      ? (env?.NEXT_PUBLIC_STRK20_DISCOVERY_URL_MAINNET ?? process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL_MAINNET ?? "")
+      : ((env?.NEXT_PUBLIC_STRK20_DISCOVERY_URL_SEPOLIA ?? process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL_SEPOLIA) ??
+        (env?.NEXT_PUBLIC_STRK20_DISCOVERY_URL ?? process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL)) ??
+        ""
+  ).trim();
   if (!proverUrl || !discoveryUrl) return null;
   const ohttpRaw = (
     env?.NEXT_PUBLIC_STRK20_DISCOVERY_OHTTP ??

@@ -206,6 +206,8 @@ export const PrivateCrossChainPanel: React.FC = () => {
               : ''}
             {state.nearIntentOp.depositAddress ? ` · deposit ${state.nearIntentOp.depositAddress.slice(0, 10)}…` : ''}
             {state.nearIntentOp.transactionHash ? ` · ${state.nearIntentOp.transactionHash.slice(0, 14)}…` : ''}
+            {state.nearIntentOp.destinationTxHashes.slice(0, 1).map((h) => ` · Base ${h.slice(0, 14)}…`)}
+            {state.nearIntentOp.refundReason ? ` · refund: ${state.nearIntentOp.refundReason}` : ''}
             {state.nearIntentOp.message ? ` — ${state.nearIntentOp.message}` : ''}
           </span>
         </div>

@@ -62,18 +62,64 @@ quoting → preparing → intent-created → awaiting-source-deposit → source-
   unavailable, timeout, partial/unknown settlement, RPC/API failure, and stale wallet sessions are
   all handled honestly (see `adapter.ts`).
 
-## Mainnet readiness (explicit, not a fallback)
+## Mainnet readiness (explicit, three-way gate, never a fallback)
 
-`config.ts` separates **code support** from **configuration** and **feature availability**:
+`config.ts` separates **code support**, **configuration**, and **feature availability** via a
+three-way gate. `resolveWalletPrivacyConfig` is now **network-scoped**: mainnet prover/discovery are
+read from `NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET` / `..._DISCOVERY_URL_MAINNET` ONLY — mainnet has
+**no fallback** to the Sepolia (alpha) operator endpoints.
 
-- `CROSS_CHAIN_NETWORK_CONFIG.sepolia.enabled = true` — the STRK20 Sepolia operator
-  (prover/discovery/anonymizer) is configured; the API layer is live.
-- `CROSS_CHAIN_NETWORK_CONFIG.mainnet.enabled = false` — the STRK20 **mainnet** operator
-  (prover/discovery/anonymizer + paymaster) is not yet configured. The adapter **refuses** (throws
-  `unavailable on mainnet`) rather than falling back to a public root-wallet execution.
+| Gate | Meaning | Sepolia today | Mainnet today |
+| --- | --- | --- | --- |
+| `configured` | STRK20 stack (pool + prover + discovery + anonymizer) present for this network | ✅ true | ❌ false |
+| `available` | API layer (quote / reserve / status) usable | ✅ true | ❌ false |
+| `settlementEnabled` | funding a NEAR deposit may proceed (mainnet STRK20 + mainnet paymaster) | ❌ false | ❌ false |
 
-Enabling mainnet is a configuration change (mainnet prover/discovery/anonymizer + paymaster + a
-funded wallet + a destination address) — never a silent public path.
+- `quote` / `createIntent` / `status` are gated on `available` (prove the API layer safely).
+- `execute` is gated on `settlementEnabled` — on any network where settlement is off, the adapter
+  **refuses to fund** (this prevents a Sepolia STRK20 shadow account from sending Sepolia STRK to a
+  MAINNET NEAR deposit address, which would silently strand funds).
+- Enabling settlement requires: mainnet prover/discovery/anonymizer + a mainnet private-paymaster
+  relay (`NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET`) + a funded wallet — never a public path.
+
+## Refund model (no stranded funds, no false "private restored")
+
+`refundTo` is the Shadow Account address (the private execution identity). On a refund the STRK
+returns to the **shadow account as a public Starknet balance** — the 1Click ORIGIN_CHAIN model has
+**no path back to a private STRK20 note**. This is modeled honestly:
+
+- `REFUNDED` / `FAILED` / `INCOMPLETE_DEPOSIT` → `nearIntentOp` shows **"refunded / recovery
+  required"** (never "private balance restored").
+- `refundedAmount` + `refundReason` are carried in the receipt and op state.
+- Recovery is a **separate shadow-account sweep** (a later `collectRemainder`/`collectTokens` shadow
+  invocation returns the public STRK to a private note) — not automatic, and not claimed here.
+- On `settlementEnabled = false` networks `execute` refuses before funding, so a wrong-network
+  deposit can never strand funds in the first place.
+
+## Destination reconciliation
+
+`SUCCESS` is the 1Click signal that "tokens delivered to destination". Success is **not** claimed
+from a mere status change — the safe receipt also retains the exact corroborating tx ids:
+
+- `nearTxHashes` — NEAR verifier settlement tx(s);
+- `destinationChainTxHashes` — Base destination tx(s);
+- `sourceChainTxHashes` / `transactionHash` — the Starknet shadow-account source deposit tx;
+- `amountOut` — the reconciled destination amount;
+- the requested `destinationAddress` + `destinationAsset` (`usdc`) are bound by construction
+  (they were sent in the quote request, so NEAR routes to exactly them).
+
+The destination recipient/asset/amount are cross-checked against the intent before source funding;
+on-chain Base verification (reading the Base chain) is out of scope for this repo and remains a
+documented limitation.
+
+## Fees & auth (current, accurate)
+
+- **Keyless** ORIGIN_CHAIN flow used — no NEAR credentials in the browser, no user custody/private
+  data exposed.
+- Unauthenticated 1Click: **0.2%** platform fee + 0.0001% protocol fee + bridge/withdraw fees
+  surfaced in the quote (`refundFee`, `withdrawFee`).
+- A partner **JWT** (`X-API-Key` / `Authorization: Bearer`) waives the 0.2% — intentionally NOT
+  implemented; it must stay server-only and can be added later without moving custody/private data.
 
 ## Privacy boundary (documented, explicit)
 
@@ -111,9 +157,9 @@ A **real funded cross-chain execution** cannot complete in this repository today
 
 1. **NEAR Intents has no testnet.** The verifier is `intents.near` on NEAR **mainnet**; the 1Click
    API is mainnet production. There is no public testnet deployment.
-2. **This app's Wallet Core is Sepolia-only** (`setNetwork` rejects mainnet), and the STRK20
-   prover/discovery endpoints are Sepolia (`alpha-sepolia`). A mainnet private STRK balance cannot
-   be produced here.
+2. **This app's Wallet Core is Sepolia-only** (`setNetwork` rejects mainnet), the STRK20
+   prover/discovery are Sepolia (`alpha-sepolia`), the mainnet anonymizer is empty, and the private
+   paymaster relay is Sepolia-only — so `settlementEnabled` is `false` and `execute` refuses to fund.
 3. **Starknet has no intent-signing standard** in NEAR Intents (NEP-413/ERC-191/raw-ed25519 only),
    so the Starknet wallet cannot sign intents directly — only the ORIGIN_CHAIN deposit flow applies,
    which requires a real on-chain STRK deposit on **mainnet**.
@@ -121,10 +167,12 @@ A **real funded cross-chain execution** cannot complete in this repository today
    user-controlled Base address. None are available in this environment, and a server-held master
    wallet is explicitly out of scope.
 
-Therefore Phase 4 ships the adapter + tests + this boundary, but the **real-execution acceptance
-gate is BLOCKED** and is reported honestly (no mocked success, no fabricated tx hashes). To
-complete the acceptance gate, run the app against Starknet mainnet with a funded wallet + a
-destination Base address (and re-enable mainnet in `setNetwork` + mainnet STRK20 config).
+Therefore Phase 4.5 hardens the adapter (three-way gate, refund/recovery model, destination
+reconciliation, quote/intent binding) and ships it + tests + docs, but the **real-execution
+acceptance gate remains BLOCKED** and is reported honestly (no mocked success, no fabricated tx
+hashes). To complete acceptance: configure mainnet prover/discovery/anonymizer + a mainnet
+private-paymaster relay + `setNetwork` mainnet, fund a wallet with mature private STRK, and provide
+a Base destination — then run one real swap and record the source/shadow/deposit/NEAR/Base tx ids.
 
 ## Security invariants
 

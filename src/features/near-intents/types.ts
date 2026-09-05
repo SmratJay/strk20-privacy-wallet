@@ -140,6 +140,12 @@ export interface NearIntentOpState {
   shadowAddress: string | null;
   transactionHash: string | null;
   status: NearIntentStatusCode | null;
+  /** Destination-chain (Base) tx hashes, for verification/links when settled. */
+  destinationTxHashes: string[];
+  /** Amount refunded to the shadow account (source base units) when refunded. */
+  refundedAmount: bigint | null;
+  /** Refund reason (null unless refunded). */
+  refundReason: string | null;
   message: string | null;
 }
 
@@ -154,6 +160,9 @@ export const IDLE_NEAR_INTENT: NearIntentOpState = {
   shadowAddress: null,
   transactionHash: null,
   status: null,
+  destinationTxHashes: [],
+  refundedAmount: null,
+  refundReason: null,
   message: null,
 };
 
@@ -192,8 +201,16 @@ export interface NearIntentReceipt {
   shadowAddress: string;
   /** The STRK20 shadow-account commitment (public). */
   commitment: string;
-  /** The Starknet shadow-account transaction that funded the NEAR deposit. */
+  /** The Starknet shadow-account transaction that funded the NEAR deposit (source tx). */
   transactionHash: string;
+  /** NEAR verifier tx hashes (settlement on NEAR). Public corroboration, never secrets. */
+  nearTxHashes: string[];
+  /** Destination-chain (Base) tx hashes — the destination settlement evidence. */
+  destinationChainTxHashes: string[];
+  /** Amount refunded to the refund target (source base units), when the swap refunded. */
+  refundedAmount: bigint;
+  /** Refund reason reported by NEAR (null unless refunded). */
+  refundReason: string | null;
   message?: string;
 }
 

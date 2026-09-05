@@ -50,6 +50,7 @@ import {
   nearIntentPhaseForStatus,
   IDLE_NEAR_INTENT,
   type CrossChainPrivateIntent,
+  type CrossChainNetworkConfig,
   type NearIntentOpState,
   type NearIntentPrepared,
   type NearIntentQuote,
@@ -190,6 +191,8 @@ export interface WalletRuntimeOptions {
   accountAdapterFactory?: (publicKey: string, address?: string) => import("./account").AccountAdapter;
   /** TEST SEAM ONLY: inject a deterministic privacy config (prover/discovery) for tests. */
   privacyConfig?: WalletPrivacyConfig | null;
+  /** TEST SEAM ONLY: inject a cross-chain network config (to force settlement in tests). */
+  crossChainConfig?: CrossChainNetworkConfig | null;
   /**
    * When true, the initial registry load is deferred to `init()` (called from a React effect).
    * This keeps server/prerender output deterministic (empty gate) so client hydration never
@@ -259,6 +262,8 @@ export class WalletRuntime {
   private readonly providerFactory?: (n: WalletNetworkId) => RpcProvider;
   private readonly accountAdapterFactory?: (publicKey: string, address?: string) => import("./account").AccountAdapter;
   private readonly privacyConfig: WalletPrivacyConfig | null;
+  /** TEST SEAM ONLY: cross-chain network config override (never a public-execution fallback). */
+  private readonly crossChainConfig: CrossChainNetworkConfig | null;
   private readonly listeners = new Set<() => void>();
   private generation = 0;
   /** Deploy block of the active session (set when this session deployed the account), for maturity. */
@@ -270,6 +275,7 @@ export class WalletRuntime {
     this.accountAdapterFactory = options.accountAdapterFactory;
     this.privacyConfig =
       options.privacyConfig !== undefined ? options.privacyConfig : resolveWalletPrivacyConfig("sepolia");
+    this.crossChainConfig = options.crossChainConfig ?? null;
     this.view = {
       network: "sepolia",
       wallets: [],
@@ -1165,7 +1171,12 @@ export class WalletRuntime {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to route cross-chain intents.");
     const privacy = this.requirePrivacySession();
-    return new NearIntentAdapter({ wallet: session, privacySession: privacy, network: this.view.network });
+    return new NearIntentAdapter({
+      wallet: session,
+      privacySession: privacy,
+      network: this.view.network,
+      config: this.crossChainConfig ?? undefined,
+    });
   }
 
   /**
@@ -1269,6 +1280,7 @@ export class WalletRuntime {
         },
       });
       if (!this.isCurrent(guard)) return receipt;
+      const refunded = receipt.status === "REFUNDED" || receipt.status === "INCOMPLETE_DEPOSIT" || receipt.status === "FAILED";
       this.setView({
         nearIntentOp: {
           ...this.view.nearIntentOp,
@@ -1279,7 +1291,15 @@ export class WalletRuntime {
           shadowAddress: receipt.shadowAddress,
           transactionHash: receipt.transactionHash,
           status: receipt.status,
-          message: null,
+          destinationTxHashes: receipt.destinationChainTxHashes,
+          refundedAmount: refunded ? (receipt.refundedAmount > 0n ? receipt.refundedAmount : receipt.sourceAmount) : null,
+          refundReason: receipt.refundReason,
+          message:
+            receipt.status === "REFUNDED"
+              ? "Refunded to the Shadow Account — recovery required (not yet returned to the private balance)."
+              : refunded
+                ? "Swap failed; recovery to the Shadow Account required."
+                : null,
         },
         recentTransactions: [
           { hash: receipt.transactionHash, at: Date.now(), kind: "privateTransfer" as const },

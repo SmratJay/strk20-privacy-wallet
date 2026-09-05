@@ -34,7 +34,6 @@ export {
   type NearIntentReceipt,
 } from "./types";
 export {
-  CROSS_CHAIN_NETWORK_CONFIG,
   crossChainConfigFor,
   crossChainAvailability,
   type CrossChainNetworkConfig,
