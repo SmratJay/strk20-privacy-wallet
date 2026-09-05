@@ -37,6 +37,14 @@ import {
 } from "@/privacy/execution";
 import { listPrivateIdentities as listWalletPrivateIdentities } from "@/privacy/identity";
 import type { PrivateIdentity } from "@/privacy/identity";
+import {
+  PrivateSwapService,
+  IDLE_PRIVATE_SWAP,
+  type PrivateSwapIntent,
+  type PrivateSwapOpState,
+  type PrivateSwapQuote,
+  type PrivateSwapReceipt,
+} from "@/features/private-swap";
 
 /**
  * Wallet Core — application wallet runtime.
@@ -154,6 +162,8 @@ export interface WalletRuntimeView {
   privacyOp: PrivacyOpState;
   /** Honest lifecycle of the latest PRIVATE EXECUTION (application action). Never secrets. */
   executionOp: PrivateExecutionOpState;
+  /** Honest lifecycle of the latest PRIVATE SWAP (shadow-account swap application action). */
+  swapOp: PrivateSwapOpState;
   /** In-memory activity for this session (never persisted, never on-chain-sensitive). */
   recentTransactions: RecentTransaction[];
   error: string | null;
@@ -262,6 +272,7 @@ export class WalletRuntime {
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
+      swapOp: IDLE_PRIVATE_SWAP,
       recentTransactions: [],
       error: null,
     };
@@ -347,6 +358,7 @@ export class WalletRuntime {
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
+      swapOp: IDLE_PRIVATE_SWAP,
       recentTransactions: [],
       error: null,
     };
@@ -379,6 +391,7 @@ export class WalletRuntime {
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
+      swapOp: IDLE_PRIVATE_SWAP,
       error: null,
     });
   }
@@ -412,6 +425,7 @@ export class WalletRuntime {
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
+      swapOp: IDLE_PRIVATE_SWAP,
       error: null,
     });
   }
@@ -509,6 +523,7 @@ export class WalletRuntime {
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
+      swapOp: IDLE_PRIVATE_SWAP,
       recentTransactions: [],
       error: null,
     });
@@ -1012,6 +1027,116 @@ export class WalletRuntime {
         phase: result.phase,
         transactionHash,
         message: result.phase === "reverted" ? "Private execution reverted on-chain." : result.message,
+      },
+    });
+  }
+
+  // ─────────────────────────── Private swap (feature-level consumer) ───────────────────────────
+
+  /**
+   * Fetch a REAL on-chain private-swap quote for the active wallet (bound to the live application
+   * state + pair + amount). Never trusts a UI-supplied output amount. The effective private
+   * execution fee is surfaced here so the UI can show it before confirmation.
+   */
+  async quotePrivateSwap(intent: PrivateSwapIntent): Promise<PrivateSwapQuote> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to quote a private swap.");
+    const privacy = this.requirePrivacySession();
+    const service = new PrivateSwapService({ wallet: session, privacySession: privacy, network: this.view.network });
+    return service.quote(intent);
+  }
+
+  /**
+   * Execute a REAL private swap through the existing shadow-account path (feature consumer).
+   *
+   *   private STRK → shadow identity → real shadow account → swap application → private result
+   *
+   * The swap feature produces the exact application calls; the EXISTING shadow path
+   * (`WalletPrivacySession.executeShadowApplication` → `shadowAccountInvoke` →
+   * `shadowAccounts(appName).invoke` → private paymaster) executes them. The root wallet is never
+   * the swap application's caller, never the outer tx sender.
+   *
+   * Lifecycle (visible in `swapOp`):
+   *   quoting → preparing → funding → proving → relaying → pending → success / reverted / rejected /
+   *   failed / unknown. Success is NEVER claimed before on-chain reconciliation; an unknown
+   *   paymaster submission is reported honestly, never as success.
+   */
+  async executePrivateSwap(intent: PrivateSwapIntent, confirmedQuote?: PrivateSwapQuote): Promise<PrivateSwapReceipt> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to swap privately.");
+    const privacy = this.requirePrivacySession();
+    const guard = this.captureGuard();
+    const appName = intent.appName.trim();
+    const sellSymbol = this.tokenSymbolFor(intent.sellToken);
+    const buySymbol = this.tokenSymbolFor(intent.buyToken);
+    this.setView({
+      swapOp: {
+        phase: "quoting",
+        sellTokenSymbol: sellSymbol,
+        buyTokenSymbol: buySymbol,
+        sellAmount: intent.sellAmount,
+        minOutput: confirmedQuote?.minOutput ?? null,
+        estimatedBuy: confirmedQuote?.buyAmount ?? null,
+        feeStrk: confirmedQuote?.feeStrk ?? null,
+        appName,
+        nonce: intent.nonce.toString(),
+        swapContract: confirmedQuote?.swapContract ?? null,
+        shadowAddress: null,
+        transactionHash: null,
+        message: null,
+      },
+      error: null,
+    });
+    try {
+      // The service re-quotes and re-validates right before proving; a stale quote throws here.
+      const service = new PrivateSwapService({ wallet: session, privacySession: privacy, network: this.view.network });
+      this.setView({ swapOp: { ...this.view.swapOp, phase: "preparing" } });
+      const receipt = await service.execute(intent, confirmedQuote);
+      if (!this.isCurrent(guard)) return receipt;
+      this.setView({
+        swapOp: {
+          ...this.view.swapOp,
+          phase: "pending",
+          swapContract: receipt.swapContract,
+          shadowAddress: receipt.shadowAddress,
+          transactionHash: receipt.transactionHash,
+          minOutput: receipt.minOutput,
+          message: null,
+        },
+        recentTransactions: [
+          { hash: receipt.transactionHash, at: Date.now(), kind: "privateTransfer" as const },
+          ...this.view.recentTransactions,
+        ].slice(0, 20),
+      });
+      await this.waitForSwapFinality(receipt.transactionHash, guard);
+      return receipt;
+    } catch (err) {
+      if (!this.isCurrent(guard)) throw err;
+      const unknown = err instanceof Error && /unknown|reconcile|unreachable|unreadable/i.test(err.message);
+      this.setView({
+        swapOp: {
+          ...this.view.swapOp,
+          phase: unknown ? "unknown" : "failed",
+          message: err instanceof Error ? err.message : "Private swap failed.",
+        },
+      });
+      throw err;
+    }
+  }
+
+  /** Poll the RPC for the final status of a submitted private swap. Honest: never fabricates success. */
+  private async waitForSwapFinality(transactionHash: string, guard: RuntimeGuard): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    this.setView({ swapOp: { ...this.view.swapOp, phase: "pending", transactionHash, message: null } });
+    const result = await this.pollTransactionPhase(transactionHash, guard, session.provider);
+    if (!result) return;
+    this.setView({
+      swapOp: {
+        ...this.view.swapOp,
+        phase: result.phase,
+        transactionHash,
+        message: result.phase === "reverted" ? "Private swap reverted on-chain." : result.message,
       },
     });
   }

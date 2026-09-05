@@ -9,7 +9,7 @@ upgrade or change these — the adapter and tests are pinned to them.
 |---|---|---|---|
 | `@starkware-libs/starknet-privacy-sdk` | **`0.14.3-rc.5`** (vendored build of `github.com/starkware-libs/starknet-privacy`, `sdk/` @ tag `PRIVACY-0.14.3-RC.5`) | `vendor/starknet-privacy-sdk/package.json`, `package.json` (`file:vendor/...`) | The ONLY SDK surface the adapter targets. Tests assert the app only imports APIs exported by this revision (`createPrivateTransfers`, `IndexerDiscoveryProvider`, `Open`). |
 | `starknet.js` | **`10.5.0`** | `package.json` (app + vendored SDK dependency) | SDK/app parity enforced by test. |
-| `@avnu/avnu-sdk` | `^4.2.0` | `package.json` | Public AVNU swap quotes/calls only (private swap path removed). |
+| `@avnu/avnu-sdk` | `^4.2.0` | `package.json` | Public AVNU swap quotes/calls (see `src/services/swapService.ts`). The AVNU SDK's private-swap API (`executePrivateSwap` / `createStrk20WalletProver`) is NOT usable: Sepolia has zero AVNU liquidity, and the prover requires a starknet.js `WalletAccountV6` (`strk20PrepareInvoke`) the Wallet Core account is not. The REAL private swap uses the repo's own BondingCurve V2 via the STRK20 shadow-account path (see `docs/PRIVATE_SWAP.md`). |
 
 ## Operator / on-chain configuration (Sepolia)
 

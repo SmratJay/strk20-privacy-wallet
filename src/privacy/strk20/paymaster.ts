@@ -148,9 +148,13 @@ export class Strk20Paymaster {
       throw new PaymasterSubmissionUnknownError("Private paymaster returned an unreadable response.");
     }
     if (body.error) {
-      const err = body.error as { code?: unknown; message?: unknown };
+      const err = body.error as { code?: unknown; message?: unknown; data?: unknown };
       const detail = typeof err?.message === "string" ? ` (${err.message})` : "";
-      throw new Error(`Private paymaster rejected ${method}${detail}`);
+      const dataDetail =
+        err?.data !== undefined && err?.data !== null
+          ? ` data=${typeof err.data === "string" ? err.data.slice(0, 500) : JSON.stringify(err.data).slice(0, 500)}`
+          : "";
+      throw new Error(`Private paymaster rejected ${method}${detail}${dataDetail}`);
     }
     if (!response.ok) {
       throw new PaymasterSubmissionUnknownError(

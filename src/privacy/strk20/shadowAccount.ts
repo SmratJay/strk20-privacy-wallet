@@ -58,10 +58,17 @@ export interface ShadowAccountInvokeParams {
   amount: bigint;
   /** Application calls the shadow account executes (validated by the executor). */
   calls: ShadowCallLike[];
-  /** Surplus/remainder recipient (defaults to the user's own wallet). */
+  /** Surplus/change recipient (defaults to the user's own wallet). */
   destination?: string;
   /** Collect any token left in the shadow account back into a note for the root (default false). */
   collectRemainder?: boolean;
+  /**
+   * Additional tokens whose FULL post-invoke shadow-account balance is collected into a fresh
+   * open note for the destination/root (e.g. the buy token of a swap). Each token gets its own
+   * open note settled by the anonymizer's collect policy, so a swap output lands back in the
+   * private balance. Requires `autoSetup` so the SDK opens the token's subchannel when missing.
+   */
+  collectTokens?: string[];
 }
 
 export interface ShadowAccountInvokeResult {
@@ -196,15 +203,27 @@ export async function shadowAccountInvoke(
   );
 
   // 4. Build + prove the shadow invocation (the wallet's signer signs the PROOF INVOCATION).
-  const open = params.collectRemainder ? await loadOpenNoteSymbol() : undefined;
+  //    `collectTokens` (e.g. a swap's buy token) each get an open note that the anonymizer
+  //    settles with the shadow account's post-invoke balance, so proceeds return privately.
+  //    autoSetup opens the token subchannel when the user has never held that token before.
+  const collectTokens = (params.collectTokens ?? []).filter((t) => t?.trim().length > 0);
+  const open = params.collectRemainder || collectTokens.length > 0 ? await loadOpenNoteSymbol() : undefined;
   const result = await adapter.buildAndProve(user, (t) => {
-    const builder = t.build({ autoDiscover: { channels: "refresh" } }).surplusTo(root, false);
+    const builder = t
+      .build({
+        autoDiscover: { channels: "refresh" },
+        autoSetup: collectTokens.length > 0,
+      })
+      .surplusTo(root, false);
     builder.with(params.token, (token) => {
       token.inputs(...selection.notes);
       if (params.amount > 0n) token.withdraw({ recipient: shadowAddress, amount: params.amount });
       if (fee && fee.amount > 0n) token.withdraw({ recipient: fee.recipient, amount: fee.amount });
-      if (open !== undefined) token.transfer({ recipient: root, amount: open });
+      if (open !== undefined && params.collectRemainder) token.transfer({ recipient: root, amount: open });
     });
+    for (const collectToken of collectTokens) {
+      builder.with(collectToken, (token) => token.transfer({ recipient: root, amount: open }));
+    }
     builder.shadowAccounts(params.appName).invoke(params.nonce, {
       calls: params.calls,
       collectPolicy: { type: "all" },

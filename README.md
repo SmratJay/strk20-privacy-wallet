@@ -30,7 +30,7 @@ Orrange UI
 | Route | Screen |
 |---|---|
 | `/` | Landing |
-| `/wallet` | The wallet — balances, deployment, shield / private send / withdraw, activity, lock |
+| `/wallet` | The wallet — balances, deployment, shield / private send / withdraw, private execute, **private swap**, activity, lock |
 | `/send` `/receive` | Public + private send, receive (QR) |
 | `/swap` | AVNU public swap (signed by Wallet Core) |
 | `/settings` `/activity` | Wallet Core account + session activity |
@@ -48,6 +48,10 @@ Orrange UI
 - STRK20 privacy: register, shield, private send, withdraw; private balances via the wallet-native
   viewing key + discovery; honest loading/available/unavailable/error/syncing states; privacy ops
   serialized per session; stale results dropped by generation guards.
+- **Private swap** (`/wallet` → Private swap): private STRK → real STRK20 shadow account → real
+  swap application (BondingCurve V2) → private result. The shadow account is the swap trader, the
+  root wallet is never the caller, and the buy token + remainder are collected back into the
+  private balance. Real on-chain quote + effective private-paymaster fee surfaced before confirm.
 - AI private treasury (Hamster): bounded agent loop, deterministic policy, execution gate that
   re-checks state and requires the active wallet's signature. Client-claimed addresses can never
   authorize execution.
@@ -108,6 +112,7 @@ See `docs/STRK20_LIVE_ACCEPTANCE.md`.
 - `docs/WALLET_CORE.md` — the authoritative architecture document
 - `docs/STRK20_COMPATIBILITY_MATRIX.md` — SDK/operator compatibility
 - `docs/STRK20_LIVE_ACCEPTANCE.md` — live acceptance procedure
+- `docs/PRIVATE_SWAP.md` — the real shadow-account private swap (this phase)
 - `docs/archive/` — historical perps / privy / planning records (feature removed or gated)
 - `WHAT_WE_HAVE_DONE_SO_FAR.md` — compact current-state summary (git history holds the diary)
 

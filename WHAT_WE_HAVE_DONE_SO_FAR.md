@@ -228,3 +228,89 @@ tests + upgraded identity tests.
 is the tiny `ShadowExecutionProbe`; the paymaster `default` mode charges a relay fee (~17 STRK on
 Sepolia) from the private balance; `sponsored_private` mode (server key) is client-ready but not
 wired; NEAR / TEE / cross-chain are NOT started.
+
+---
+
+## REAL PRIVATE SWAP through Shadow Accounts (Phase 3) — Saturday, September 05, 2026 — 11:51:47 IST
+
+#### 🔴 [BIG CHANGE] — Real shadow-account private swap (private STRK → swap app → private result)
+
+**What:** the existing REAL STRK20 shadow-account primitive is turned into ONE user-facing
+private application: **PRIVATE SWAP**. The user swaps private STRK for the swap application's
+token; the swap runs FROM a real shadow account; the buy token and the STRK remainder are
+collected back into the private balance; the outer transaction is relayed through the existing
+private paymaster.
+
+```
+private STRK (mature notes)
+  → shadow identity (appName, nonce)
+  → real shadow account
+  → shadowAccountInvoke → SDK shadowAccounts(appName).invoke(nonce, { calls })
+  → swap application (STRKFTW BondingCurve V2 — real deployed AMM on Sepolia)
+  → buy output collected into a private note (collectTokens) + STRK remainder (collectRemainder)
+  → private paymaster relay
+  → private STRKFTW
+```
+
+**Why the AVNU SDK private-swap path is NOT used (audited, exact mismatch):**
+- The installed `@avnu/avnu-sdk@4.2.0` DOES export the private-swap API (`executePrivateSwap`,
+  `buildStrk20Actions`, `createStrk20WalletProver`, `quoteToCalls({ private: true })`,
+  `SEPOLIA_PRIVACY_POOL_ADDRESS`), but **AVNU Sepolia has zero liquidity**: the Sepolia token
+  registry is empty (`totalElements: 0`) and every quote pair tried returns `[]` (STRK→USDC,
+  STRK→ETH, ETH→STRK, USDC→STRK on both `sepolia.api.avnu.fi` and `starknet.api.avnu.fi`).
+- `createStrk20WalletProver` additionally requires a starknet.js `WalletAccountV6`
+  (`strk20PrepareInvoke(actions)`) — a different STRK20 action vocabulary than the vendored
+  `@starkware-libs/starknet-privacy-sdk` 0.14.3-rc.5 builder Wallet Core uses. Wiring it would
+  require redesigning the Wallet Core account, which is out of scope.
+- Per the phase spec, the fallback is the smallest REAL Starknet swap application: the repo's own
+  **BondingCurve V2 (STRKFTW)** (`0x1d63a2b150973cf8ae0c02dfbc564c1ed46fbf0a08b298c9d77b07b1c08b0f8`,
+  live, non-graduated, real STRK liquidity) — a real constant-product AMM, not a mock.
+
+**Architecture (boundaries preserved):**
+- Wallet Core = custody only. STRK20 = privacy only. Shadow account = execution identity. Swap/AVNU
+  becomes a feature-level consumer.
+- `src/features/private-swap/` (new feature module): typed `PrivateSwapIntent` (no arbitrary
+  `calls[]` from UI), `PRIVATE_SWAP_APPS` typed app registry (owns the target contract +
+  selectors + constraints), real on-chain quote (`quote_buy`), stale/mutated-quote rejection,
+  min-output/slippage derivation with integer math, `PrivateSwapService` (quote → validate →
+  build exact calls → execute through the existing shadow path).
+- `src/wallet/runtime.ts`: thin `quotePrivateSwap` + `executePrivateSwap(intent, confirmedQuote)`
+  bridges + `swapOp` lifecycle (quoting → preparing → funding → proving → relaying → pending →
+  success/reverted/rejected/failed/unknown). No swap logic in Wallet Core.
+- `src/privacy/strk20/shadowAccount.ts`: minimal, backward-compatible `collectTokens` support so
+  the anonymizer settles the buy-token proceeds into a fresh open note (plus `autoSetup` for a
+  token subchannel the user has never held).
+- `src/components/wallet/PrivateSwapPanel.tsx`: /wallet panel showing private balance, sell STRK,
+  receive token, estimated + minimum receive, effective private-paymaster fee, [Swap Privately],
+  and the safe lifecycle. Never shows notes/proofs/viewing keys/secrets.
+
+**Transaction safety:** bigint-only decimal→base parsing; pair must match a configured app; quote
+expiry + re-quote right before proving (stale/mutated quote → reject BEFORE any proof work);
+min-output = quote × (1 − slippage); smallest safe allowance (`approve(curve, sellAmount)`), no
+infinite allowance; private maturity checked by the existing `selectMatureNotes`.
+
+**Privacy (documented honestly):** private = root-wallet → swap-application execution linkage;
+public = initial shield, shadow address (if observable), swap target/timing/amounts, application
+state, destination holdings. Not an anonymity guarantee.
+
+**Verification:** `npm run typecheck` clean; `npm test` 40 files / 519 passed + 2 live gates;
+`npm run build` succeeds; 24 behavior-first private-swap tests (intent validation, min-output,
+stale quote, shadow path used, root-wallet send NOT used, exact app target + token/amount,
+serialization, no-secret exposure).
+
+**Live acceptance (REAL Sepolia, verified on-chain):**
+- Fresh Wallet Core wallet funded + deployed + proving maturity; shield (auto-register) → 30 STRK
+  private balance; shadow identity `(orrange, nonce=0)` → real shadow account
+  `0x3f1c199bec084d5fd20b365f693f11862afdd65cb8190f86af796cbc8273063`.
+- **Private swap tx `0x748cb7785ee659dea129cb08408123f2826d8250c7d09f1bf987da4d9807594`** —
+  `SUCCEEDED` / `ACCEPTED_ON_L2`, block `14597287`. Sold `0.5 STRK` on the real STRKFTW
+  BondingCurve; the curve's `Buy` event recorded the SHADOW ACCOUNT as `trader` + `recipient`
+  (NOT the root wallet), `token_out` = `1.095891784417536435246149e24 STRKFTW base` (exactly the
+  quoted output). Curve reserves moved; shadow STRKFTW balance after = `0` (collected into a
+  private note); outer tx sender `0x22e60611…` = paymaster relay, ≠ root and ≠ shadow.
+- **PRIVATE STRK → REAL SHADOW ACCOUNT → REAL SWAP APPLICATION → PRIVATE RESULT — verified live.**
+
+**Remaining limitations:** the first swap application is the repo's STRKFTW BondingCurve (AVNU
+Sepolia has no liquidity today); the paymaster `default` mode charges a relay fee from the private
+balance; `sponsored_private` mode (server key) is not wired; NEAR Intents / TEE / cross-chain are
+NOT started.

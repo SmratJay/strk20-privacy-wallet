@@ -156,8 +156,8 @@ export default function SwapPage() {
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 mb-4 flex items-start gap-2 text-[12px] text-violet-200/80">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-violet-300" />
               <span>
-                Public swaps are signed by your Orrange wallet. STRK20 private swaps are not yet
-                supported by Wallet Core — they are never routed to another wallet.
+                Public swaps are signed by your Orrange wallet. STRK20 private swaps use a REAL
+                shadow account — head to <span className="font-mono">/wallet</span> → Private swap.
               </span>
             </div>
 

@@ -125,13 +125,17 @@ describe("single wallet source of truth (WalletRuntime)", () => {
     expect(activity).not.toContain("privy");
   });
 
-  it("swap reads the WalletRuntime account and marks private swaps unavailable (no fallback)", () => {
+  it("swap reads the WalletRuntime account and routes private swaps to the shadow-account feature (no fallback)", () => {
     const swap = readFileSync(join(__dirname, "..", "app", "swap", "page.tsx"), "utf8");
     expect(swap).toContain("useWalletRuntime");
     expect(swap).not.toContain("useWallet(");
     expect(swap).not.toContain("ConnectGate");
     expect(swap).toContain("WalletCoreGate");
-    expect(swap).toMatch(/not yet\s*supported by Wallet Core/);
+    expect(swap).toMatch(/private swaps use a REAL\s*shadow account/);
+    // The public swap page is a public-only lane; the REAL private swap lives in the feature
+    // module and never falls back to another wallet.
+    const featureIndex = readFileSync(join(__dirname, "..", "features", "private-swap", "index.ts"), "utf8");
+    expect(featureIndex).toContain("PrivateSwapService");
   });
 
   it("the treasury page reads only the WalletRuntime account/balances", () => {

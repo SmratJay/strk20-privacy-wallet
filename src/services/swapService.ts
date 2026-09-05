@@ -2,9 +2,8 @@
  * @file src/services/swapService.ts
  * @description AVNU public swap flow for the Wallet Core runtime. Quotes are fetched from AVNU and
  * the swap calls are executed through `WalletRuntime.send()` (the Wallet Core local signer). The
- * STRK20 PRIVATE swap path (which required the Ready Wallet API / external STRK20 prover) has been
- * removed — private swaps are not supported by Wallet Core yet and are never silently routed to
- * another wallet. The AVNU paymaster key stays server-side (see /api/avnu/paymaster).
+ * STRK20 PRIVATE swap path is a separate feature: see src/features/private-swap (real STRK20
+ * shadow-account private swap, wired into /wallet). The AVNU paymaster key stays server-side.
  */
 import {
   getQuotes,
@@ -92,7 +91,11 @@ export function publicSwapSupported(): boolean {
   return true;
 }
 
-/** Private STRK20 swaps are NOT supported by Wallet Core yet — never a silent fallback. */
+/**
+ * Private STRK20 swaps ARE supported by Wallet Core now — through the REAL STRK20 shadow-account
+ * path (see `/wallet` → Private swap panel and src/features/private-swap). This helper stays for
+ * legacy imports; the private swap UI lives in the feature module, never routed to another wallet.
+ */
 export function privateSwapSupported(): boolean {
-  return false;
+  return true;
 }
