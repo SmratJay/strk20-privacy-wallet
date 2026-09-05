@@ -35,21 +35,6 @@ export interface CrossChainNetworkConfig {
 }
 
 /**
- * Whether a MAINNET private-paymaster relay is configured. The shadow-account proof is relayed
- * through the AVNU private paymaster so the root wallet is never the on-chain sender. The wiring
- * is currently Sepolia-only (`Strk20Paymaster`), so mainnet settlement is gated OFF until a mainnet
- * paymaster URL is provided AND the shadow relay is wired to it.
- */
-function mainnetPaymasterConfigured(env?: Record<string, string | undefined>): boolean {
-  const url = (
-    env?.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ??
-    process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ??
-    ""
-  ).trim();
-  return url.length > 0 && url.startsWith("https://");
-}
-
-/**
  * Resolve the authoritative cross-chain configuration for a network.
  *
  * - sepolia: STRK20 Sepolia operator is configured → `configured`/`available` = true; the API layer
@@ -58,6 +43,10 @@ function mainnetPaymasterConfigured(env?: Record<string, string | undefined>): b
  * - mainnet: the STRK20 MAINNET operator (prover/discovery/anonymizer) + a MAINNET private paymaster
  *   are NOT yet configured → `configured` = false and `settlementEnabled` = false. There is NO
  *   fallback to the Sepolia operator and NO public root-wallet execution.
+ *
+ * The mainnet paymaster check reads the SAME network-scoped `WalletPrivacyConfig.paymasterUrl` that
+ * `WalletPrivacySession` threads into the shadow relay, so `settlementEnabled` is only ever true when
+ * the shadow-account proof will actually relay through a MAINNET paymaster — never the Sepolia relay.
  */
 export function crossChainConfigFor(
   network: WalletNetworkId,
@@ -67,7 +56,8 @@ export function crossChainConfigFor(
   const anonymizer = getNetworkConfig(network).shadowAccountAnonymizerAddress.trim();
   const configured = privacy !== null && anonymizer.length > 0;
   const isMainnet = network === "mainnet";
-  const paymaster = isMainnet && mainnetPaymasterConfigured(env);
+  const paymasterUrl = privacy?.paymasterUrl;
+  const paymaster = isMainnet && paymasterUrl !== undefined && paymasterUrl.startsWith("https://");
   const settlementEnabled = configured && isMainnet && paymaster;
 
   let reason: string | null = null;

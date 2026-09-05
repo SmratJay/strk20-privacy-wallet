@@ -59,4 +59,6 @@ export {
   transferCalldata,
   type NearIntentAdapterOptions,
   type NearIntentPhaseUpdate,
+  type NearIntentReadiness,
+  type NearIntentReadinessCheck,
 } from "./adapter";

@@ -55,6 +55,7 @@ import {
   type NearIntentPrepared,
   type NearIntentQuote,
   type NearIntentReceipt,
+  type NearIntentReadiness,
   type NearIntentStatus,
 } from "@/features/near-intents";
 
@@ -1223,6 +1224,15 @@ export class WalletRuntime {
   async getCrossChainStatus(depositAddress: string): Promise<NearIntentStatus> {
     const adapter = this.requireNearIntentAdapter();
     return adapter.status(depositAddress);
+  }
+
+  /**
+   * LIVE cross-chain readiness check (pre-flight). Returns a structured result WITHOUT funding —
+   * the caller (UI/preflight) can stop before any deposit is created/funded. Never a public fallback.
+   */
+  async checkCrossChainReadiness(intent: CrossChainPrivateIntent): Promise<NearIntentReadiness> {
+    const adapter = this.requireNearIntentAdapter();
+    return adapter.checkReadiness(intent);
   }
 
   /**

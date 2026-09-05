@@ -185,7 +185,10 @@ export async function shadowAccountInvoke(
   const shadowAddress = await shadowAddressFromCommitment(commitment, BigInt(anonymizer));
 
   // 2. Private-paymaster relay terms (fee is a private-note withdrawal added to the proof actions).
-  const paymaster = options.paymaster ?? new Strk20Paymaster();
+  //    The relay URL is network-scoped via the adapter (`adapter.paymasterUrl`), so MAINNET shadow
+  //    execution uses the MAINNET relay — it NEVER reuses the pinned Sepolia URL.
+  const paymaster =
+    options.paymaster ?? new Strk20Paymaster(adapter.paymasterUrl ? { url: adapter.paymasterUrl } : undefined);
   const terms: PaymasterBuild = await paymaster.build(poolAddress, params.token);
   const fee = terms.fee;
   const required = params.amount + (fee?.amount ?? 0n);

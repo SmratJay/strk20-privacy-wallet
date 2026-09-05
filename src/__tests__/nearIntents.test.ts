@@ -22,6 +22,7 @@ const ANONYMIZER = "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa489
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA =
     "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f";
+  process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_MAINNET = "0x01";
   process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
   process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
 });
@@ -337,6 +338,10 @@ afterEach(() => {
   delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
   delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
   delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
+  delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET;
+  delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL_MAINNET;
+  delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_MAINNET;
+  delete process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET;
 });
 
 describe("intent validation", () => {
@@ -712,9 +717,61 @@ describe("status machine + availability", () => {
         },
         { pollMs: 1 },
       ),
-    ).rejects.toThrow(/settlement is not enabled/i);
+    ).rejects.toThrow(/pre-flight failed/i);
     // No shadow funding happened (the paymaster relay never fired).
     expect(sdkState.paymasterExecutions).toBe(0);
+  });
+});
+
+describe("live readiness (pre-flight)", () => {
+  it("is ready when all prerequisites hold", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    const readiness = await runtime.checkCrossChainReadiness(validIntent());
+    expect(readiness.ready).toBe(true);
+    expect(readiness.checks.find((c) => c.name === "mainnet settlement enabled")?.ok).toBe(true);
+  });
+
+  it("fails on insufficient private STRK (mature balance floor)", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    const readiness = await runtime.checkCrossChainReadiness(validIntent({ sourceAmount: 1_000_000n }));
+    expect(readiness.ready).toBe(false);
+    expect(readiness.checks.find((c) => c.name === "enough private STRK")?.ok).toBe(false);
+  });
+
+  it("fails on an invalid destination address", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity("orrange", 0n);
+    const readiness = await runtime.checkCrossChainReadiness({ ...validIntent(), destinationAddress: "0x1234" });
+    expect(readiness.ready).toBe(false);
+  });
+
+  it("fails when the shadow identity is not resolvable", async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    // No identity created for (orrange, 0).
+    const readiness = await runtime.checkCrossChainReadiness(validIntent());
+    expect(readiness.ready).toBe(false);
+    expect(readiness.checks.find((c) => c.name === "shadow identity resolvable")?.ok).toBe(false);
+  });
+
+  it("settlement stays disabled without a mainnet paymaster URL (never the Sepolia relay)", () => {
+    process.env.NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET = "https://prover.mainnet";
+    process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL_MAINNET = "https://discovery.mainnet";
+    process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_MAINNET = "0x01";
+    delete process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET;
+    const withoutPaymaster = crossChainConfigFor("mainnet");
+    expect(withoutPaymaster.configured).toBe(true);
+    expect(withoutPaymaster.available).toBe(true);
+    expect(withoutPaymaster.settlementEnabled).toBe(false);
+
+    process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET = "https://paymaster.avnu.fi";
+    const withPaymaster = crossChainConfigFor("mainnet");
+    expect(withPaymaster.settlementEnabled).toBe(true);
   });
 });
 

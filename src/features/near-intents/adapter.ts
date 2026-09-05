@@ -68,6 +68,20 @@ export interface NearIntentPhaseUpdate {
   amountOut?: bigint | null;
 }
 
+/** A single pre-flight readiness check result (never contains secrets). */
+export interface NearIntentReadinessCheck {
+  name: string;
+  ok: boolean;
+  detail: string | null;
+}
+
+/** Structured live-readiness result for funding a cross-chain deposit. */
+export interface NearIntentReadiness {
+  ready: boolean;
+  checks: NearIntentReadinessCheck[];
+  reason: string | null;
+}
+
 export interface NearIntentAdapterOptions {
   wallet: UnlockedWallet;
   privacySession: WalletPrivacySession;
@@ -129,17 +143,74 @@ export class NearIntentAdapter {
   }
 
   /**
-   * Gate REAL SETTLEMENT (funding a NEAR deposit from the shadow account) on the full stack being
-   * present: MAINNET STRK20 + MAINNET private paymaster + funded account. On any other network the
-   * adapter REFUSES to fund — it never sends real STRK toward a mainnet NEAR deposit from a network
-   * NEAR cannot see (which would strand funds).
+   * LIVE readiness check — run BEFORE funding a NEAR deposit. Never a public fallback. Returns a
+   * structured result (does not throw) so the caller can surface exactly which prerequisite failed
+   * and stop before creating/funding the live deposit.
    */
-  private requireSettlementEnabled(): void {
-    if (!this.config.settlementEnabled) {
-      throw new NearIntentError(
-        `Cross-chain settlement is not enabled on ${this.network}${this.config.reason ? `: ${this.config.reason}` : "."}`,
-      );
+  async checkReadiness(intent: CrossChainPrivateIntent): Promise<NearIntentReadiness> {
+    const checks: NearIntentReadinessCheck[] = [];
+    const add = (name: string, ok: boolean, detail: string | null = null) => checks.push({ name, ok, detail });
+
+    const invalid = validateCrossChainIntent(intent);
+    add("intent valid", !invalid, invalid);
+
+    // The authoritative cross-chain config already encodes: active network is mainnet + STRK20
+    // configured + mainnet private paymaster relay. `settlementEnabled` is only true when all three
+    // hold, so a non-mainnet (or unconfigured) network fails here with an honest reason.
+    add(
+      "mainnet settlement enabled",
+      this.config.settlementEnabled,
+      this.config.settlementEnabled ? null : (this.config.reason ?? `active network is ${this.network}`),
+    );
+
+    const destInvalid = validateDestinationAddress(intent.destinationAddress);
+    add("destination valid", !destInvalid, destInvalid);
+
+    // Route resolution (also yields the source token address for the balance check).
+    let route: NearIntentRoute | null = null;
+    let routeDetail: string | null = null;
+    try {
+      route = this.resolveRoute(intent);
+    } catch (err) {
+      routeDetail = err instanceof Error ? err.message : "unknown route error";
     }
+    add("route supported", route !== null, routeDetail);
+
+    // Shadow identity must resolve for THIS wallet + network (private execution identity).
+    let identityOk = true;
+    let identityDetail: string | null = null;
+    try {
+      this.resolveIdentity(intent.appName, intent.nonce);
+    } catch (err) {
+      identityOk = false;
+      identityDetail = err instanceof Error ? err.message : "unknown identity error";
+    }
+    add("shadow identity resolvable", identityOk, identityDetail);
+
+    // Enough (mature) private STRK to cover the source amount. The exact relay fee is discovered
+    // at execution; this is a minimal floor, not the total.
+    let balanceOk = true;
+    let balanceDetail: string | null = null;
+    if (route) {
+      try {
+        const snapshot = await this.privacySession.getPrivateBalanceSnapshot(route.sourceToken.address);
+        if (snapshot.balance < intent.sourceAmount) {
+          balanceOk = false;
+          balanceDetail = `private balance ${snapshot.balance} < source amount ${intent.sourceAmount}`;
+        }
+      } catch (err) {
+        balanceOk = false;
+        balanceDetail = err instanceof Error ? err.message : "could not read private balance";
+      }
+      add("enough private STRK", balanceOk, balanceDetail);
+    }
+
+    const failures = checks.filter((c) => !c.ok);
+    return {
+      ready: failures.length === 0,
+      checks,
+      reason: failures.length > 0 ? failures.map((f) => f.name).join(", ") : null,
+    };
   }
 
   private resolveIdentity(appName: string, nonce: bigint) {
@@ -265,7 +336,11 @@ export class NearIntentAdapter {
     if (intent.expiry !== undefined && intent.expiry <= Date.now()) {
       throw new NearIntentError("Cross-chain intent has expired.");
     }
-    this.requireSettlementEnabled();
+    // LIVE pre-flight readiness check — STOP before funding if any prerequisite fails.
+    const readiness = await this.checkReadiness(intent);
+    if (!readiness.ready) {
+      throw new NearIntentError(`Cross-chain pre-flight failed before funding: ${readiness.reason}.`);
+    }
     const route = this.resolveRoute(intent);
 
     // Defensive re-validation: the prepared object must match the intent exactly (never trust a

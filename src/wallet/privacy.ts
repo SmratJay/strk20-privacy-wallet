@@ -100,6 +100,11 @@ export interface WalletPrivacyConfig {
   /** RC5 shadow-account anonymizer (network-scoped PUBLIC config). Required for shadow execution. */
   shadowAccountAnonymizerAddress: string;
   /**
+   * Private-paymaster relay URL (network-scoped). When unset, shadow execution falls back to the
+   * pinned Sepolia paymaster. MAINNET must set this explicitly — the relay never reuses Sepolia.
+   */
+  paymasterUrl?: string;
+  /**
    * Optional discovery OHTTP seam (RFC 9458) forwarded to the STRK20 adapter. Disabled by default;
    * only set when the operator's discovery/relay infrastructure supports it. See Strk20Adapter.
    */
@@ -148,12 +153,20 @@ export function resolveWalletPrivacyConfig(
   ).trim();
   const pool = getNetworkConfig(network).poolAddress;
   const anonymizer = getNetworkConfig(network).shadowAccountAnonymizerAddress.trim();
+  // Private-paymaster relay: network-scoped; MAINNET explicit only (never the Sepolia relay).
+  const paymasterUrl = (
+    network === "mainnet"
+      ? (env?.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ?? process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ?? "")
+      : (env?.NEXT_PUBLIC_STRK20_PAYMASTER_URL_SEPOLIA ?? process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_SEPOLIA ?? "")
+  ).trim();
   return {
     poolContractAddress: pool,
     proverUrl: proverUrl.replace(/\/+$/, ""),
     discoveryUrl: discoveryUrl.replace(/\/+$/, ""),
     feeTokenAddress: STRK_TOKEN_ADDRESS,
     shadowAccountAnonymizerAddress: anonymizer,
+    // Undefined ⇒ shadowAccountInvoke falls back to the pinned Sepolia paymaster (never mainnet).
+    paymasterUrl: paymasterUrl.length > 0 ? paymasterUrl.replace(/\/+$/, "") : undefined,
     // Enable discovery OHTTP ONLY when the operator supports it ("true"); defaults to direct HTTPS.
     discoveryOhttp: ohttpRaw === "true" ? true : undefined,
   };
@@ -211,6 +224,7 @@ export class WalletPrivacySession {
       discoveryUrl: config.discoveryUrl,
       feeTokenAddress: config.feeTokenAddress,
       shadowAccountAnonymizerAddress: config.shadowAccountAnonymizerAddress,
+      paymasterUrl: config.paymasterUrl,
       discoveryOhttp: config.discoveryOhttp,
       onApprovalStatus: (status) => this.onApprovalStatus?.(status),
     });

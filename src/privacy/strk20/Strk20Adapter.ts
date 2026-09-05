@@ -28,6 +28,12 @@ export interface Strk20AdapterConfig {
    * account, never the root wallet).
    */
   shadowAccountAnonymizerAddress?: string;
+  /**
+   * Private-paymaster relay URL (network-scoped). When unset, `shadowAccountInvoke` falls back to
+   * the pinned Sepolia paymaster (`STRK20_PAYMASTER_URL`). Mainnet shadow execution must set this
+   * to the mainnet relay — the adapter NEVER reuses the Sepolia URL for mainnet.
+   */
+  paymasterUrl?: string;
   /** UX callback fired while the STRK allowance prerequisite is being handled. */
   onApprovalStatus?: (status: ApprovalStatus) => void;
   /**
@@ -250,6 +256,11 @@ export class Strk20Adapter {
   /** Network-scoped RC5 shadow-account anonymizer address (undefined when not configured). */
   get shadowAccountAnonymizerAddress(): string | undefined {
     return this.config.shadowAccountAnonymizerAddress;
+  }
+
+  /** Network-scoped private-paymaster relay URL (undefined → Sepolia default in shadowAccountInvoke). */
+  get paymasterUrl(): string | undefined {
+    return this.config.paymasterUrl;
   }
 
   /**
