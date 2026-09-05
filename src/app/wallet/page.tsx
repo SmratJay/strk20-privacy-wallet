@@ -22,6 +22,7 @@ import { WalletCoreSend } from '@/components/wallet/WalletCoreSend';
 import { WalletCorePrivacyPanel } from '@/components/wallet/WalletCorePrivacyPanel';
 import { WalletCorePrivateExecute } from '@/components/wallet/WalletCorePrivateExecute';
 import { PrivateSwapPanel } from '@/components/wallet/PrivateSwapPanel';
+import { PrivateCrossChainPanel } from '@/components/wallet/PrivateCrossChainPanel';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { priceService } from '@/services/priceService';
@@ -374,6 +375,13 @@ export default function WalletPage() {
               <div className="mt-6">
                 <div className="product-eyebrow mb-3">PRIVATE SWAP</div>
                 <PrivateSwapPanel />
+              </div>
+            )}
+
+            {state.privacy.available && (
+              <div className="mt-6">
+                <div className="product-eyebrow mb-3">PRIVATE CROSS-CHAIN</div>
+                <PrivateCrossChainPanel />
               </div>
             )}
 

@@ -45,6 +45,17 @@ import {
   type PrivateSwapQuote,
   type PrivateSwapReceipt,
 } from "@/features/private-swap";
+import {
+  NearIntentAdapter,
+  nearIntentPhaseForStatus,
+  IDLE_NEAR_INTENT,
+  type CrossChainPrivateIntent,
+  type NearIntentOpState,
+  type NearIntentPrepared,
+  type NearIntentQuote,
+  type NearIntentReceipt,
+  type NearIntentStatus,
+} from "@/features/near-intents";
 
 /**
  * Wallet Core — application wallet runtime.
@@ -164,6 +175,8 @@ export interface WalletRuntimeView {
   executionOp: PrivateExecutionOpState;
   /** Honest lifecycle of the latest PRIVATE SWAP (shadow-account swap application action). */
   swapOp: PrivateSwapOpState;
+  /** Honest lifecycle of the latest PRIVATE CROSS-CHAIN intent (NEAR Intents routing). */
+  nearIntentOp: NearIntentOpState;
   /** In-memory activity for this session (never persisted, never on-chain-sensitive). */
   recentTransactions: RecentTransaction[];
   error: string | null;
@@ -273,6 +286,7 @@ export class WalletRuntime {
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
+      nearIntentOp: IDLE_NEAR_INTENT,
       recentTransactions: [],
       error: null,
     };
@@ -359,6 +373,7 @@ export class WalletRuntime {
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
+      nearIntentOp: IDLE_NEAR_INTENT,
       recentTransactions: [],
       error: null,
     };
@@ -392,6 +407,7 @@ export class WalletRuntime {
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
+      nearIntentOp: IDLE_NEAR_INTENT,
       error: null,
     });
   }
@@ -426,6 +442,7 @@ export class WalletRuntime {
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
+      nearIntentOp: IDLE_NEAR_INTENT,
       error: null,
     });
   }
@@ -524,6 +541,7 @@ export class WalletRuntime {
       privacyOp: IDLE_PRIVACY_OP,
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
+      nearIntentOp: IDLE_NEAR_INTENT,
       recentTransactions: [],
       error: null,
     });
@@ -1139,5 +1157,147 @@ export class WalletRuntime {
         message: result.phase === "reverted" ? "Private swap reverted on-chain." : result.message,
       },
     });
+  }
+
+  // ─────────────────────── Private cross-chain (NEAR Intents routing) ───────────────────────
+
+  private requireNearIntentAdapter(): NearIntentAdapter {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to route cross-chain intents.");
+    const privacy = this.requirePrivacySession();
+    return new NearIntentAdapter({ wallet: session, privacySession: privacy, network: this.view.network });
+  }
+
+  /**
+   * Fetch a REAL dry cross-chain quote from the NEAR Intents 1Click API (pricing only, no deposit
+   * address reserved). The quote is bound to the route + amount + destination address and never
+   * trusted from the UI.
+   */
+  async quoteCrossChain(intent: CrossChainPrivateIntent): Promise<NearIntentQuote> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to quote cross-chain intents.");
+    const adapter = this.requireNearIntentAdapter();
+    return adapter.quote(intent);
+  }
+
+  /** RESERVE a NEAR Intents deposit address (publish step) for a confirmed cross-chain quote. */
+  async createCrossChainIntent(
+    intent: CrossChainPrivateIntent,
+    confirmedQuote?: NearIntentQuote,
+  ): Promise<NearIntentPrepared> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to create cross-chain intents.");
+    const guard = this.captureGuard();
+    const adapter = this.requireNearIntentAdapter();
+    const prepared = await adapter.createIntent(intent, confirmedQuote);
+    if (!this.isCurrent(guard)) return prepared;
+    this.setView({
+      nearIntentOp: {
+        ...IDLE_NEAR_INTENT,
+        phase: "intent-created",
+        sourceSymbol: intent.sourceAsset.toUpperCase(),
+        destinationSymbol: intent.destinationAsset.toUpperCase(),
+        sourceAmount: intent.sourceAmount,
+        amountOut: prepared.amountOut,
+        depositAddress: prepared.depositAddress,
+        destinationAddress: intent.destinationAddress,
+        message: null,
+      },
+      error: null,
+    });
+    return prepared;
+  }
+
+  /** Poll the NEAR Intents status for a deposit address (reconcile without re-executing). */
+  async getCrossChainStatus(depositAddress: string): Promise<NearIntentStatus> {
+    const adapter = this.requireNearIntentAdapter();
+    return adapter.status(depositAddress);
+  }
+
+  /**
+   * Execute a REAL cross-chain intent: the shadow account transfers private STRK to the reserved
+   * NEAR Intents deposit address, then the runtime tracks the NEAR settlement to a terminal state.
+   *
+   *   private STRK → shadow identity → shadow account → NEAR deposit → solver → USDC (Base)
+   *
+   * The root wallet is never the on-chain depositor (the shadow account is); the outer tx is
+   * relayed by the private paymaster; NEAR is routing/settlement only (privacy stays in STRK20).
+   *
+   * Lifecycle (visible in `nearIntentOp`):
+   *   preparing → awaiting-source-deposit → source-confirming → solver-executing
+   *     → success / refunded / failed / unknown
+   * Success is NEVER claimed before the NEAR service reconciles destination settlement (SUCCESS).
+   */
+  async executeCrossChainIntent(
+    intent: CrossChainPrivateIntent,
+    prepared: NearIntentPrepared,
+    options?: { trackTimeoutMs?: number; pollMs?: number },
+  ): Promise<NearIntentReceipt> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to execute cross-chain intents.");
+    const adapter = this.requireNearIntentAdapter();
+    const guard = this.captureGuard();
+    this.setView({
+      nearIntentOp: {
+        ...IDLE_NEAR_INTENT,
+        phase: "preparing",
+        sourceSymbol: intent.sourceAsset.toUpperCase(),
+        destinationSymbol: intent.destinationAsset.toUpperCase(),
+        sourceAmount: intent.sourceAmount,
+        amountOut: prepared.amountOut ?? null,
+        depositAddress: prepared.depositAddress ?? null,
+        destinationAddress: intent.destinationAddress,
+        message: null,
+      },
+      error: null,
+    });
+    try {
+      const receipt = await adapter.execute(intent, prepared, {
+        trackTimeoutMs: options?.trackTimeoutMs,
+        pollMs: options?.pollMs,
+        onPhase: (update) => {
+          if (!this.isCurrent(guard)) return;
+          this.setView({
+            nearIntentOp: {
+              ...this.view.nearIntentOp,
+              phase: update.phase,
+              status: update.status ?? this.view.nearIntentOp.status,
+              amountOut: update.amountOut ?? this.view.nearIntentOp.amountOut,
+              message: null,
+            },
+          });
+        },
+      });
+      if (!this.isCurrent(guard)) return receipt;
+      this.setView({
+        nearIntentOp: {
+          ...this.view.nearIntentOp,
+          phase: nearIntentPhaseForStatus(receipt.status),
+          depositAddress: receipt.depositAddress,
+          destinationAddress: receipt.destinationAddress,
+          amountOut: receipt.amountOut,
+          shadowAddress: receipt.shadowAddress,
+          transactionHash: receipt.transactionHash,
+          status: receipt.status,
+          message: null,
+        },
+        recentTransactions: [
+          { hash: receipt.transactionHash, at: Date.now(), kind: "privateTransfer" as const },
+          ...this.view.recentTransactions,
+        ].slice(0, 20),
+      });
+      return receipt;
+    } catch (err) {
+      if (!this.isCurrent(guard)) throw err;
+      const unknown = err instanceof Error && /reconcile|settle within|could not reconcile/i.test(err.message);
+      this.setView({
+        nearIntentOp: {
+          ...this.view.nearIntentOp,
+          phase: unknown ? "unknown" : "failed",
+          message: err instanceof Error ? err.message : "Cross-chain intent failed.",
+        },
+      });
+      throw err;
+    }
   }
 }
