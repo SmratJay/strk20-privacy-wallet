@@ -70,6 +70,9 @@ import type { WalletStorage } from "./storage";
 
 export const VIEWING_KEY_DOMAIN_PREFIX = "ORRANGE_WALLET_CORE_STRK20_VIEWING_KEY_V1";
 
+/** Mainnet proving is an async job (Starkscan relay); allow up to 15 minutes per proof. */
+export const MAINNET_PROVER_TIMEOUT_MS = 15 * 60 * 1000;
+
 /** Canonicalize a scalar to the STRK20 viewing-key range `[1, floor(n/2)]`. */
 export function canonicalizeViewingKey(k: bigint): bigint {
   const n = ec.starkCurve.CURVE.n;
@@ -104,6 +107,11 @@ export interface WalletPrivacyConfig {
    * pinned Sepolia paymaster. MAINNET must set this explicitly — the relay never reuses Sepolia.
    */
   paymasterUrl?: string;
+  /**
+   * Proving-service per-request timeout (ms). MAINNET uses the async Starkscan relay (long proofs);
+   * when unset defaults to the SDK's fast synchronous default. Sepolia is fast (unset).
+   */
+  proverTimeoutMs?: number;
   /**
    * Optional discovery OHTTP seam (RFC 9458) forwarded to the STRK20 adapter. Disabled by default;
    * only set when the operator's discovery/relay infrastructure supports it. See Strk20Adapter.
@@ -159,6 +167,9 @@ export function resolveWalletPrivacyConfig(
       ? (env?.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ?? process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_MAINNET ?? "")
       : (env?.NEXT_PUBLIC_STRK20_PAYMASTER_URL_SEPOLIA ?? process.env.NEXT_PUBLIC_STRK20_PAYMASTER_URL_SEPOLIA ?? "")
   ).trim();
+  // MAINNET proving is async (Starkscan job+poll) and can take minutes; Sepolia is a fast
+  // synchronous prover. Use a long timeout only for mainnet; never inherit across networks.
+  const proverTimeoutMs = network === "mainnet" ? MAINNET_PROVER_TIMEOUT_MS : undefined;
   return {
     poolContractAddress: pool,
     proverUrl: proverUrl.replace(/\/+$/, ""),
@@ -167,6 +178,7 @@ export function resolveWalletPrivacyConfig(
     shadowAccountAnonymizerAddress: anonymizer,
     // Undefined ⇒ shadowAccountInvoke falls back to the pinned Sepolia paymaster (never mainnet).
     paymasterUrl: paymasterUrl.length > 0 ? paymasterUrl.replace(/\/+$/, "") : undefined,
+    proverTimeoutMs,
     // Enable discovery OHTTP ONLY when the operator supports it ("true"); defaults to direct HTTPS.
     discoveryOhttp: ohttpRaw === "true" ? true : undefined,
   };
@@ -225,6 +237,7 @@ export class WalletPrivacySession {
       feeTokenAddress: config.feeTokenAddress,
       shadowAccountAnonymizerAddress: config.shadowAccountAnonymizerAddress,
       paymasterUrl: config.paymasterUrl,
+      proverTimeoutMs: config.proverTimeoutMs,
       discoveryOhttp: config.discoveryOhttp,
       onApprovalStatus: (status) => this.onApprovalStatus?.(status),
     });

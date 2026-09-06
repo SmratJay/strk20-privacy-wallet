@@ -34,6 +34,12 @@ export interface Strk20AdapterConfig {
    * to the mainnet relay — the adapter NEVER reuses the Sepolia URL for mainnet.
    */
   paymasterUrl?: string;
+  /**
+   * Per-request timeout (ms) for the proving service. Mainnet proofs occupy a prover slot for an
+   * unbounded workload-dependent duration (the Starkscan relay is an async job), so mainnet must
+   * use a long timeout (e.g. 15 minutes); the Sepolia synchronous prover is fast (default 30s).
+   */
+  proverTimeoutMs?: number;
   /** UX callback fired while the STRK allowance prerequisite is being handled. */
   onApprovalStatus?: (status: ApprovalStatus) => void;
   /**
@@ -308,7 +314,11 @@ export class Strk20Adapter {
     const transfers = createPrivateTransfers({
       account: { address: user.address, signer: user.account.signer },
       viewingKeyProvider: { getViewingKey: async () => user.viewingKey },
-      provingProvider: { url: this.config.proverUrl, chainId: this.config.chainId },
+      provingProvider: {
+        url: this.config.proverUrl,
+        chainId: this.config.chainId,
+        requestTimeoutMs: this.config.proverTimeoutMs,
+      },
       discoveryProvider,
       poolContractAddress: this.config.poolContractAddress,
       shadowAccountAnonymizerAddress: this.config.shadowAccountAnonymizerAddress,

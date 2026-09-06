@@ -23,6 +23,7 @@ import { WalletCorePrivacyPanel } from '@/components/wallet/WalletCorePrivacyPan
 import { WalletCorePrivateExecute } from '@/components/wallet/WalletCorePrivateExecute';
 import { PrivateSwapPanel } from '@/components/wallet/PrivateSwapPanel';
 import { PrivateCrossChainPanel } from '@/components/wallet/PrivateCrossChainPanel';
+import { DemoEvidencePanel } from '@/components/wallet/DemoEvidencePanel';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { priceService } from '@/services/priceService';
@@ -384,6 +385,11 @@ export default function WalletPage() {
                 <PrivateCrossChainPanel />
               </div>
             )}
+
+            <div className="mt-6">
+              <div className="product-eyebrow mb-3">EVIDENCE</div>
+              <DemoEvidencePanel />
+            </div>
 
             <section className="product-card-flat p-5 sm:p-6 mt-6">
               <div className="flex items-center justify-between mb-4">
