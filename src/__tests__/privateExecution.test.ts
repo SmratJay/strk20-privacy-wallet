@@ -219,7 +219,7 @@ function patchWalletAccount(wallet: { account: { provider: unknown; execute: unk
 
 function makeRuntime(finality?: { execution_status: string }) {
   const storage = createMemoryStorage();
-  const runtime = new WalletRuntime({ storage, providerFactory: () => makeProvider(finality) });
+  const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => makeProvider(finality) });
   return { runtime, storage };
 }
 

@@ -326,7 +326,7 @@ describe("NearIntentProvider (adapter wrapper translation)", () => {
 
 describe("WalletRuntime privacy-hub bridge (thin)", () => {
   it("rejects hub calls when the wallet is locked", async () => {
-    const runtime = new WalletRuntime({ storage: createMemoryStorage() });
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia" });
     await expect(runtime.quotePrivacyHub(validIntent())).rejects.toThrow(/locked/i);
     await expect(runtime.executePrivacyHub(validIntent())).rejects.toThrow(/locked/i);
     await expect(runtime.getPrivacyHubStatus("0xdeposit")).rejects.toThrow(/locked/i);

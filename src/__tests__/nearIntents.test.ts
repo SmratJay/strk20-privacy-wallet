@@ -214,6 +214,7 @@ function makeRuntime(config?: CrossChainNetworkConfig | null) {
   const storage = createMemoryStorage();
   const runtime = new WalletRuntime({
     storage,
+    network: "sepolia",
     providerFactory: () => makeProvider(),
     crossChainConfig: config !== undefined ? config : settlementConfig(),
   });

@@ -1,6 +1,6 @@
 import type { Call } from "starknet";
 import { RpcProvider } from "starknet";
-import { getNetworkConfig } from "@/config/networks";
+import { DEFAULT_NETWORK_ID, getNetworkConfig } from "@/config/networks";
 import type { TokenInfo } from "@/config/networks";
 import { chainBalances } from "@/chains/publicBalances";
 import {
@@ -194,6 +194,12 @@ export interface WalletRuntimeView {
 
 export interface WalletRuntimeOptions {
   storage?: WalletStorage;
+  /**
+   * The initial network the runtime starts on. Defaults to the app's default network
+   * (`DEFAULT_NETWORK_ID` = mainnet). All wallet/balance/privacy operations use this network until
+   * `setNetwork()` switches (kept in sync with NetworkContext by WalletRuntimeProvider).
+   */
+  network?: WalletNetworkId;
   /** TEST SEAM ONLY: inject a deterministic provider (never weakens custody/signing). */
   providerFactory?: (network: WalletNetworkId) => RpcProvider;
   /** TEST SEAM ONLY: inject a deterministic account adapter (deploy/probe) for tests. */
@@ -271,6 +277,8 @@ export class WalletRuntime {
   private readonly providerFactory?: (n: WalletNetworkId) => RpcProvider;
   private readonly accountAdapterFactory?: (publicKey: string, address?: string) => import("./account").AccountAdapter;
   private readonly privacyConfig: WalletPrivacyConfig | null;
+  /** True when `privacyConfig` was explicitly provided (a forced override; null = force OFF). */
+  private readonly privacyConfigOverride: boolean;
   /** TEST SEAM ONLY: cross-chain network config override (never a public-execution fallback). */
   private readonly crossChainConfig: CrossChainNetworkConfig | null;
   private readonly listeners = new Set<() => void>();
@@ -282,11 +290,15 @@ export class WalletRuntime {
     this.storage = options.storage ?? defaultStorage();
     this.providerFactory = options.providerFactory;
     this.accountAdapterFactory = options.accountAdapterFactory;
-    this.privacyConfig =
-      options.privacyConfig !== undefined ? options.privacyConfig : resolveWalletPrivacyConfig("sepolia");
+    // Privacy config is a TEST-SEAM override only. When NOT provided, each network resolves its own
+    // operator config (never a hard-coded network, never another network's endpoints).
+    this.privacyConfigOverride = options.privacyConfig !== undefined;
+    this.privacyConfig = options.privacyConfig !== undefined ? options.privacyConfig : null;
     this.crossChainConfig = options.crossChainConfig ?? null;
+    const initialNetwork = options.network ?? DEFAULT_NETWORK_ID;
+    const initialPrivacyConfig = this.privacyConfigOverride ? this.privacyConfig : resolveWalletPrivacyConfig(initialNetwork);
     this.view = {
-      network: "sepolia",
+      network: initialNetwork,
       wallets: [],
       selectedWalletId: null,
       account: null,
@@ -294,8 +306,8 @@ export class WalletRuntime {
       deploymentStatus: "unknown",
       publicBalances: [],
       privacy: idlePrivacy(
-        this.privacyConfig !== null,
-        this.privacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
+        initialPrivacyConfig !== null,
+        initialPrivacyConfig !== null ? null : "STRK20 proving/discovery services are not configured.",
       ),
       privateBalances: [],
       privacyOp: IDLE_PRIVACY_OP,
@@ -305,7 +317,7 @@ export class WalletRuntime {
       recentTransactions: [],
       error: null,
     };
-    if (!options.lazy) this.reloadForNetwork(this.view.network);
+    if (!options.lazy) this.reloadForNetwork(initialNetwork);
   }
 
   /** Load the registry for the current network. Called from a React effect for `lazy` runtimes. */
@@ -371,7 +383,9 @@ export class WalletRuntime {
     this.privacySession = null;
     this.session = null;
     this.deployedAtBlock = null;
-    const privacyConfig = this.privacyConfig !== null ? resolveWalletPrivacyConfig(network) : null;
+    // Per-network privacy resolution. The `privacyConfig` OPTION is a test-seam override; when not
+    // provided each network resolves its OWN operator config (never another network's endpoints).
+    const privacyConfig = this.privacyConfigOverride ? this.privacyConfig : resolveWalletPrivacyConfig(network);
     this.view = {
       network,
       wallets,
@@ -399,7 +413,7 @@ export class WalletRuntime {
     this.invalidate();
     this.session = wallet;
     if (this.privacySession) this.privacySession.dispose();
-    const privacyConfig = this.privacyConfig !== null ? resolveWalletPrivacyConfig(this.view.network) : null;
+    const privacyConfig = this.privacyConfigOverride ? this.privacyConfig : resolveWalletPrivacyConfig(this.view.network);
     this.privacySession =
       privacyConfig !== null
         ? new WalletPrivacySession(wallet, this.view.network, privacyConfig, this.storage, {
@@ -427,13 +441,13 @@ export class WalletRuntime {
     });
   }
 
-  /** Select a network. Unsupported networks are rejected (never enabled). */
+  /**
+   * Select a network. The runtime is kept in sync with NetworkContext by `WalletRuntimeProvider`
+   * (which calls this on every selected-network change). Every wallet/balance/privacy operation
+   * switches to the newly selected network; in-flight work is invalidated (generation guard).
+   */
   setNetwork(network: WalletNetworkId): void {
     if (network === this.view.network) return;
-    if (network === "mainnet") {
-      this.setView({ error: "Starknet Mainnet is not enabled for Wallet Core accounts yet." });
-      return;
-    }
     this.reloadForNetwork(network);
   }
 

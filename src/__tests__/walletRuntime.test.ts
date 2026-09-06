@@ -28,7 +28,7 @@ function mockProvider() {
 
 function makeRuntime() {
   const storage = createMemoryStorage();
-  const runtime = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+  const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
   return { runtime, storage };
 }
 
@@ -81,7 +81,7 @@ describe("runtime lifecycle", () => {
       waitForTransaction: vi.fn(async () => ({})),
     } as never;
     const storage = createMemoryStorage();
-    const braavosRuntime = new WalletRuntime({ storage, providerFactory: () => provider });
+    const braavosRuntime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => provider });
     const wallet = await braavosRuntime.import({
       accountType: "braavos-v1.2.0",
       secret,
@@ -114,7 +114,7 @@ describe("runtime lifecycle", () => {
     const { runtime, storage } = makeRuntime();
     await createdWallet(runtime);
     // Simulate a page reload: a brand-new runtime over the same storage.
-    const reloaded = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+    const reloaded = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
     const s = reloaded.getState();
     expect(s.wallets).toHaveLength(1);
     expect(s.isUnlocked).toBe(false);
@@ -154,13 +154,51 @@ describe("runtime lifecycle", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it("unsupported network stays disabled", async () => {
+  it("setNetwork switches the runtime to the selected network (mainnet is enabled now)", async () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
     runtime.setNetwork("mainnet");
     const s = runtime.getState();
-    expect(s.network).toBe("sepolia");
-    expect(s.error).toMatch(/not enabled/i);
+    expect(s.network).toBe("mainnet");
+    expect(s.error).toBeNull();
+    // Switching clears the session and reloads the per-network registry.
+    expect(s.isUnlocked).toBe(false);
+  });
+
+  it("defaults to the app default network (mainnet) when no network is provided", () => {
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    expect(runtime.getState().network).toBe("mainnet");
+  });
+
+  it("initializes on the provided network (sepolia) instead of a hard-coded default", () => {
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true, network: "sepolia" });
+    expect(runtime.getState().network).toBe("sepolia");
+  });
+
+  it("switching networks reloads per-network privacy config (never inherits endpoints)", async () => {
+    // Configure the SEPOLIA operator (mainnet has no operator in tests) to prove per-network
+    // resolution: sepolia → available, mainnet → honestly unavailable (no Sepolia fallback).
+    process.env.NEXT_PUBLIC_STRK20_PROVER_URL = "https://prover.test";
+    process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL = "https://discovery.test";
+    process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA = "0x05f23b2497e99dde2c9aed326cc36c2c41fd11ce946435157521caa4895d129f";
+    delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL_MAINNET;
+    delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL_MAINNET;
+    delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_MAINNET;
+    try {
+      const { runtime } = makeRuntime();
+      await createdWallet(runtime);
+      expect(runtime.getState().network).toBe("sepolia");
+      expect(runtime.getState().privacy.available).toBe(true);
+      runtime.setNetwork("mainnet");
+      const s = runtime.getState();
+      expect(s.network).toBe("mainnet");
+      // Mainnet STRK20 operator is NOT configured → privacy honestly unavailable (no Sepolia fallback).
+      expect(s.privacy.available).toBe(false);
+    } finally {
+      delete process.env.NEXT_PUBLIC_STRK20_PROVER_URL;
+      delete process.env.NEXT_PUBLIC_STRK20_DISCOVERY_URL;
+      delete process.env.NEXT_PUBLIC_STRK20_ANONYMIZER_SEPOLIA;
+    }
   });
 
   it("delete removes the selected wallet and returns to locked/empty state", async () => {

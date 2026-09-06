@@ -106,6 +106,7 @@ function makeRuntime(opts: { provider?: unknown; adapter?: (pk: string, address?
   const storage = createMemoryStorage();
   const runtime = new WalletRuntime({
     storage,
+    network: "sepolia",
     providerFactory: () => (opts.provider ?? mockProvider()) as never,
     accountAdapterFactory: opts.adapter,
   });
@@ -134,12 +135,12 @@ afterEach(() => {
 describe("unlock → dashboard transition", () => {
   it("stored wallet → unlock → gate gone → dashboard state → exact walletId/address", async () => {
     const storage = createMemoryStorage();
-    const r1 = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+    const r1 = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
     const wallet = await r1.create(PASSWORD);
     r1.lock();
 
     // Fresh page load: a new runtime over the same storage starts LOCKED (the gate).
-    const r2 = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+    const r2 = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
     r2.init();
     let s = r2.getState();
     expect(s.wallets).toHaveLength(1);
@@ -158,10 +159,10 @@ describe("unlock → dashboard transition", () => {
 
   it("wrong password keeps the gate and exposes a readable error", async () => {
     const storage = createMemoryStorage();
-    const r1 = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+    const r1 = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
     await r1.create(PASSWORD);
 
-    const r2 = new WalletRuntime({ storage, providerFactory: () => mockProvider() });
+    const r2 = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => mockProvider() });
     r2.init();
     await expect(r2.unlock("wrong-password")).rejects.toThrow();
     const s = r2.getState();
@@ -311,6 +312,7 @@ describe("first-use STRK20 privacy setup", () => {
     // Simulate an operator-less environment.
     const offline = new WalletRuntime({
       storage: createMemoryStorage(),
+      network: "sepolia",
       providerFactory: () => mockProvider(),
       privacyConfig: null,
     });
@@ -837,7 +839,7 @@ describe("shadow-account anonymizer config", () => {
         getBlockNumber: vi.fn(async () => 1),
         waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),
       } as never;
-      const runtime = new WalletRuntime({ storage: createMemoryStorage(), providerFactory: () => provider });
+      const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia", providerFactory: () => provider });
       const wallet = await runtime.create(PASSWORD);
       const identity = await runtime.createShadowIdentity("treasury", 0n);
       expect(identity.appName).toBe("treasury");

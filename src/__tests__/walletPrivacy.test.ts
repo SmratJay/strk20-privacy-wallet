@@ -77,7 +77,7 @@ function fastProvider() {
 
 function makeRuntime() {
   const storage = createMemoryStorage();
-  const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+  const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
   return { runtime, storage };
 }
 

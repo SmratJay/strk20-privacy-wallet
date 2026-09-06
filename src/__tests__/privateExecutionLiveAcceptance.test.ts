@@ -78,7 +78,7 @@ describe("REAL SHADOW ACCOUNT — real Sepolia acceptance", () => {
       signer: deployer.privateKey,
     });
 
-    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia", lazy: true });
     runtime.init();
     const wallet = await runtime.create(PASSWORD);
     console.log(`[live-acceptance] fresh wallet ${wallet.address}`);

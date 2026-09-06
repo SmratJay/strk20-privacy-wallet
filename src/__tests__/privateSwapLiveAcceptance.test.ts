@@ -80,7 +80,7 @@ describe("REAL SHADOW ACCOUNT — real Sepolia private swap acceptance", () => {
     const provider = new RpcProvider({ nodeUrl: rpc ?? "https://starknet-sepolia-rpc.publicnode.com" });
     const deployerAcct = new Account({ provider, address: deployer.address, signer: deployer.privateKey });
 
-    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia", lazy: true });
     runtime.init();
     const wallet = await runtime.create(PASSWORD);
     console.log(`[private-swap-live] fresh wallet ${wallet.address}`);

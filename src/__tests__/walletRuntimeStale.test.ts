@@ -70,7 +70,7 @@ describe("stale async state protection", () => {
   it("ignores a stale deployment result after lock", async () => {
     const storage = createMemoryStorage();
     const slow = slowProvider();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => slow.provider });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => slow.provider });
 
     await createWallet(runtime);
     expect(runtime.getState().deploymentStatus).toBe("not_deployed");
@@ -85,7 +85,7 @@ describe("stale async state protection", () => {
 
   it("ignores a stale deployment result after a wallet switch", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     const walletA: UnlockedWallet = await runtime.create(PASSWORD);
 
     // Make wallet A's deployment probe controllable so a refresh stays in flight across a switch.
@@ -112,7 +112,7 @@ describe("stale async state protection", () => {
 
   it("ignores a stale public-balance result after lock", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     await createWallet(runtime);
 
     const d = deferred<unknown[]>();
@@ -129,7 +129,7 @@ describe("stale async state protection", () => {
 
   it("ignores a stale public-balance result after a wallet switch", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
 
     await createWallet(runtime);
     const secretB = canonicalizeSecret(generateSecretKey());
@@ -156,7 +156,7 @@ describe("stale async state protection", () => {
 
   it("lock cannot be undone by a pending create resolving later", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     // A pending create is not observable here; instead verify that after lock + stale deployment
     // resolution the session stays locked (never resurrected by async work).
     await createWallet(runtime);
@@ -168,7 +168,7 @@ describe("stale async state protection", () => {
 
   it("ignores an old async result after a network change (guard network arm)", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     await createWallet(runtime);
 
     const d = deferred<unknown[]>();
@@ -191,7 +191,7 @@ describe("stale async state protection", () => {
 describe("stale create/import/unlock cannot replace the current wallet", () => {
   it("a stale create result does not adopt a session after lock", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
 
     // create() awaits WebCrypto encryption, so we can invalidate while it is in flight.
     const pending = runtime.create(PASSWORD);
@@ -206,7 +206,7 @@ describe("stale create/import/unlock cannot replace the current wallet", () => {
   it("a stale import result does not adopt a session after lock", async () => {
     const storage = createMemoryStorage();
     const slow = slowProvider();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => slow.provider });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => slow.provider });
 
     const secret = canonicalizeSecret(generateSecretKey());
     const pending = runtime.import({ accountType: "ready-v0.4.0", secret, password: PASSWORD });
@@ -222,7 +222,7 @@ describe("stale create/import/unlock cannot replace the current wallet", () => {
 
   it("a stale unlock result does not resurrect a session after lock", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     await createWallet(runtime);
     runtime.lock();
 
@@ -240,7 +240,7 @@ describe("stale create/import/unlock cannot replace the current wallet", () => {
 describe("UI-facing state safety", () => {
   it("never exposes the raw private key / signer / account through getState", async () => {
     const storage = createMemoryStorage();
-    const runtime = new WalletRuntime({ storage, providerFactory: () => fastProvider() });
+    const runtime = new WalletRuntime({ storage, network: "sepolia", providerFactory: () => fastProvider() });
     const wallet: UnlockedWallet = await runtime.create(PASSWORD);
 
     const view = runtime.getState();

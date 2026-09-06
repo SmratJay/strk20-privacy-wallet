@@ -123,7 +123,7 @@ describe("real Starknet Sepolia network", () => {
     const { getPublicKey } = await import("../wallet/crypto");
     const { computeReadyAccountAddress } = await import("../wallet/account");
 
-    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia", lazy: true });
     runtime.init();
     const wallet = await runtime.create("correct horse battery staple");
     const s = runtime.getState();
@@ -174,7 +174,7 @@ describe("real Starknet Sepolia network", () => {
 
     const { WalletRuntime } = await import("../wallet/runtime");
     const { createMemoryStorage } = await import("../wallet/storage");
-    const runtime = new WalletRuntime({ storage: createMemoryStorage(), lazy: true });
+    const runtime = new WalletRuntime({ storage: createMemoryStorage(), network: "sepolia", lazy: true });
     runtime.init();
     const wallet = await runtime.create("correct horse battery staple");
 
