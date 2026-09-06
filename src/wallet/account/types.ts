@@ -75,6 +75,13 @@ export interface AccountAdapter {
   deploy(account: Account): Promise<AccountDeployment>;
 
   /**
+   * FAIL-CLOSED (optional): verify the account class is DECLARED on this network
+   * (`starknet_getClass`) before deployment. When present, the wallet core calls it before
+   * `deploy` and refuses if it returns false. Absent for account types that are import-only.
+   */
+  verifyClassDeclared?(provider: Pick<RpcProvider, "getClass">): Promise<boolean>;
+
+  /**
    * Wait until the deployment block is `blocks` behind the chain tip (STRK20 proving needs
    * the account finalized before registration). Throws on timeout.
    */

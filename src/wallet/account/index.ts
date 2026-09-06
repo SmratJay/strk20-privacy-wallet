@@ -6,7 +6,7 @@ export type {
 } from "./types";
 export {
   ReadyAccountAdapter,
-  READY_SEPOLIA_CLASS_HASH,
+  READY_V0_4_0_CLASS_HASH,
   READY_ACCOUNT_CONFIG,
   isReadyAccountSupported,
   READY_DEPLOY_FINALITY_BLOCKS,
@@ -15,6 +15,7 @@ export {
   buildReadyConstructorCalldata,
   computeReadyAccountAddress,
   deployReadyAccount,
+  verifyReadyClassDeclared,
   isAccountDeployed,
   probeAccountDeployment,
   waitForDeploymentFinality,

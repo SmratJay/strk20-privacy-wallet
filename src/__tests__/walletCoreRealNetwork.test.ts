@@ -14,7 +14,7 @@ import {
   BRAAVOS_BASE_ACCOUNT_CLASSHASH_SEPOLIA,
   probeAccountDeployment,
   computeReadyAccountAddress,
-  READY_SEPOLIA_CLASS_HASH,
+  READY_V0_4_0_CLASS_HASH,
 } from "@/wallet";
 import { generateSecretKey, canonicalizeSecret, getPublicKey } from "@/wallet/crypto";
 import { deriveWalletViewingKey, resolveWalletPrivacyConfig } from "@/wallet/privacy";
@@ -24,6 +24,9 @@ import { Account } from "starknet";
 const RPC = getNetworkConfig("sepolia").rpcUrls[0];
 const provider = new RpcProvider({ nodeUrl: RPC });
 
+const MAINNET_RPC = getNetworkConfig("mainnet").rpcUrls[0];
+const mainnetProvider = new RpcProvider({ nodeUrl: MAINNET_RPC });
+
 async function rpcReachable(): Promise<boolean> {
   try {
     await Promise.race([
@@ -31,6 +34,18 @@ async function rpcReachable(): Promise<boolean> {
       new Promise((_, reject) => setTimeout(() => reject(new Error("RPC timeout")), 15_000)),
     ]);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function mainnetReachable(): Promise<boolean> {
+  try {
+    const chainId = await Promise.race([
+      mainnetProvider.getChainId(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("RPC timeout")), 15_000)),
+    ]);
+    return chainId === "0x534e5f4d41494e"; // SN_MAIN
   } catch {
     return false;
   }
@@ -51,12 +66,25 @@ describe("real Starknet Sepolia network", () => {
     expect(base.abi?.length ?? 0).toBeGreaterThan(0);
   });
 
+  it("verifies the Ready v0.4.0 class hash is DECLARED on Starknet Mainnet (SN_MAIN)", async (ctx) => {
+    if (!(await mainnetReachable())) return ctx.skip();
+    const cls = await mainnetProvider.getClass(READY_V0_4_0_CLASS_HASH);
+    // Constructor must be the Argent/Ready v0.4.0 shape used by buildReadyConstructorCalldata.
+    const ctor = (cls.abi ?? []).find((a: any) => a.type === "constructor");
+    expect(ctor).toBeTruthy();
+    const inputs = (ctor as any)?.inputs ?? [];
+    expect(inputs.length).toBe(2);
+    expect(String(inputs[0]?.type ?? "")).toContain("Signer"); // owner: Signer
+    expect(String(inputs[1]?.type ?? "")).toContain("Option"); // guardian: Option<Signer>
+    expect(cls.entry_points_by_type).toBeTruthy();
+  });
+
   it("probes a fresh Ready counterfactual account as not deployed on the real chain", async (ctx) => {
     if (!(await rpcReachable())) return ctx.skip();
     const secret = canonicalizeSecret(generateSecretKey());
     const pubKey = getPublicKey(secret);
-    const address = computeReadyAccountAddress(pubKey, READY_SEPOLIA_CLASS_HASH);
-    const probe = await probeAccountDeployment(provider, address, READY_SEPOLIA_CLASS_HASH);
+    const address = computeReadyAccountAddress(pubKey, READY_V0_4_0_CLASS_HASH);
+    const probe = await probeAccountDeployment(provider, address, READY_V0_4_0_CLASS_HASH);
     // A freshly generated counterfactual Ready account cannot be deployed on the real chain.
     expect(probe).toBe("not_deployed");
   });
@@ -129,7 +157,7 @@ describe("real Starknet Sepolia network", () => {
     const s = runtime.getState();
 
     // The active account is a real counterfactual Ready address derived from the created key.
-    const derived = computeReadyAccountAddress(getPublicKey(wallet.secret), READY_SEPOLIA_CLASS_HASH);
+    const derived = computeReadyAccountAddress(getPublicKey(wallet.secret), READY_V0_4_0_CLASS_HASH);
     expect(wallet.address.toLowerCase()).toBe(derived.toLowerCase());
     expect(s.account?.address.toLowerCase()).toBe(derived.toLowerCase());
 

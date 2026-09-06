@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WalletRuntime, type WalletRuntimeView } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
 import { canonicalizeSecret, generateSecretKey } from "../wallet/crypto";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import type { UnlockedWallet } from "../wallet";
 
 // Mock the public-balance service so we can control when its promise resolves (stale timing).
@@ -33,7 +33,7 @@ function deferred<T>() {
 
 function fastProvider() {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => VALID_SRC5),
     getBlockNumber: vi.fn(async () => 1),
     waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),
@@ -77,7 +77,7 @@ describe("stale async state protection", () => {
 
     runtime.lock();
     // The pending deployment probe (from the fired refreshDeployment) resolves AFTER lock.
-    slow.resolve(READY_SEPOLIA_CLASS_HASH);
+    slow.resolve(READY_V0_4_0_CLASS_HASH);
     await tick();
 
     expect(runtime.getState().deploymentStatus).toBe("unknown");
@@ -101,7 +101,7 @@ describe("stale async state protection", () => {
     await tick();
 
     // Now resolve wallet A's STALE deployment probe — it must be dropped (active wallet is B).
-    resolveProbe(READY_SEPOLIA_CLASS_HASH);
+    resolveProbe(READY_V0_4_0_CLASS_HASH);
     await pending;
     await tick();
 
@@ -212,7 +212,7 @@ describe("stale create/import/unlock cannot replace the current wallet", () => {
     const pending = runtime.import({ accountType: "ready-v0.4.0", secret, password: PASSWORD });
     // import() awaits an on-chain probe — invalidate while it is pending, then let it resolve.
     runtime.lock();
-    slow.resolve(READY_SEPOLIA_CLASS_HASH);
+    slow.resolve(READY_V0_4_0_CLASS_HASH);
     const wallet: UnlockedWallet = await pending;
 
     expect(wallet).toBeDefined();

@@ -15,7 +15,7 @@ import {
   lockWallet,
   unlockWallet,
   ReadyAccountAdapter,
-  READY_SEPOLIA_CLASS_HASH,
+  READY_V0_4_0_CLASS_HASH,
   type ImportWalletOptions,
 } from "../wallet/index";
 import { buildStrk20User } from "../privacy/identity";
@@ -29,7 +29,7 @@ function mockProvider(opts: {
   callContract?: (call?: any) => Promise<string[]>;
 } = {}) {
   return {
-    getClassHashAt: vi.fn(opts.classHashAt ?? (async () => READY_SEPOLIA_CLASS_HASH)),
+    getClassHashAt: vi.fn(opts.classHashAt ?? (async () => READY_V0_4_0_CLASS_HASH)),
     callContract: vi.fn(opts.callContract ?? (async () => VALID_SRC5)),
     getBlockNumber: vi.fn(async () => 1_000_000),
     waitForTransaction: vi.fn(),
@@ -49,7 +49,7 @@ describe("Ready import", () => {
       password: PASSWORD,
       address: undefined, // derived
       storage,
-      provider: mockProvider({ classHashAt: async () => READY_SEPOLIA_CLASS_HASH }),
+      provider: mockProvider({ classHashAt: async () => READY_V0_4_0_CLASS_HASH }),
     });
 
     expect(result.accountKind).toBe("existing");
@@ -313,7 +313,7 @@ describe("import ownership verification is mandatory (FIX 1)", () => {
     const storage = createMemoryStorage();
     const secret = canonicalizeSecret(generateSecretKey());
     const pubKey = getPublicKey(secret);
-    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_V0_4_0_CLASS_HASH);
     const verifySpy = vi
       .spyOn(adapter, "verifyOwnership")
       .mockResolvedValue({ verified: true, method: "is_valid_signature" });
@@ -336,7 +336,7 @@ describe("import ownership verification is mandatory (FIX 1)", () => {
     const storage = createMemoryStorage();
     const secret = canonicalizeSecret(generateSecretKey());
     const pubKey = getPublicKey(secret);
-    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_V0_4_0_CLASS_HASH);
     vi.spyOn(adapter, "verifyOwnership").mockResolvedValue({
       verified: false,
       method: "is_valid_signature",
@@ -389,7 +389,7 @@ describe("import ownership verification is mandatory (FIX 1)", () => {
     const storage = createMemoryStorage();
     const secret = canonicalizeSecret(generateSecretKey());
     const pubKey = getPublicKey(secret);
-    const adapter = new ReadyAccountAdapter(pubKey, READY_SEPOLIA_CLASS_HASH);
+    const adapter = new ReadyAccountAdapter(pubKey, READY_V0_4_0_CLASS_HASH);
     const verifySpy = vi.spyOn(adapter, "verifyOwnership").mockResolvedValue({
       verified: false,
       method: "is_valid_signature",

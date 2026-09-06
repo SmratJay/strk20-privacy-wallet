@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { WalletRuntime } from "../wallet/runtime";
 import { createMemoryStorage, walletIdFor } from "../wallet/storage";
 import { generateSecretKey, canonicalizeSecret, getPublicKey } from "../wallet/crypto";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import type { UnlockedWallet } from "../wallet";
 
 const PASSWORD = "correct horse battery staple";
@@ -19,7 +19,7 @@ const VALID_SRC5 = ["0x56614c4944"];
 
 function mockProvider() {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => VALID_SRC5),
     getBlockNumber: vi.fn(async () => 1_000_000),
     waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),

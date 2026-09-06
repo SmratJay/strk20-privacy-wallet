@@ -171,7 +171,7 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
 import { WalletRuntime } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
 import { deriveWalletViewingKey } from "../wallet/privacy";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import {
   validatePrivateSwapIntent,
   computeMinOutput,
@@ -188,7 +188,7 @@ const VALID_SRC5 = ["0x56614c4944"];
 /** Provider for the runtime's own RPC reads (deployment probe + finality). */
 function makeProvider(finality?: { execution_status: string }) {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => VALID_SRC5),
     getBlockNumber: vi.fn(async () => 1_000_000),
     waitForTransaction: vi.fn(async () => finality ?? { execution_status: "SUCCEEDED", block_number: 1 }),

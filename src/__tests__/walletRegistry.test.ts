@@ -23,12 +23,12 @@ import {
   type WalletRegistryEntry,
 } from "../wallet/storage";
 import { createWallet, importWallet, listWallets, generateSecretKey, canonicalizeSecret } from "../wallet/index";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 
 const PASSWORD = "correct horse battery staple";
 
 const provider = {
-  getClassHashAt: async () => READY_SEPOLIA_CLASS_HASH,
+  getClassHashAt: async () => READY_V0_4_0_CLASS_HASH,
   callContract: async () => ["0x56614c4944"],
   getBlockNumber: async () => 1,
   waitForTransaction: async () => ({}),

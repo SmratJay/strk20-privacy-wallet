@@ -20,7 +20,7 @@ import { WalletRuntime, IDLE_PRIVACY_OP } from "../wallet/runtime";
 import { WalletPrivacySession } from "../wallet/privacy";
 import { createMemoryStorage } from "../wallet/storage";
 import { generateSecretKey, canonicalizeSecret, getPublicKey } from "../wallet/crypto";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import type { UnlockedWallet } from "../wallet";
 import type { AccountAdapter } from "../wallet/account";
 
@@ -94,7 +94,7 @@ const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
 
 function mockProvider(overrides: Record<string, unknown> = {}) {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => ["0x56614c4944"]),
     getBlockNumber: vi.fn(async () => 1_000_000),
     waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),
@@ -832,9 +832,9 @@ describe("shadow-account anonymizer config", () => {
     try {
       const { WalletRuntime } = await import("../wallet/runtime");
       const { createMemoryStorage } = await import("../wallet/storage");
-      const { READY_SEPOLIA_CLASS_HASH } = await import("../wallet/account");
+      const { READY_V0_4_0_CLASS_HASH } = await import("../wallet/account");
       const provider = {
-        getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+        getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
         callContract: vi.fn(async () => ["0x56614c4944"]),
         getBlockNumber: vi.fn(async () => 1),
         waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),

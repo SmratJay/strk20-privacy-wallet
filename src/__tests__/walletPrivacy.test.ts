@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { WalletRuntime } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
 import { generateSecretKey, canonicalizeSecret } from "../wallet/crypto";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import {
   deriveWalletViewingKey,
   canonicalizeViewingKey,
@@ -68,7 +68,7 @@ const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
 
 function fastProvider() {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => ["0x56614c4944"]),
     getBlockNumber: vi.fn(async () => 1),
     waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),

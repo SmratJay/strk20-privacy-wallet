@@ -31,7 +31,7 @@ import {
   isAccountDeployed,
   probeAccountDeployment,
   READY_ACCOUNT_CONFIG,
-  READY_SEPOLIA_CLASS_HASH,
+  READY_V0_4_0_CLASS_HASH,
   ReadyAccountAdapter,
 } from "../wallet/account";
 import {
@@ -128,7 +128,7 @@ describe("3. account address derivation", () => {
 
   it("matches the ReadyAccountAdapter address", () => {
     const pk = getPublicKey(generateSecretKey());
-    const adapter = new ReadyAccountAdapter(pk, READY_SEPOLIA_CLASS_HASH);
+    const adapter = new ReadyAccountAdapter(pk, READY_V0_4_0_CLASS_HASH);
     expect(adapter.address.toLowerCase()).toBe(computeReadyAccountAddress(pk).toLowerCase());
     expect(adapter.publicKey.toLowerCase()).toBe(pk.toLowerCase());
     expect(adapter.type).toMatch(/^ready/);
@@ -304,7 +304,7 @@ describe("9. deployment flow", () => {
     const storage = createMemoryStorage();
     const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
     // The adapter verifies the EXPECTED class hash — return it so the probe reports deployed.
-    wallet.provider.getClassHashAt = vi.fn(async () => READY_SEPOLIA_CLASS_HASH) as any;
+    wallet.provider.getClassHashAt = vi.fn(async () => READY_V0_4_0_CLASS_HASH) as any;
     wallet.account.deploySelf = vi.fn() as any;
     const result = await deployAccount(wallet, storage);
     expect(result.transactionHash).toBe("");
@@ -368,7 +368,7 @@ describe("9. deployment flow", () => {
   it("getDeploymentStatus reconciles against the chain", async () => {
     const storage = createMemoryStorage();
     const wallet = await createWallet({ network: "sepolia", password: PASSWORD, storage });
-    wallet.provider.getClassHashAt = vi.fn(async () => READY_SEPOLIA_CLASS_HASH) as any;
+    wallet.provider.getClassHashAt = vi.fn(async () => READY_V0_4_0_CLASS_HASH) as any;
     expect(await getDeploymentStatus(wallet, storage)).toBe("deployed");
     wallet.provider.getClassHashAt = vi.fn(async () => {
       throw new Error("not deployed");
@@ -455,38 +455,57 @@ describe("13. lockWallet invalidates the signing session", () => {
 });
 
 describe("14. network-specific account configuration", () => {
-  it("exposes per-network Ready config (Sepolia verified, Mainnet not)", () => {
+  it("exposes per-network Ready config (Sepolia AND Mainnet verified)", () => {
     expect(READY_ACCOUNT_CONFIG.sepolia.supported).toBe(true);
     expect(READY_ACCOUNT_CONFIG.sepolia.classHash).toMatch(/^0x/);
-    expect(READY_ACCOUNT_CONFIG.mainnet.supported).toBe(false);
-    expect(READY_ACCOUNT_CONFIG.mainnet.classHash).toBe("");
+    expect(READY_ACCOUNT_CONFIG.mainnet.supported).toBe(true);
+    expect(READY_ACCOUNT_CONFIG.mainnet.classHash).toBe(READY_V0_4_0_CLASS_HASH);
   });
 
-  it("refuses to create a wallet on an unsupported network", async () => {
+  it("Mainnet and Sepolia share the verified Ready v0.4.0 class hash (network-scoped, explicit)", () => {
+    expect(READY_ACCOUNT_CONFIG.mainnet.classHash).toBe(READY_V0_4_0_CLASS_HASH);
+    expect(READY_ACCOUNT_CONFIG.sepolia.classHash).toBe(READY_V0_4_0_CLASS_HASH);
+    expect(READY_V0_4_0_CLASS_HASH).toMatch(/^0x/);
+  });
+
+  it("creates a NEW Mainnet wallet (network=mainnet) and persists it under mainnet", async () => {
     const storage = createMemoryStorage();
-    await expect(
-      createWallet({ network: "mainnet", password: PASSWORD, storage }),
-    ).rejects.toThrow(/not verified on mainnet/i);
-    // Nothing should have been persisted for mainnet.
-    expect(readPublicState(storage, "mainnet")).toBeNull();
-    expect(readKeystore(storage, "mainnet")).toBeNull();
+    const wallet = await createWallet({ network: "mainnet", password: PASSWORD, storage });
+    expect(wallet.network).toBe("mainnet");
+    expect(wallet.accountType).toBe("ready-v0.4.0");
+    // Persisted in the MAINNET registry (not Sepolia).
+    expect(readPublicState(storage, "mainnet")).not.toBeNull();
+    expect(readPublicState(storage, "sepolia")).toBeNull();
+    // The derived address uses the MAINNET class hash config.
+    const adapter = new ReadyAccountAdapter(getPublicKey(wallet.secret), READY_ACCOUNT_CONFIG.mainnet.classHash);
+    expect(adapter.address.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it("never derives a Mainnet account with the Sepolia class hash", async () => {
+  it("never derives a Mainnet account with a network-agnostic default", async () => {
     const pk = getPublicKey(generateSecretKey());
-    const sepoliaConfig = READY_ACCOUNT_CONFIG.sepolia;
-    const adapter = new ReadyAccountAdapter(pk, sepoliaConfig.classHash);
+    const mainnetConfig = READY_ACCOUNT_CONFIG.mainnet;
+    const adapter = new ReadyAccountAdapter(pk, mainnetConfig.classHash);
     expect(adapter.address.toLowerCase()).toBe(
-      computeReadyAccountAddress(pk, sepoliaConfig.classHash).toLowerCase(),
+      computeReadyAccountAddress(pk, mainnetConfig.classHash).toLowerCase(),
     );
-    // The class-hash used must be the network's own, not a silent Sepolia default.
-    expect(sepoliaConfig.classHash).toBe(READY_SEPOLIA_CLASS_HASH);
+    // The class hash used must be the network's own (explicit per-network config).
+    expect(mainnetConfig.classHash).toBe(READY_V0_4_0_CLASS_HASH);
   });
 
-  it("unlock on an unsupported network fails fast", async () => {
+  it("fail-closed: a Mainnet class that cannot be verified refuses deployment", async () => {
+    const storage = createMemoryStorage();
+    const wallet = await createWallet({ network: "mainnet", password: PASSWORD, storage });
+    // Provider exposes getClass (real RPC seam) but the class is NOT declared → deploy refuses.
+    (wallet.provider as unknown as { getClass: unknown }).getClass = vi.fn(async () => {
+      throw new Error("Contract not found");
+    });
+    (wallet.account as unknown as { deploySelf: unknown }).deploySelf = vi.fn();
+    await expect(deployAccount(wallet, storage)).rejects.toThrow(/not declared\/verifiable/i);
+  });
+
+  it("unlock across networks stays isolated (no mainnet wallet → fails, never falls back)", async () => {
     const storage = createMemoryStorage();
     await createWallet({ network: "sepolia", password: PASSWORD, storage });
-    // No mainnet wallet exists; unlock must fail (never silently fall back across networks).
     await expect(
       unlockWallet({ network: "mainnet", password: PASSWORD, storage }),
     ).rejects.toThrow(/No wallet exists on mainnet/i);
@@ -495,13 +514,13 @@ describe("14. network-specific account configuration", () => {
 
 describe("15. deployment probe tri-state semantics", () => {
   it("returns deployed only when the expected class hash matches", async () => {
-    const provider = { getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH) };
-    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("deployed");
+    const provider = { getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH) };
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_V0_4_0_CLASS_HASH)).toBe("deployed");
   });
 
   it("returns unknown on a wrong class hash (different account at the address)", async () => {
     const provider = { getClassHashAt: vi.fn(async () => "0x123") };
-    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("unknown");
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_V0_4_0_CLASS_HASH)).toBe("unknown");
   });
 
   it("returns unknown on a generic RPC failure (never authorizes deployment)", async () => {
@@ -510,7 +529,7 @@ describe("15. deployment probe tri-state semantics", () => {
         throw new Error("502 Bad Gateway");
       }),
     };
-    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("unknown");
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_V0_4_0_CLASS_HASH)).toBe("unknown");
   });
 
   it("returns not_deployed on a definitive contract-not-found error", async () => {
@@ -519,7 +538,7 @@ describe("15. deployment probe tri-state semantics", () => {
         throw new Error("Requested contract address is not deployed");
       }),
     };
-    expect(await probeAccountDeployment(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe("not_deployed");
+    expect(await probeAccountDeployment(provider as any, "0xabc", READY_V0_4_0_CLASS_HASH)).toBe("not_deployed");
   });
 
   it("legacy boolean isAccountDeployed is false on unknown (RPC failure)", async () => {
@@ -528,7 +547,7 @@ describe("15. deployment probe tri-state semantics", () => {
         throw new Error("502 Bad Gateway");
       }),
     };
-    expect(await isAccountDeployed(provider as any, "0xabc", READY_SEPOLIA_CLASS_HASH)).toBe(false);
+    expect(await isAccountDeployed(provider as any, "0xabc", READY_V0_4_0_CLASS_HASH)).toBe(false);
   });
 });
 

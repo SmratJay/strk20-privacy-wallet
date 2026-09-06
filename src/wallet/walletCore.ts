@@ -446,6 +446,24 @@ export async function deployAccount(
   }
   updateDeploymentStatus(store, wallet.network, "pending");
   options?.onStatus?.("pending");
+  // CRITICAL SAFETY CHECK (fail closed before deployment): verify the account class is DECLARED
+  // on this network (`starknet_getClass`). Only performed when the provider exposes `getClass`
+  // (a real RPC). Test/mock providers without `getClass` are covered by the static
+  // `READY_ACCOUNT_CONFIG[network].supported` gate instead. A class that cannot be verified on
+  // Mainnet (or any network) must never be deployed.
+  if (
+    typeof wallet.provider.getClass === "function" &&
+    typeof wallet.adapter.verifyClassDeclared === "function"
+  ) {
+    const declared = await wallet.adapter.verifyClassDeclared(wallet.provider as never);
+    if (!declared) {
+      updateDeploymentStatus(store, wallet.network, "unknown");
+      options?.onStatus?.("error");
+      throw new Error(
+        `Account class is not declared/verifiable on ${wallet.network}; refusing to deploy.`,
+      );
+    }
+  }
   const deployment = await wallet.adapter.deploy(wallet.account);
   const receipt = await wallet.provider.waitForTransaction(deployment.transactionHash, {
     retryInterval: 4000,

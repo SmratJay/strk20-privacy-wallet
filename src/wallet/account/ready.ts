@@ -18,15 +18,17 @@ import type { WalletNetworkId } from "../types";
 /**
  * Wallet Core — Ready (Argent v0.4.0) account adapter.
  *
- * Ready is Argent rebranded. This class hash is declared on Sepolia (`starknet_getClass`
- * returns the `argent::account` ABI) and is the `ready`/`argent` v0.4.0 class hash per
- * Starknet Foundry's sncast account table. It is NOT Argent v0.5.0.
+ * Ready is Argent rebranded. This class hash is declared on both Sepolia and MAINNET
+ * (`starknet_getClass` returns the `argent::account` constructor ABI:
+ * `constructor(owner: argent::signer::signer_signature::Signer, guardian: Option<Signer>)`),
+ * verified live against Starknet Mainnet (SN_MAIN). It is the `ready`/`argent` v0.4.0 class hash
+ * per Starknet Foundry's sncast account table. It is NOT Argent v0.5.0.
  *
  * This is the account-contract implementation the self-custodial wallet deploys. The wallet
  * core owns the key lifecycle; this adapter only knows how to derive, probe, and deploy the
  * Ready account contract for that key.
  */
-export const READY_SEPOLIA_CLASS_HASH =
+export const READY_V0_4_0_CLASS_HASH =
   process.env.NEXT_PUBLIC_READY_CLASSHASH ||
   "0x036078334509b514626504edc9fb252328d1a240e4e948bef8d0c08dff45927f";
 
@@ -48,13 +50,13 @@ export interface ReadyAccountNetworkConfig {
 
 /**
  * Per-network account configuration. The wallet core MUST resolve the class hash from this
- * table — never from a network-agnostic default. Mainnet is NOT verified yet, so it is
- * explicitly `supported: false` and the wallet refuses to derive/deploy there rather than
- * pretending Ready works on Mainnet with the Sepolia class hash.
+ * table — never from a network-agnostic default. Ready v0.4.0 is verified on BOTH Sepolia and
+ * Mainnet (the class hash is declared on SN_MAIN; verified live). Each network declares its own
+ * entry explicitly so a network can never accidentally inherit another network's implementation.
  */
 export const READY_ACCOUNT_CONFIG: Record<WalletNetworkId, ReadyAccountNetworkConfig> = {
-  sepolia: { classHash: READY_SEPOLIA_CLASS_HASH, supported: true },
-  mainnet: { classHash: "", supported: false },
+  sepolia: { classHash: READY_V0_4_0_CLASS_HASH, supported: true },
+  mainnet: { classHash: READY_V0_4_0_CLASS_HASH, supported: true },
 };
 
 /** True when the Ready account contract is available on the given network. */
@@ -85,14 +87,33 @@ export function buildReadyConstructorCalldata(publicKey: string): string[] {
  * identical regardless of which wallet/dapp derives it.
  *
  * The wallet CORE must pass the class hash resolved from `READY_ACCOUNT_CONFIG[network]` —
- * never a network-agnostic default. The single-argument form is retained only for backward-compatible callers; it must not be used for Mainnet derivation.
+ * never a network-agnostic default. The single-argument form (defaulting to the verified
+ * `READY_V0_4_0_CLASS_HASH`) is retained only for backward-compatible callers; wallet-core
+ * callers always resolve per-network.
  */
 export function computeReadyAccountAddress(
   publicKey: string,
-  classHash: string = READY_SEPOLIA_CLASS_HASH,
+  classHash: string = READY_V0_4_0_CLASS_HASH,
 ): string {
   const constructorCalldata = buildReadyConstructorCalldata(publicKey);
   return hash.calculateContractAddressFromHash(publicKey, classHash, constructorCalldata, 0);
+}
+
+/**
+ * FAIL-CLOSED class-hash verification: true ONLY when `starknet_getClass(classHash)` succeeds and
+ * returns a class with an ABI on this network. Used before Mainnet deployment so a deployment is
+ * never attempted against an undeclared class hash. RPC failure → false.
+ */
+export async function verifyReadyClassDeclared(
+  provider: Pick<RpcProvider, "getClass">,
+  classHash: string,
+): Promise<boolean> {
+  try {
+    const cls = await provider.getClass(classHash);
+    return Boolean(cls && Array.isArray(cls.abi));
+  } catch {
+    return false;
+  }
 }
 
 const NOT_DEPLOYED_ERROR = /not found|not deployed|undeployed|no contract|has no contract/i;
@@ -155,7 +176,7 @@ export async function isAccountDeployed(
 export async function deployReadyAccount(
   account: Account,
   publicKey: string,
-  classHash: string = READY_SEPOLIA_CLASS_HASH,
+  classHash: string = READY_V0_4_0_CLASS_HASH,
 ): Promise<AccountDeployment> {
   const contractAddress = computeReadyAccountAddress(publicKey, classHash);
   const result = await account.deploySelf({
@@ -205,7 +226,8 @@ export class ReadyAccountAdapter implements AccountAdapter {
   readonly address: string;
   readonly publicKey: string;
   readonly addressDerivable = true;
-  private readonly classHash: string;
+  /** The network-scoped class hash this adapter was built with (used for derivation + deploy). */
+  readonly classHash: string;
 
   constructor(publicKey: string, classHash: string) {
     this.publicKey = publicKey;
@@ -219,6 +241,14 @@ export class ReadyAccountAdapter implements AccountAdapter {
 
   isDeployed(provider: Pick<RpcProvider, "getClassHashAt">): Promise<boolean> {
     return this.probeDeployment(provider).then((probe) => probe === "deployed");
+  }
+
+  /**
+   * FAIL-CLOSED: verify the account class is actually DECLARED on this network (getClass) before
+   * deployment. RPC failure or an undeclared class → false → the caller must refuse to deploy.
+   */
+  verifyClassDeclared(provider: Pick<RpcProvider, "getClass">): Promise<boolean> {
+    return verifyReadyClassDeclared(provider, this.classHash);
   }
 
   /**

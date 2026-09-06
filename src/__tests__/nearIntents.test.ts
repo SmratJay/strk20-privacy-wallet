@@ -159,7 +159,7 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
 import { WalletRuntime } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
 import { deriveWalletViewingKey } from "../wallet/privacy";
-import { READY_SEPOLIA_CLASS_HASH } from "../wallet/account";
+import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import {
   validateCrossChainIntent,
   validateDestinationAddress,
@@ -193,7 +193,7 @@ function settlementConfig(): CrossChainNetworkConfig {
 
 function makeProvider() {
   return {
-    getClassHashAt: vi.fn(async () => READY_SEPOLIA_CLASS_HASH),
+    getClassHashAt: vi.fn(async () => READY_V0_4_0_CLASS_HASH),
     callContract: vi.fn(async () => VALID_SRC5),
     getBlockNumber: vi.fn(async () => 1_000_000),
     waitForTransaction: vi.fn(async () => ({ execution_status: "SUCCEEDED", block_number: 1 })),
