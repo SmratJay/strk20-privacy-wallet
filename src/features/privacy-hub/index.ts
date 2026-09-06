@@ -27,13 +27,21 @@ export {
   PRIVACY_HUB_ROUTES,
   resolvePrivacyHubRoute,
   privacyHubRouteById,
+  routeHasPrivacyCapability,
   type PrivacyHubRoute,
   type CrossChainProviderId,
   type ProviderCapability,
+  type ProviderPrivacyCapability,
 } from "./routes";
 export {
   nearPhaseToHubPhase,
   type CrossChainProvider,
 } from "./provider";
 export { NearIntentProvider } from "./provider";
+export {
+  ConfidentialIntentProvider,
+  confidentialIntentAvailability,
+  type ConfidentialIntentAvailability,
+  type ConfidentialityLevel,
+} from "./confidential";
 export { PrivacyHub, type PrivacyHubOptions } from "./service";

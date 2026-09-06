@@ -15,9 +15,13 @@ import {
   PrivacyHubError,
   nearPhaseToHubPhase,
   PrivacyHub,
+  PRIVACY_HUB_ROUTES,
   resolvePrivacyHubRoute,
   privacyHubRouteById,
+  routeHasPrivacyCapability,
   NearIntentProvider,
+  ConfidentialIntentProvider,
+  confidentialIntentAvailability,
   type CrossChainProvider,
   type PrivacyHubIntent,
   type PrivacyHubQuote,
@@ -326,5 +330,54 @@ describe("WalletRuntime privacy-hub bridge (thin)", () => {
     await expect(runtime.quotePrivacyHub(validIntent())).rejects.toThrow(/locked/i);
     await expect(runtime.executePrivacyHub(validIntent())).rejects.toThrow(/locked/i);
     await expect(runtime.getPrivacyHubStatus("0xdeposit")).rejects.toThrow(/locked/i);
+  });
+});
+
+describe("confidential execution provider boundary (seam only)", () => {
+  it("declares the current route's privacy capabilities honestly (no over-claim)", () => {
+    const route = resolvePrivacyHubRoute("starknet", "strk", "base", "usdc");
+    expect(route).not.toBeNull();
+    expect(routeHasPrivacyCapability(route!, "source-private")).toBe(true);
+    expect(routeHasPrivacyCapability(route!, "destination-public")).toBe(true);
+    expect(routeHasPrivacyCapability(route!, "public-settlement")).toBe(true);
+    expect(routeHasPrivacyCapability(route!, "confidential-execution")).toBe(false);
+    expect(routeHasPrivacyCapability(route!, "selective-disclosure")).toBe(false);
+  });
+
+  it("keeps the public route resolving to near-intents (confidential provider never auto-selected)", () => {
+    expect(resolvePrivacyHubRoute("starknet", "strk", "base", "usdc")?.provider).toBe("near-intents");
+    // No registered route targets the confidential provider.
+    expect(PRIVACY_HUB_ROUTES.some((r) => r.provider === "confidential-intents")).toBe(false);
+  });
+
+  it("reports confidential execution as unavailable (no fake quote/settlement)", () => {
+    const availability = confidentialIntentAvailability();
+    expect(availability.available).toBe(false);
+    expect(availability.requiresUserSessionAuth).toBe(true);
+    expect(availability.starknetSigningSupported).toBe(false);
+    expect(availability.supportedLevels).toEqual(["basic", "advanced"]);
+
+    const provider = new ConfidentialIntentProvider();
+    expect(provider.id).toBe("confidential-intents");
+    expect(provider.availability.available).toBe(false);
+  });
+
+  it("the confidential provider seam fails explicitly and never fabricates results", async () => {
+    const provider = new ConfidentialIntentProvider();
+    await expect(provider.quote(validIntent())).rejects.toThrow(/confidential execution is unavailable/i);
+    await expect(provider.prepare(validIntent(), null)).rejects.toThrow(/unavailable/i);
+    const readiness = await provider.readiness(validIntent());
+    expect(readiness.ready).toBe(false);
+    expect(readiness.reason).toMatch(/user-session authentication/i);
+  });
+
+  it("never registers the confidential provider, so there is no accidental fallback", async () => {
+    const route = resolvePrivacyHubRoute("starknet", "strk", "base", "usdc")!;
+    const hub = new PrivacyHub({ providers: { "near-intents": makeFakeProvider() } });
+    // The resolved route points at near-intents, which IS registered → works.
+    const quote = await hub.quote(validIntent());
+    expect(quote.provider).toBe("near-intents");
+    // There is no confidential route, so provideFor can never select confidential-intents.
+    expect(route.provider).toBe("near-intents");
   });
 });

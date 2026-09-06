@@ -81,3 +81,47 @@ funded wallet are provisioned — no hub-architecture change required.
 - `quotePrivacyHub(intent)`
 - `executePrivacyHub(intent, quote?)` (composes prepare + execute)
 - `getPrivacyHubStatus(reference, providerId?)`
+
+## Confidential execution (Phase 6A — provider boundary only)
+
+### Official integration surface (researched 2026-09)
+
+NEAR's **Confidential Intents** is a private-transaction layer on NEAR Intents: a public NEAR chain
+(`intents.near`) plus a private NEAR fork **FAR** (`intents.far`) where swaps settle with shielded
+balances; a Private PoA Bridge mints/burns IMT tokens across the boundary. A **consumer** can opt in
+via the 1Click REST API's `confidentiality` field (`"basic" | "advanced"`) on an otherwise-normal
+foreign-to-foreign `ORIGIN_CHAIN → DESTINATION_CHAIN` swap — the request/response is otherwise
+identical to a public swap.
+
+### Blocker (verified live, not assumed)
+
+A live probe shows `confidentiality: "basic"` / `"advanced"` return HTTP **401**
+`"User authentication is required for confidential intent quotes"`, while `confidentiality:
+"public"` succeeds keyless. Confidential quotes require a **User-Session token** from
+`/v0/auth/authenticate` — a signed proof of account ownership via NEP-413 / ERC-191 / WebAuthn /
+raw-ed25519 / …. NEAR Intents advertises **no Starknet intent-signing standard**, so the current
+Starknet Wallet Core account cannot produce that signed message. Direct confidential integration is
+therefore **not consumable** by this project's Starknet-only source identity today.
+
+### What was built
+
+Only the boundary (in `src/features/privacy-hub/confidential.ts`): capability metadata
+(`source-private`, `destination-public`, `public-settlement`, `confidential-execution`,
+`selective-disclosure`) on the route model, an explicit `confidentialIntentAvailability()`
+(single source of truth for the blocker), and a `ConfidentialIntentProvider` SEAM whose methods fail
+explicitly and is **never registered** in the hub — so there is no fabricated quote/settlement, no
+fake HTTP, and no accidental provider fallback.
+
+### Privacy model (exact, no over-claim)
+
+| Layer | Hides | Exposes |
+| --- | --- | --- |
+| STRK20 | root wallet → private balance | that a shielded note was spent (on-chain pool commits) |
+| Shadow Account | root wallet's identity as the application/deposit caller | the shadow address as the on-chain depositor |
+| NEAR public Intents | nothing between deposit and settlement | deposit ↔ solver ↔ withdrawal are matchable on-chain |
+| NEAR Confidential Intents (not yet used here) | the link between deposit and withdrawal | that a confidential swap happened, at a coarse level |
+| Destination chain (Base) | nothing | the destination address, the USDC settlement tx, amount, timing |
+| Selective disclosure (not yet used here) | provider-side disclosure controls | whatever the integrator opts to reveal |
+
+The hub claims only what the current protocol guarantees: **source-private, destination-public,
+public-settlement** for the live route.
