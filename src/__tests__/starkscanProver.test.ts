@@ -132,4 +132,39 @@ describe("StarkscanProver", () => {
   it("rejects construction without an API key", () => {
     expect(() => new StarkscanProver({ apiKey: "" })).toThrow(/not configured/i);
   });
+
+  it("checkAuth classifies 401 as unauthenticated (auth wrong), not 403 (scope wrong)", async () => {
+    const fetchImpl = makeFetch(async () => jsonResponse(401, {}));
+    const prover = new StarkscanProver({ apiKey: "dummy", fetchImpl });
+    const result = await prover.checkAuth();
+    expect(result.kind).toBe("unauthenticated");
+    expect(result.code).toBe(401);
+  });
+
+  it("checkAuth classifies 403 as forbidden (auth valid but no prove scope)", async () => {
+    const fetchImpl = makeFetch(async () => jsonResponse(403, {}));
+    const prover = new StarkscanProver({ apiKey: "scoped-but-wrong", fetchImpl });
+    const result = await prover.checkAuth();
+    expect(result.kind).toBe("forbidden");
+    expect(result.code).toBe(403);
+  });
+
+  it("checkAuth treats a validation-layer 400 as authenticated (reached the relay with a valid key)", async () => {
+    const fetchImpl = makeFetch(async () => jsonResponse(400, {}));
+    const prover = new StarkscanProver({ apiKey: "valid", fetchImpl });
+    const result = await prover.checkAuth();
+    expect(result.kind).toBe("authenticated");
+  });
+
+  it("checkAuth maps 404 to dormant and unreachable network to unreachable", async () => {
+    const fetch404 = makeFetch(async () => jsonResponse(404, {}));
+    const p404 = new StarkscanProver({ apiKey: "k", fetchImpl: fetch404 });
+    expect((await p404.checkAuth()).kind).toBe("dormant");
+
+    const fetchNet = makeFetch(async () => {
+      throw new Error("network down");
+    });
+    const pNet = new StarkscanProver({ apiKey: "k", fetchImpl: fetchNet });
+    expect((await pNet.checkAuth()).kind).toBe("unreachable");
+  });
 });

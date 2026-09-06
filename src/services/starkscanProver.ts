@@ -38,6 +38,21 @@ export interface StarkscanProveRequest {
 /** Terminal job outcome from the Starkscan relay. */
 export type StarkscanJobStatus = "succeeded" | "failed" | "unavailable" | "unknown_delivery";
 
+/**
+ * Auth/availability classification (per the official docs, not guessed):
+ *   - `unauthenticated` → 401: key missing/invalid (auth wrong).
+ *   - `forbidden`       → 403: key is VALID but lacks `prove` scope (permission wrong).
+ *   - `dormant`         → 404: relay not enabled in this environment.
+ *   - `authenticated`   → any other 2xx/4xx validation response: the request reached the relay's
+ *                         validation layer with a valid scoped key (no proof budget consumed).
+ */
+export type StarkscanAuthStatus =
+  | { kind: "authenticated" }
+  | { kind: "unauthenticated" }
+  | { kind: "forbidden" }
+  | { kind: "dormant" }
+  | { kind: "unreachable" };
+
 export class StarkscanProverError extends Error {
   override readonly name = "StarkscanProverError";
   constructor(
@@ -197,6 +212,41 @@ export class StarkscanProver {
         throw new StarkscanProverError("Starkscan prover queue full or unavailable (503).", "queue", status);
       default:
         throw new StarkscanProverError(`Starkscan relay HTTP ${status}.`, "http", status);
+    }
+  }
+
+  /**
+   * Diagnostic auth/availability probe. Sends a deliberately-invalid request (empty transaction)
+   * that the relay rejects at the validation layer WITHOUT creating a job or debiting prove budget.
+   * Used by the readiness/pre-flight path to answer "is the prover authenticated and in scope?"
+   * without ever submitting a real proof.
+   */
+  async checkAuth(): Promise<StarkscanAuthStatus & { code: number | null }> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/prove`, {
+        method: "POST",
+        headers: {
+          "X-Starkscan-Api-Key": this.apiKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ block_id: { tag: "latest" }, transaction: {} }),
+        signal: AbortSignal.timeout(this.pollTimeoutMs),
+      });
+    } catch {
+      return { kind: "unreachable", code: null };
+    }
+    switch (res.status) {
+      case 401:
+        return { kind: "unauthenticated", code: 401 };
+      case 403:
+        return { kind: "forbidden", code: 403 };
+      case 404:
+        return { kind: "dormant", code: 404 };
+      default:
+        // 2xx/400/422/409/429/503 → auth + scope passed; the relay rejected the invalid payload
+        // (or is temporarily busy) at the validation layer, NOT at the auth layer.
+        return { kind: "authenticated", code: res.status };
     }
   }
 }

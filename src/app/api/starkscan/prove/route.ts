@@ -14,6 +14,7 @@ import { StarkscanProver, StarkscanProverError } from '@/services/starkscanProve
  *
  *   POST /api/starkscan/prove  { jsonrpc, id, method: "starknet_proveTransaction", params: { block_id, transaction } }
  *   POST /api/starkscan/prove  { jsonrpc, id, method: "starknet_specVersion" }   → SDK health check
+ *   GET  /api/starkscan/prove  → auth/availability probe (never returns the key)
  */
 export const runtime = 'nodejs';
 
@@ -22,6 +23,20 @@ function jsonRpcOk(id: unknown, result: unknown) {
 }
 function jsonRpcError(id: unknown, code: number, message: string) {
   return NextResponse.json({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+export async function GET() {
+  const apiKey = process.env.STARKSCAN_API_KEY?.trim() ?? '';
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, status: 'unconfigured' });
+  }
+  const prover = new StarkscanProver({ apiKey });
+  const result = await prover.checkAuth();
+  return NextResponse.json({
+    ok: result.kind === 'authenticated',
+    status: result.kind,
+    code: result.code,
+  });
 }
 
 export async function POST(req: NextRequest) {

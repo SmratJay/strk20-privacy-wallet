@@ -9,7 +9,38 @@ upgrade or change these — the adapter and tests are pinned to them.
 |---|---|---|---|
 | `@starkware-libs/starknet-privacy-sdk` | **`0.14.3-rc.5`** (vendored build of `github.com/starkware-libs/starknet-privacy`, `sdk/` @ tag `PRIVACY-0.14.3-RC.5`) | `vendor/starknet-privacy-sdk/package.json`, `package.json` (`file:vendor/...`) | The ONLY SDK surface the adapter targets. Tests assert the app only imports APIs exported by this revision (`createPrivateTransfers`, `IndexerDiscoveryProvider`, `Open`). |
 | `starknet.js` | **`10.5.0`** | `package.json` (app + vendored SDK dependency) | SDK/app parity enforced by test. |
-| `@avnu/avnu-sdk` | `^4.2.0` | `package.json` | Public AVNU swap quotes/calls (see `src/services/swapService.ts`). The AVNU SDK's private-swap API (`executePrivateSwap` / `createStrk20WalletProver`) is NOT usable: Sepolia has zero AVNU liquidity, and the prover requires a starknet.js `WalletAccountV6` (`strk20PrepareInvoke`) the Wallet Core account is not. The REAL private swap uses the repo's own BondingCurve V2 via the STRK20 shadow-account path (see `docs/PRIVATE_SWAP.md`). |
+| `@avnu/avnu-sdk` | `^4.2.0` | `package.json` | Public AVNU swap quotes/calls (see `src/services/swapService.ts`). The AVNU SDK's private-swap API is NOT usable: Sepolia has zero AVNU liquidity, and the prover requires a starknet.js `WalletAccountV6` the Wallet Core account is not. The REAL private swap uses the repo's own BondingCurve V2 via the STRK20 shadow-account path. |
+
+## Current upstream compatibility matrix (official, 2026-09)
+
+The official `starkware-libs/starknet-privacy` matrix pins all components in one row. Orrange's
+vendored SDK is `0.14.3-rc.5` — **one patch behind** the matrix's `PRIVACY-0.14.3-RC.6`.
+
+| Component | Matrix tag |
+|---|---|
+| Transaction Prover | `PRIVACY-0.14.3-RC.2` |
+| Proof Interceptor | `PRIVACY-0.14.3-RC.6` |
+| Discovery Service | `PRIVACY-0.14.3-RC.2` |
+| Pathfinder | `eqlabs/pathfinder:v0.22.7` (`PATHFINDER_STORAGE_STATE_TRIES=10000`) |
+| SDK | `PRIVACY-0.14.3-RC.6` |
+
+**Mainnet action:** before relying on mainnet execution, either prove `0.14.3-rc.5` against the
+mainnet deployment or make the smallest change (vendored SDK → `PRIVACY-0.14.3-RC.6`) and re-run
+the full suite. No broad dependency upgrade is planned.
+
+## Mainnet prover (Starkscan relay)
+
+The mainnet proving service is the **Starkscan STRK20 prover relay** (`api.starkscan.co/v1/SN_MAIN`,
+mainnet-only, operator-issued, async job+poll). The browser SDK expects a synchronous
+`starknet_proveTransaction` JSON-RPC, so Orrange proxies it server-side:
+
+- `src/app/api/starkscan/prove/route.ts` — server route (holds `STARKSCAN_API_KEY`; never in browser).
+- `src/services/starkscanProver.ts` — async submit+poll client (X-Starkscan-Api-Key, Idempotency-Key).
+- `GET /api/starkscan/prove` — auth probe: `401=unauthenticated`, `403=forbidden (no scope)`,
+  `404=dormant`, else `authenticated`. Verified live against the relay (dummy key ⇒ 401).
+
+Mainnet proving is async and can hold a prover slot for minutes ⇒ mainnet resolves
+`proverTimeoutMs = 15 min`; Sepolia stays at the fast synchronous default.
 
 ## Operator / on-chain configuration (Sepolia)
 
