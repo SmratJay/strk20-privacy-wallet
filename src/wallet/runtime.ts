@@ -58,6 +58,14 @@ import {
   type NearIntentReadiness,
   type NearIntentStatus,
 } from "@/features/near-intents";
+import {
+  PrivacyHub,
+  NearIntentProvider,
+  type PrivacyHubIntent,
+  type PrivacyHubQuote,
+  type PrivacyHubReceipt,
+  type PrivacyHubStatus,
+} from "@/features/privacy-hub";
 
 /**
  * Wallet Core — application wallet runtime.
@@ -1233,6 +1241,38 @@ export class WalletRuntime {
   async checkCrossChainReadiness(intent: CrossChainPrivateIntent): Promise<NearIntentReadiness> {
     const adapter = this.requireNearIntentAdapter();
     return adapter.checkReadiness(intent);
+  }
+
+  // ─────────────────────── Cross-chain PrivacyHub (orchestration bridge) ───────────────────────
+
+  /**
+   * The PrivacyHub orchestrates a typed hub intent over the EXISTING near-intents provider. This
+   * bridge is thin and headless: it returns plain results and owns no route/provider/destination
+   * logic (all of that lives in `src/features/privacy-hub`). Reuses the near-intents adapter.
+   */
+  private requirePrivacyHub(): PrivacyHub {
+    const adapter = this.requireNearIntentAdapter();
+    return new PrivacyHub({ providers: { "near-intents": new NearIntentProvider(adapter) } });
+  }
+
+  async quotePrivacyHub(intent: PrivacyHubIntent): Promise<PrivacyHubQuote> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to quote cross-chain intents.");
+    const hub = this.requirePrivacyHub();
+    return hub.quote(intent);
+  }
+
+  async executePrivacyHub(intent: PrivacyHubIntent, quote?: PrivacyHubQuote): Promise<PrivacyHubReceipt> {
+    const session = this.session;
+    if (!session) throw new Error("Wallet is locked. Unlock it to execute cross-chain intents.");
+    const hub = this.requirePrivacyHub();
+    const prepared = await hub.prepare(intent, quote ?? null);
+    return hub.execute(intent, prepared);
+  }
+
+  async getPrivacyHubStatus(reference: string, providerId?: string): Promise<PrivacyHubStatus> {
+    const hub = this.requirePrivacyHub();
+    return hub.status(reference, providerId);
   }
 
   /**
