@@ -9,6 +9,7 @@ import {
   Copy,
   Check,
   Repeat,
+  Globe,
   Lock,
   ChevronRight,
   Loader2,
@@ -22,7 +23,6 @@ import { WalletCoreSend } from '@/components/wallet/WalletCoreSend';
 import { WalletCorePrivacyPanel } from '@/components/wallet/WalletCorePrivacyPanel';
 import { WalletCorePrivateExecute } from '@/components/wallet/WalletCorePrivateExecute';
 import { PrivateSwapPanel } from '@/components/wallet/PrivateSwapPanel';
-import { PrivateCrossChainPanel } from '@/components/wallet/PrivateCrossChainPanel';
 import { DemoEvidencePanel } from '@/components/wallet/DemoEvidencePanel';
 import { PrivacyInfo } from '@/components/wallet/PrivacyInfo';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
@@ -80,7 +80,7 @@ export default function WalletPage() {
   const { runtime, state } = useWalletRuntime();
   const account = state.account;
 
-  const [usdTotal, setUsdTotal] = useState<number | null>(null);
+  const [prices, setPrices] = useState<Record<string, number | null>>({});
   const [copied, setCopied] = useState(false);
   const [deploying, setDeploying] = useState(false);
 
@@ -91,35 +91,45 @@ export default function WalletPage() {
       void runtime.refreshDeployment();
       void runtime.refreshPrivacyRegistration();
     }
-  }, [runtime, account?.walletId]);
+  }, [runtime, account?.walletId, state.network]);
 
   useEffect(() => {
     if (!account) {
-      setUsdTotal(null);
+      setPrices({});
       return;
     }
     let cancelled = false;
-    void (async () => {
+    const refresh = async () => {
       try {
-        const prices = await priceService.getPrices();
-        let total: number | null = 0;
-        for (const row of state.publicBalances) {
-          const price = prices[row.token.symbol];
-          if (price === undefined || price === null || !row.available) {
-            total = null;
-            break;
-          }
-          total += Number(row.balance) / 10 ** row.token.decimals * price;
-        }
-        if (!cancelled) setUsdTotal(total);
+        const latest = await priceService.getPrices();
+        if (!cancelled) setPrices(latest);
       } catch {
-        if (!cancelled) setUsdTotal(null);
+        if (!cancelled) setPrices({});
       }
-    })();
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 30_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [account, state.publicBalances]);
+  }, [account, state.publicBalances, state.privateBalances]);
+
+  const valueOf = (rows: typeof state.publicBalances): number | null => {
+    if (state.network !== 'mainnet' || !rows.length) return null;
+    let total = 0;
+    for (const row of rows) {
+      if (!row.available) return null;
+      if (row.balance === 0n) continue;
+      const price = prices[row.token.symbol];
+      if (price == null || !Number.isFinite(price)) return null;
+      total += Number(row.balance) / 10 ** row.token.decimals * price;
+    }
+    return Number.isFinite(total) ? total : null;
+  };
+  const publicUsd = valueOf(state.publicBalances);
+  const privateUsd = state.privacy.available && state.privacy.status !== 'error' ? valueOf(state.privateBalances) : null;
+  const usdTotal = publicUsd !== null && privateUsd !== null ? publicUsd + privateUsd : null;
 
   const handleCopy = useCallback(async () => {
     if (!account) return;
@@ -171,10 +181,14 @@ export default function WalletPage() {
                   <div className="product-summary-label">Total balance</div>
                   <div className="product-summary-value">{formatUsd(usdTotal)}</div>
                   <div className="product-summary-note">
-                    Public balance · live USD estimate when prices are available
+                    {state.network === 'mainnet' ? 'Public + private · indicative USD value, not a guaranteed sale price' : 'Sepolia test assets have no real USD value'}
                   </div>
                 </div>
                 <span className="product-summary-label">USD</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 border-t border-[var(--app-border)] mt-5 pt-4">
+                <div><div className="product-summary-label">Public</div><p className="text-xl font-semibold mt-1">{formatUsd(publicUsd)}</p></div>
+                <div><div className="product-summary-label">Private</div><p className="text-xl font-semibold mt-1">{formatUsd(privateUsd)}</p></div>
               </div>
             </section>
 
@@ -211,6 +225,8 @@ export default function WalletPage() {
                     </dd>
                   </div>
                 </dl>
+                {deployable && <p className="text-xs text-zinc-400 mt-4 leading-relaxed">This is your counterfactual account address. Send STRK on Starknet {state.network === 'mainnet' ? 'Mainnet' : 'Sepolia'} to this address to cover deployment fees, then choose Deploy account. Creating a wallet does not deploy it automatically.</p>}
+                {state.error && <p role="alert" className="text-sm text-red-300 mt-3">{state.error}</p>}
                 <button
                   onClick={handleCopy}
                   className="mt-4 inline-flex items-center gap-1.5 text-xs text-[#F08A3C]"
@@ -311,7 +327,7 @@ export default function WalletPage() {
                           state.privacy.maturityReadyAtBlock ?? '…'
                         }${state.privacy.currentBlock !== null ? ` (current head ${state.privacy.currentBlock})` : ''}.`
                       : state.privacy.registered === true
-                        ? 'Your wallet-native viewing key is registered in the STRK20 pool. Shield, send privately, and withdraw are live.'
+                        ? 'Your viewing key is registered in the STRK20 pool. Shield STRK, transfer privately, or withdraw using the configured privacy services.'
                         : state.privacy.registered === false
                           ? 'The STRK20 protocol is available. Your viewing key is not yet registered — the first shield auto-registers it on-chain.'
                           : state.privacy.status === 'error'
@@ -350,6 +366,7 @@ export default function WalletPage() {
                   <Repeat aria-hidden="true" />
                   <span>Swap</span>
                 </Link>
+                <Link href="/cross-chain" className="product-action"><Globe aria-hidden="true" /><span>Cross-chain</span></Link>
               </div>
             </div>
 
@@ -379,12 +396,9 @@ export default function WalletPage() {
               </div>
             )}
 
-            {state.privacy.available && (
-              <div className="mt-6">
-                <div className="product-eyebrow mb-3">PRIVATE CROSS-CHAIN</div>
-                <PrivateCrossChainPanel />
-              </div>
-            )}
+            <Link href="/cross-chain" className="product-card p-5 mt-6 flex items-center justify-between gap-4">
+              <div><h2 className="font-semibold">Cross-chain</h2><p className="text-sm text-zinc-400 mt-1">Private STRK → Base USDC or supported Solana assets. Choose and verify your destination.</p></div><Globe className="w-6 h-6 shrink-0" />
+            </Link>
 
             <div className="mt-6">
               <div className="product-eyebrow mb-3">EVIDENCE</div>
@@ -432,7 +446,7 @@ export default function WalletPage() {
                 <ul className="mt-3 space-y-2">
                   {state.recentTransactions.map((tx) => (
                     <li key={tx.hash} className="flex items-center justify-between text-xs">
-                      <span className="font-mono text-zinc-400">{shortenAddress(tx.hash, 8)}</span>
+                      <a href={`${state.network === 'mainnet' ? 'https://starkscan.co' : 'https://sepolia.starkscan.co'}/tx/${encodeURIComponent(tx.hash)}`} target="_blank" rel="noopener noreferrer" className="font-mono text-zinc-400 underline">{shortenAddress(tx.hash, 8)}</a>
                       <span className="text-zinc-500">{new Date(tx.at).toLocaleTimeString()}</span>
                     </li>
                   ))}

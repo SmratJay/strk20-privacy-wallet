@@ -29,6 +29,8 @@ export const WalletCoreGate: React.FC = () => {
     setBusy(true);
     try {
       await runtime.create(password);
+    } catch {
+      // WalletRuntime exposes the actionable error above; avoid an unhandled event rejection.
     } finally {
       setBusy(false);
     }
@@ -43,6 +45,8 @@ export const WalletCoreGate: React.FC = () => {
         password,
         address: existingAddress.trim() || undefined,
       });
+    } catch {
+      // WalletRuntime owns the error state.
     } finally {
       setBusy(false);
     }
@@ -52,6 +56,8 @@ export const WalletCoreGate: React.FC = () => {
     setBusy(true);
     try {
       await runtime.unlock(password);
+    } catch {
+      // WalletRuntime owns the error state.
     } finally {
       setBusy(false);
     }
@@ -115,6 +121,8 @@ export const WalletCoreGate: React.FC = () => {
 
       {/* New wallet: Create | Import */}
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
+        <h2 className="text-lg font-semibold mb-1">Create your private wallet</h2>
+        <p className="text-xs text-zinc-400 mb-4">Self-custodial Starknet wallet · {state.network === 'mainnet' ? 'Mainnet' : 'Sepolia test network'}. Keep your recovery backup safe; Orrange cannot recover a lost password or key.</p>
         <div className="flex items-center gap-3 mb-4">
           <button
             onClick={() => setMode('create')}
@@ -136,8 +144,10 @@ export const WalletCoreGate: React.FC = () => {
 
         {mode === 'create' ? (
           <>
-            <label className="block text-sm text-zinc-400 mb-1">Password</label>
+            <label htmlFor="wallet-create-password" className="block text-sm text-zinc-400 mb-1">Password</label>
             <input
+              id="wallet-create-password"
+              autoComplete="new-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

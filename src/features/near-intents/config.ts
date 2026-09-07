@@ -40,9 +40,10 @@ export interface CrossChainNetworkConfig {
  * - sepolia: STRK20 Sepolia operator is configured → `configured`/`available` = true; the API layer
  *   is live (quote/reserve/status prove it). `settlementEnabled` = false because NEAR Intents is
  *   mainnet-only and Sepolia STRK cannot fund a mainnet deposit.
- * - mainnet: the STRK20 MAINNET operator (prover/discovery/anonymizer) + a MAINNET private paymaster
- *   are NOT yet configured → `configured` = false and `settlementEnabled` = false. There is NO
- *   fallback to the Sepolia operator and NO public root-wallet execution.
+ * - mainnet: availability follows the supplied MAINNET prover/discovery/anonymizer configuration;
+ *   settlement additionally requires an explicit HTTPS MAINNET private paymaster. There is NO
+ *   fallback to the Sepolia operator and NO public root-wallet execution. Runtime preflight checks
+ *   the deployed account and private funds before execution.
  *
  * The mainnet paymaster check reads the SAME network-scoped `WalletPrivacyConfig.paymasterUrl` that
  * `WalletPrivacySession` threads into the shadow relay, so `settlementEnabled` is only ever true when

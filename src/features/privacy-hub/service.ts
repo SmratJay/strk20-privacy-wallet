@@ -17,24 +17,27 @@ import {
   type PrivacyHubReadiness,
   type PrivacyHubPhase,
 } from "./types";
-import { resolvePrivacyHubRoute, privacyHubRouteById, type PrivacyHubRoute, type ProviderCapability } from "./routes";
-import type { CrossChainProvider } from "./provider";
+import { PRIVACY_HUB_ROUTES, type PrivacyHubRoute, type ProviderCapability } from "./routes";
+import type { CrossChainProvider, HubExecutionOptions } from "./provider";
 
 export interface PrivacyHubOptions {
   providers: Record<string, CrossChainProvider>;
+  routes?: readonly PrivacyHubRoute[];
 }
 
 export class PrivacyHub {
   private readonly providers: Record<string, CrossChainProvider>;
+  private readonly routes: readonly PrivacyHubRoute[];
 
   constructor(options: PrivacyHubOptions) {
     this.providers = options.providers;
+    this.routes = options.routes ?? PRIVACY_HUB_ROUTES;
   }
 
   private resolveRoute(intent: PrivacyHubIntent): PrivacyHubRoute {
-    const route = intent.routeId
-      ? privacyHubRouteById(intent.routeId)
-      : resolvePrivacyHubRoute(intent.sourceChain, intent.sourceAsset, intent.destinationChain, intent.destinationAsset);
+    const route = this.routes.find(r => (!intent.routeId || r.id === intent.routeId)
+      && r.sourceChain === intent.sourceChain && r.sourceAsset === intent.sourceAsset
+      && r.destinationChain === intent.destinationChain && r.destinationAsset === intent.destinationAsset);
     if (!route) {
       throw new PrivacyHubError(
         `Unsupported cross-chain route: ${intent.sourceChain}:${intent.sourceAsset} → ${intent.destinationChain}:${intent.destinationAsset}.`,
@@ -81,7 +84,7 @@ export class PrivacyHub {
   async execute(
     intent: PrivacyHubIntent,
     prepared: PrivacyHubPrepared,
-    options?: { onPhase?: (phase: PrivacyHubPhase) => void },
+    options?: HubExecutionOptions,
   ): Promise<PrivacyHubReceipt> {
     const route = this.validate(intent);
     const provider = this.providerFor(route, "execute");

@@ -26,6 +26,8 @@ import type { WalletNetworkId } from "@/wallet";
 import type { ShadowCallLike } from "@/privacy/strk20";
 import { NearIntentClient, type OneClickStatusResponse } from "./client";
 import { crossChainConfigFor, type CrossChainNetworkConfig } from "./config";
+import { loadNearIntentRoutes } from './registry';
+import { sameDestination } from './address';
 import {
   resolveNearIntentRoute,
   type NearIntentRoute,
@@ -64,6 +66,7 @@ const TERMINAL_CODES: readonly NearIntentStatusCode[] = ["SUCCESS", "REFUNDED", 
 /** A lifecycle update the adapter emits to the runtime (never contains secrets). */
 export interface NearIntentPhaseUpdate {
   phase: NearIntentPhase;
+  transactionHash?: string;
   status?: NearIntentStatusCode;
   amountOut?: bigint | null;
 }
@@ -114,13 +117,14 @@ export class NearIntentAdapter {
     this.client = options.client ?? new NearIntentClient({ baseUrl: this.config.nearBaseUrl });
   }
 
-  /** Resolve the single supported route for an intent (throws on unknown routes). */
-  private resolveRoute(intent: Pick<CrossChainPrivateIntent, "sourceChain" | "sourceAsset" | "destinationChain" | "destinationAsset">): NearIntentRoute {
+  /** Resolve the canonical Base route or a live-registry Solana route; never infer token IDs. */
+  private async resolveRoute(intent: Pick<CrossChainPrivateIntent, "sourceChain" | "sourceAsset" | "destinationChain" | "destinationAsset">): Promise<NearIntentRoute> {
     const route = resolveNearIntentRoute(
       intent.sourceChain,
       intent.sourceAsset,
       intent.destinationChain,
       intent.destinationAsset,
+      intent.destinationChain === 'solana' ? await loadNearIntentRoutes() : undefined,
     );
     if (!route) {
       throw new NearIntentUnsupportedRouteError(
@@ -163,14 +167,14 @@ export class NearIntentAdapter {
       this.config.settlementEnabled ? null : (this.config.reason ?? `active network is ${this.network}`),
     );
 
-    const destInvalid = validateDestinationAddress(intent.destinationAddress);
+    const destInvalid = validateDestinationAddress(intent.destinationAddress, intent.destinationChain);
     add("destination valid", !destInvalid, destInvalid);
 
     // Route resolution (also yields the source token address for the balance check).
     let route: NearIntentRoute | null = null;
     let routeDetail: string | null = null;
     try {
-      route = this.resolveRoute(intent);
+      route = await this.resolveRoute(intent);
     } catch (err) {
       routeDetail = err instanceof Error ? err.message : "unknown route error";
     }
@@ -225,10 +229,11 @@ export class NearIntentAdapter {
     const invalid = validateCrossChainIntent(intent);
     if (invalid) throw new NearIntentError(`Invalid cross-chain intent: ${invalid}`);
     this.requireAvailable();
-    const route = this.resolveRoute(intent);
-    if (validateDestinationAddress(intent.destinationAddress)) {
+    const route = await this.resolveRoute(intent);
+    if (validateDestinationAddress(intent.destinationAddress, intent.destinationChain)) {
       throw new NearIntentError("Invalid destination address.");
     }
+    const identity = this.resolveIdentity(intent.appName, intent.nonce);
     const response = await this.client.requestQuote({
       dry: true,
       swapType: "EXACT_INPUT",
@@ -239,8 +244,8 @@ export class NearIntentAdapter {
       amount: intent.sourceAmount.toString(),
       recipient: intent.destinationAddress,
       recipientType: "DESTINATION_CHAIN",
-      // A dry quote does not fund anything; refundTo is still validated by the API.
-      refundTo: this.wallet.address,
+      // Even a dry request must not disclose the root wallet as refund metadata to the provider.
+      refundTo: identity.shadowAddress,
       refundType: "ORIGIN_CHAIN",
       deadline: new Date(Date.now() + DRY_QUOTE_TTL_MS).toISOString(),
     });
@@ -262,7 +267,19 @@ export class NearIntentAdapter {
       throw new NearIntentError("Cross-chain intent has expired.");
     }
     this.requireAvailable();
-    const route = this.resolveRoute(intent);
+    const route = await this.resolveRoute(intent);
+
+    if (confirmedQuote && (confirmedQuote.sourceChain !== intent.sourceChain
+      || confirmedQuote.destinationChain !== intent.destinationChain
+      || confirmedQuote.destinationAsset !== intent.destinationAsset
+      || confirmedQuote.sourceAsset !== intent.sourceAsset
+      || confirmedQuote.sourceAmount !== intent.sourceAmount
+      || !sameDestination(confirmedQuote.destinationAddress, intent.destinationAddress, intent.destinationChain)
+      || confirmedQuote.slippageBps !== intent.slippageBps
+      || !Number.isFinite(Date.parse(confirmedQuote.deadline))
+      || Date.parse(confirmedQuote.deadline) <= Date.now())) {
+      throw new NearIntentQuoteStaleError('Quote expired or the destination route changed. Request a new quote.');
+    }
 
     // Resolve the shadow identity: it is the privacy-preserving refund target.
     const identity = this.resolveIdentity(intent.appName, intent.nonce);
@@ -289,12 +306,12 @@ export class NearIntentAdapter {
       if (confirmedQuote.sourceAsset !== intent.sourceAsset || confirmedQuote.sourceAmount !== intent.sourceAmount) {
         throw new NearIntentError("The confirmed quote does not match the intent.");
       }
-      if (confirmedQuote.destinationAddress.toLowerCase() !== intent.destinationAddress.toLowerCase()) {
+      if (!sameDestination(confirmedQuote.destinationAddress, intent.destinationAddress, intent.destinationChain)) {
         throw new NearIntentError("The confirmed quote does not match the destination address.");
       }
       const referenceAmountOut = confirmedQuote.amountOut;
       const floor = computeMinOutput(referenceAmountOut, intent.slippageBps);
-      if (quote.amountOut < floor) {
+      if (quote.amountOut < floor || quote.minAmountOut < confirmedQuote.minAmountOut) {
         throw new NearIntentQuoteStaleError();
       }
     }
@@ -341,7 +358,11 @@ export class NearIntentAdapter {
     if (!readiness.ready) {
       throw new NearIntentError(`Cross-chain pre-flight failed before funding: ${readiness.reason}.`);
     }
-    const route = this.resolveRoute(intent);
+    const route = await this.resolveRoute(intent);
+    const depositDeadline = Math.min(Date.parse(prepared.depositAddressDeadline), Date.parse(prepared.deadline));
+    if (!Number.isFinite(depositDeadline) || depositDeadline <= Date.now()) {
+      throw new NearIntentQuoteStaleError('Deposit address expired. Request a new quote before sending.');
+    }
 
     // Defensive re-validation: the prepared object must match the intent exactly (never trust a
     // mutated/foreign prepared object). This is the immutable execution tuple.
@@ -351,10 +372,13 @@ export class NearIntentAdapter {
     if (prepared.sourceAmount !== intent.sourceAmount) {
       throw new NearIntentError("The prepared intent does not match the source amount.");
     }
+    if (prepared.slippageBps !== intent.slippageBps || prepared.sourceTokenAddress !== route.sourceToken.address) {
+      throw new NearIntentError('The prepared intent does not match the source token or slippage.');
+    }
     if (prepared.destinationChain !== intent.destinationChain || prepared.destinationAsset !== intent.destinationAsset) {
       throw new NearIntentError("The prepared intent does not match the destination chain/asset.");
     }
-    if (prepared.destinationAddress.toLowerCase() !== intent.destinationAddress.toLowerCase()) {
+    if (!sameDestination(prepared.destinationAddress, intent.destinationAddress, intent.destinationChain)) {
       throw new NearIntentError("The prepared intent does not match the destination address.");
     }
     if (!prepared.depositAddress || !isValidStarknetAddress(prepared.depositAddress)) {
@@ -387,7 +411,7 @@ export class NearIntentAdapter {
       calls,
       destination: this.wallet.address,
     });
-    options.onPhase?.({ phase: "source-confirming" });
+    options.onPhase?.({ phase: "source-confirming", transactionHash: result.transactionHash });
 
     // Best-effort: notify 1Click of the deposit tx (non-fatal; status polling still works).
     try {
@@ -400,13 +424,14 @@ export class NearIntentAdapter {
 
     return {
       intentId: prepared.intentId,
+      route: route.name,
       depositAddress: prepared.depositAddress,
       status: status.code,
       sourceChain: "starknet",
-      destinationChain: "base",
+      destinationChain: intent.destinationChain,
       sourceAsset: "strk",
       sourceAmount: intent.sourceAmount,
-      destinationAsset: "usdc",
+      destinationAsset: intent.destinationAsset,
       destinationAddress: intent.destinationAddress,
       amountOut: status.amountOut,
       shadowAddress: result.shadowAddress,
@@ -465,7 +490,7 @@ export class NearIntentAdapter {
   }
 
   private toQuote(
-    response: { quote?: { amountOut?: string; refundFee?: string; withdrawFee?: string; timeEstimate?: number; deadline?: string } },
+    response: { quote?: { amountOut?: string; minAmountOut?: string; refundFee?: string; withdrawFee?: string; timeEstimate?: number; deadline?: string } },
     route: NearIntentRoute,
     intent: CrossChainPrivateIntent,
   ): NearIntentQuote {
@@ -473,26 +498,32 @@ export class NearIntentAdapter {
     if (amountOut <= 0n) {
       throw new NearIntentError("NEAR Intents returned a zero quote for this route.");
     }
+    const deadline = response.quote?.deadline;
+    if (!deadline || !Number.isFinite(Date.parse(deadline)) || Date.parse(deadline) <= Date.now()) {
+      throw new NearIntentQuoteStaleError('The provider returned an expired or invalid quote deadline.');
+    }
+    const minAmountOut = response.quote?.minAmountOut != null ? BigInt(response.quote.minAmountOut) : computeMinOutput(amountOut, intent.slippageBps);
+    if (minAmountOut <= 0n || minAmountOut > amountOut) throw new NearIntentError('The provider returned an invalid minimum output.');
     return {
       sourceChain: "starknet",
       sourceAsset: "strk",
       sourceAmount: intent.sourceAmount,
-      destinationChain: "base",
-      destinationAsset: "usdc",
+      destinationChain: intent.destinationChain,
+      destinationAsset: intent.destinationAsset,
       destinationAddress: intent.destinationAddress,
       amountOut,
-      minAmountOut: computeMinOutput(amountOut, intent.slippageBps),
-      refundFee: BigInt(response.quote?.refundFee ?? "0"),
-      withdrawFee: BigInt(response.quote?.withdrawFee ?? "0"),
+      minAmountOut,
+      refundFee: response.quote?.refundFee != null ? BigInt(response.quote.refundFee) : null,
+      withdrawFee: response.quote?.withdrawFee != null ? BigInt(response.quote.withdrawFee) : null,
       timeEstimate: response.quote?.timeEstimate ?? 0,
-      deadline: response.quote?.deadline ?? new Date(Date.now() + DRY_QUOTE_TTL_MS).toISOString(),
+      deadline,
       route: route.name,
       slippageBps: intent.slippageBps,
     };
   }
 
   private toStatus(response: OneClickStatusResponse, depositAddress: string): NearIntentStatus {
-    const code = (response.status ?? "FAILED") as NearIntentStatusCode;
+    const code = response.status as NearIntentStatusCode;
     if (!TERMINAL_CODES.includes(code) && !["PENDING_DEPOSIT", "KNOWN_DEPOSIT_TX", "PROCESSING"].includes(code)) {
       throw new NearIntentRejectedError(`NEAR Intents returned an unrecognized status: ${response.status}`);
     }
@@ -507,8 +538,8 @@ export class NearIntentAdapter {
       depositAddress,
       intentHashes: details.intentHashes ?? [],
       nearTxHashes: details.nearTxHashes ?? [],
-      originChainTxHashes: details.originChainTxHashes ?? [],
-      destinationChainTxHashes: details.destinationChainTxHashes ?? [],
+      originChainTxHashes: transactionHashes(details.originChainTxHashes),
+      destinationChainTxHashes: transactionHashes(details.destinationChainTxHashes),
       amountIn,
       amountOut,
       refundedAmount: details.refundedAmount != null ? BigInt(details.refundedAmount) : 0n,
@@ -517,6 +548,13 @@ export class NearIntentAdapter {
       settled,
     };
   }
+}
+
+/** Current 1Click responses use { hash, explorerUrl }; accept legacy hash strings as well. */
+function transactionHashes(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return values.map(value => typeof value === 'string' ? value : value?.hash)
+    .filter((hash): hash is string => typeof hash === 'string' && hash.length > 0);
 }
 
 function sleep(ms: number): Promise<void> {

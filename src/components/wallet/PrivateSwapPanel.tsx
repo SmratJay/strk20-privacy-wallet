@@ -48,7 +48,7 @@ const DEFAULT_SLIPPAGE_BPS = 100; // 1%
 export const PrivateSwapPanel: React.FC = () => {
   const { runtime, state } = useWalletRuntime();
   const networkConfig = getNetworkConfig(state.network);
-  const app = PRIVATE_SWAP_APPS.find((a) => a.network === 'sepolia');
+  const app = PRIVATE_SWAP_APPS.find((a) => a.network === state.network);
   const sellToken = app?.sellToken ?? networkConfig.tokens.find((t) => t.symbol === 'STRK') ?? networkConfig.tokens[0];
   const buyToken = app?.buyToken ?? STRKFTW_TOKEN;
 
@@ -78,7 +78,7 @@ export const PrivateSwapPanel: React.FC = () => {
   }, [state.account?.walletId, state.network]);
 
   const refreshQuote = useCallback(async () => {
-    if (!state.account || !amount) {
+    if (!state.account || !amount || !app) {
       setQuote(null);
       setQuoteError(null);
       return;
@@ -108,7 +108,7 @@ export const PrivateSwapPanel: React.FC = () => {
     } finally {
       setQuoting(false);
     }
-  }, [state.account, amount, sellToken, buyToken, slippageBps, appName, nonce, runtime]);
+  }, [state.account, amount, sellToken, buyToken, slippageBps, appName, nonce, runtime, app]);
 
   useEffect(() => {
     void refreshQuote();
@@ -189,12 +189,12 @@ export const PrivateSwapPanel: React.FC = () => {
     }
   }, [runtime, sellToken, buyToken, amount, slippageBps, appName, nonce, quote]);
 
-  if (!state.privacy.available) {
+  if (!state.privacy.available || !app) {
     return (
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
         <h2 className="text-sm font-semibold text-zinc-200 mb-1">Private swap — unavailable</h2>
         <p className="text-xs text-zinc-500">
-          {state.privacy.reason ?? 'STRK20 privacy is not available for this wallet yet.'}
+          {!app ? 'No private-swap application is configured for this network. The existing Sepolia market remains separate; no public or testnet fallback is used.' : state.privacy.reason ?? 'STRK20 privacy is not available for this wallet yet.'}
         </p>
       </section>
     );

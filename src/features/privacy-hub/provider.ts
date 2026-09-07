@@ -21,6 +21,13 @@ import type {
   NearIntentReceipt,
 } from "@/features/near-intents";
 import { nearIntentPhaseForStatus } from "@/features/near-intents";
+import type { NearIntentPhaseUpdate } from "@/features/near-intents/adapter";
+
+export interface HubExecutionOptions {
+  onPhase?: (phase: PrivacyHubPhase) => void;
+  /** Public lifecycle evidence only. No signer, notes, keys or proofs. */
+  onSourceUpdate?: (update: NearIntentPhaseUpdate) => void;
+}
 import type {
   PrivacyHubIntent,
   PrivacyHubQuote,
@@ -42,7 +49,7 @@ export interface CrossChainProvider {
   execute(
     intent: PrivacyHubIntent,
     prepared: PrivacyHubPrepared,
-    options?: { onPhase?: (phase: PrivacyHubPhase) => void },
+    options?: HubExecutionOptions,
   ): Promise<PrivacyHubReceipt>;
   /** Reconcile a previously prepared reference to a terminal state. */
   status(reference: string): Promise<PrivacyHubStatus>;
@@ -73,6 +80,8 @@ export function nearPhaseToHubPhase(phase: NearIntentPhase): PrivacyHubPhase {
       return "failed";
     case "refunded":
       return "refunded";
+    case "expired":
+      return "expired";
     case "unknown":
       return "unknown";
     default:
@@ -152,7 +161,7 @@ function toHubStatus(status: NearIntentStatus): PrivacyHubStatus {
 
 function toHubReceipt(receipt: NearIntentReceipt): PrivacyHubReceipt {
   return {
-    route: "STRK (Starknet) → USDC (Base)",
+    route: receipt.route ?? `STRK (Starknet) → ${receipt.destinationAsset} (${receipt.destinationChain})`,
     provider: "near-intents",
     reference: receipt.depositAddress,
     phase: nearStatusCodeToHubPhase(receipt.status),
@@ -197,11 +206,14 @@ export class NearIntentProvider implements CrossChainProvider {
   async execute(
     intent: PrivacyHubIntent,
     prepared: PrivacyHubPrepared,
-    options: { onPhase?: (phase: PrivacyHubPhase) => void } = {},
+    options: HubExecutionOptions = {},
   ): Promise<PrivacyHubReceipt> {
     const nearPrepared = asNearPrepared(prepared.providerPayload);
     const receipt = await this.adapter.execute(toNearIntent(intent), nearPrepared, {
-      onPhase: (update) => options.onPhase?.(nearPhaseToHubPhase(update.phase)),
+      onPhase: (update) => {
+        options.onSourceUpdate?.(update);
+        options.onPhase?.(nearPhaseToHubPhase(update.phase));
+      },
     });
     return toHubReceipt(receipt);
   }

@@ -2,7 +2,7 @@
  * Privacy Hub — typed route registry + provider capabilities.
  *
  * The hub owns the WHO/WHERE of a route (which provider executes a given source→destination pair),
- * NOT the HOW (the provider owns that). The single route today resolves to the existing
+ * NOT the HOW (the provider owns that). Canonical Base and registry-backed Solana routes use the existing
  * `near-intents` provider. Adding a second provider later means adding a route entry + a provider
  * implementation — the hub, Runtime, and Wallet Core stay unchanged.
  */
@@ -12,6 +12,7 @@ import type {
   PrivacyHubDestinationChain,
   PrivacyHubDestinationAsset,
 } from "./types";
+import { NEAR_INTENT_ROUTES, type NearIntentRoute } from '../near-intents/routes';
 
 /** Provider identifiers the hub can route to. */
 export type CrossChainProviderId = "near-intents" | "confidential-intents";
@@ -48,24 +49,22 @@ export interface PrivacyHubRoute {
   /** Privacy boundary facts for this route (never over-claims). */
   privacy: readonly ProviderPrivacyCapability[];
   /** Destination address validation kind. */
-  addressKind: "evm";
+  addressKind: "evm" | "solana";
 }
 
-/** The single public route: STRK (Starknet) → USDC (Base), settled publicly by NEAR Intents. */
-export const PRIVACY_HUB_ROUTES: readonly PrivacyHubRoute[] = [
-  {
-    id: "starknet-strk-to-base-usdc",
-    name: "STRK (Starknet) → USDC (Base)",
-    sourceChain: "starknet",
-    sourceAsset: "strk",
-    destinationChain: "base",
-    destinationAsset: "usdc",
+/** One shared route source; do not duplicate NEAR asset metadata in the orchestration layer. */
+export function toPrivacyHubRoutes(routes: readonly NearIntentRoute[]): PrivacyHubRoute[] {
+  return routes.map(route => ({
+    id: route.id, name: route.name,
+    sourceChain: route.sourceChain, sourceAsset: route.sourceAsset,
+    destinationChain: route.destinationChain, destinationAsset: route.destinationAsset,
     provider: "near-intents",
     capabilities: ["quote", "prepare", "execute", "status", "readiness"],
     privacy: ["source-private", "destination-public", "public-settlement"],
-    addressKind: "evm",
-  },
-];
+    addressKind: route.destinationAddressKind,
+  }));
+}
+export const PRIVACY_HUB_ROUTES: readonly PrivacyHubRoute[] = toPrivacyHubRoutes(NEAR_INTENT_ROUTES);
 
 export function routeHasPrivacyCapability(
   route: PrivacyHubRoute,

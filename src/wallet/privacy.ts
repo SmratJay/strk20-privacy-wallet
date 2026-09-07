@@ -349,7 +349,12 @@ export class WalletPrivacySession {
    * stays inside this session; the master key never leaves Wallet Core.
    */
   executeShadowApplication(params: ShadowAccountInvokeParams): Promise<import("@/privacy/strk20").ShadowAccountInvokeResult> {
-    return this.serialize(async () => shadowAccountInvoke(this.adapter, this.user(), params));
+    return this.serialize(async () => {
+      if (this.network === "mainnet" && !this.adapter.paymasterUrl?.startsWith("https://")) {
+        throw new Error("Mainnet private execution requires an explicit HTTPS Mainnet private-paymaster relay. No public or Sepolia fallback is permitted.");
+      }
+      return shadowAccountInvoke(this.adapter, this.user(), params);
+    });
   }
 
   /** Create a shadow identity for this wallet. The viewing key is consumed transiently, never stored. */

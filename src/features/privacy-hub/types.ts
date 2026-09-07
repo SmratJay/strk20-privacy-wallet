@@ -23,9 +23,9 @@ export type PrivacyHubSourceChain = "starknet";
 /** Source asset (Starknet STRK). */
 export type PrivacyHubSourceAsset = "strk";
 /** Destination chain (Base). */
-export type PrivacyHubDestinationChain = "base";
+export type PrivacyHubDestinationChain = "base" | "solana";
 /** Destination asset (Base USDC). */
-export type PrivacyHubDestinationAsset = "usdc";
+export type PrivacyHubDestinationAsset = string;
 
 /** Normalized provider-agnostic lifecycle (provider states are collapsed into this set). */
 export type PrivacyHubPhase =
@@ -38,6 +38,7 @@ export type PrivacyHubPhase =
   | "success"
   | "failed"
   | "refunded"
+  | "expired"
   | "unknown";
 
 /**
@@ -76,8 +77,8 @@ export interface PrivacyHubQuote {
   destinationAddress: string;
   amountOut: bigint;
   minAmountOut: bigint;
-  refundFee: bigint;
-  withdrawFee: bigint;
+  refundFee: bigint | null;
+  withdrawFee: bigint | null;
   timeEstimate: number;
   deadline: string;
   slippageBps: number;
@@ -147,7 +148,7 @@ export class PrivacyHubError extends Error {
   }
 }
 
-const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+import { validateChainAddress } from '../near-intents/address';
 
 export function isValidHubSlippageBps(slippageBps: number): boolean {
   return (
@@ -167,11 +168,10 @@ export function validatePrivacyHubIntent(intent: unknown): string | null {
   if (typeof i.sourceAmount !== "bigint" || i.sourceAmount <= 0n) {
     return "sourceAmount must be a positive bigint";
   }
-  if (i.destinationChain !== "base") return `unsupported destination chain: ${String(i.destinationChain)}`;
-  if (i.destinationAsset !== "usdc") return `unsupported destination asset: ${String(i.destinationAsset)}`;
-  if (typeof i.destinationAddress !== "string" || !EVM_ADDRESS.test(i.destinationAddress)) {
-    return "malformed destination address (expected an EVM 0x address)";
-  }
+  if (i.destinationChain !== "base" && i.destinationChain !== "solana") return `unsupported destination chain: ${String(i.destinationChain)}`;
+  if ((i.destinationChain === 'base' && i.destinationAsset !== 'usdc') || typeof i.destinationAsset !== 'string' || !i.destinationAsset) return `unsupported destination asset: ${String(i.destinationAsset)}`;
+  const addressError = validateChainAddress(i.destinationAddress, i.destinationChain === 'solana' ? 'solana' : 'evm');
+  if (addressError) return addressError;
   if (!isValidHubSlippageBps(i.slippageBps)) return "slippage must be an integer in basis points (0..10000)";
   if (typeof i.appName !== "string" || i.appName.trim().length === 0 || i.appName.length > 31) {
     return "malformed appName (Cairo short string)";

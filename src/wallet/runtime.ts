@@ -47,6 +47,7 @@ import {
 } from "@/features/private-swap";
 import {
   NearIntentAdapter,
+  validateCrossChainIntent,
   nearIntentPhaseForStatus,
   IDLE_NEAR_INTENT,
   type CrossChainPrivateIntent,
@@ -60,12 +61,22 @@ import {
 } from "@/features/near-intents";
 import {
   PrivacyHub,
+  validatePrivacyHubIntent,
   NearIntentProvider,
   type PrivacyHubIntent,
   type PrivacyHubQuote,
   type PrivacyHubReceipt,
   type PrivacyHubStatus,
 } from "@/features/privacy-hub";
+import { loadNearIntentRoutes } from "@/features/near-intents/registry";
+import { toPrivacyHubRoutes } from "@/features/privacy-hub/routes";
+import type { PrivacyHubPhase } from "@/features/privacy-hub";
+
+function hubPhase(phase: PrivacyHubPhase): NearIntentOpState['phase'] {
+  if (phase === 'funding') return 'source-confirming';
+  if (phase === 'processing') return 'solver-executing';
+  return phase;
+}
 
 /**
  * Wallet Core — application wallet runtime.
@@ -1210,6 +1221,9 @@ export class WalletRuntime {
   async quoteCrossChain(intent: CrossChainPrivateIntent): Promise<NearIntentQuote> {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to quote cross-chain intents.");
+    const invalid = validateCrossChainIntent(intent);
+    if (invalid) throw new Error(invalid);
+    await this.ensureCrossChainIdentity(intent);
     const adapter = this.requireNearIntentAdapter();
     return adapter.quote(intent);
   }
@@ -1264,29 +1278,107 @@ export class WalletRuntime {
    * bridge is thin and headless: it returns plain results and owns no route/provider/destination
    * logic (all of that lives in `src/features/privacy-hub`). Reuses the near-intents adapter.
    */
-  private requirePrivacyHub(): PrivacyHub {
+  getCrossChainRoutes(force = false) {
+    return loadNearIntentRoutes(force);
+  }
+
+  private async requirePrivacyHub(intent?: PrivacyHubIntent): Promise<PrivacyHub> {
     const adapter = this.requireNearIntentAdapter();
-    return new PrivacyHub({ providers: { "near-intents": new NearIntentProvider(adapter) } });
+    const routes = intent?.destinationChain === 'solana'
+      ? toPrivacyHubRoutes(await this.getCrossChainRoutes()) : undefined;
+    return new PrivacyHub({ providers: { "near-intents": new NearIntentProvider(adapter) }, routes });
   }
 
   async quotePrivacyHub(intent: PrivacyHubIntent): Promise<PrivacyHubQuote> {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to quote cross-chain intents.");
-    const hub = this.requirePrivacyHub();
+    const invalid = validatePrivacyHubIntent(intent);
+    if (invalid) throw new Error(invalid);
+    await this.ensureCrossChainIdentity(intent);
+    const hub = await this.requirePrivacyHub(intent);
     return hub.quote(intent);
+  }
+
+  private crossChainExecuting = false;
+
+  private async ensureCrossChainIdentity(intent: { appName: string; nonce: bigint }): Promise<void> {
+    const guard = this.captureGuard();
+    const identity = this.listPrivateIdentities().find(i => i.appName === intent.appName
+      && i.nonce === intent.nonce.toString() && i.status === 'active');
+    if (!identity) await this.createShadowIdentity(intent.appName, intent.nonce);
+    if (!this.isCurrent(guard)) throw new Error('Wallet or network changed. Request a new quote.');
   }
 
   async executePrivacyHub(intent: PrivacyHubIntent, quote?: PrivacyHubQuote): Promise<PrivacyHubReceipt> {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to execute cross-chain intents.");
-    const hub = this.requirePrivacyHub();
-    const prepared = await hub.prepare(intent, quote ?? null);
-    return hub.execute(intent, prepared);
+    if (this.crossChainExecuting || ['unknown', 'source-confirming', 'solver-executing', 'destination-pending', 'awaiting-source-deposit'].includes(this.view.nearIntentOp.phase)) {
+      throw new Error('Reconcile the existing cross-chain deposit before starting another transfer.');
+    }
+    if (!quote) throw new Error('Request and review a live quote before sending.');
+    if (this.view.deploymentStatus !== 'deployed') throw new Error('Fund and deploy your Starknet account before private cross-chain execution.');
+    const guard = this.captureGuard();
+    this.crossChainExecuting = true;
+    let fundingStarted = false;
+    this.setView({ nearIntentOp: { ...IDLE_NEAR_INTENT, phase: 'preparing', destinationChain: intent.destinationChain,
+      sourceSymbol: 'STRK', sourceAmount: intent.sourceAmount, destinationAddress: intent.destinationAddress,
+      route: quote.route }, error: null });
+    try {
+      const hub = await this.requirePrivacyHub(intent);
+      const readiness = await hub.readiness(intent);
+      if (!readiness.ready) throw new Error(`Cross-chain settlement is not enabled yet: ${readiness.reason}`);
+      if (!this.isCurrent(guard)) throw new Error('Wallet or network changed. Request a new quote.');
+      const prepared = await hub.prepare(intent, quote);
+      if (!this.isCurrent(guard)) throw new Error('Wallet or network changed. Deposit was not funded.');
+      const routes = await this.getCrossChainRoutes();
+      const route = routes.find(r => r.destinationChain === intent.destinationChain && r.destinationAsset === intent.destinationAsset);
+      if (!this.isCurrent(guard)) throw new Error('Wallet or network changed. Deposit was not funded.');
+      this.setView({ nearIntentOp: { ...this.view.nearIntentOp, phase: 'intent-created',
+        depositAddress: prepared.reference, destinationSymbol: route?.destinationToken.symbol ?? intent.destinationAsset,
+        shadowAddress: this.listPrivateIdentities().find(i => i.appName === intent.appName && i.nonce === intent.nonce.toString())?.shadowAddress ?? null,
+        destinationDecimals: route?.destinationToken.decimals } });
+      const receipt = await hub.execute(intent, prepared, {
+        onSourceUpdate: (update) => {
+          if (update.phase === 'awaiting-source-deposit' && !this.isCurrent(guard)) {
+            throw new Error('Wallet or network changed. Deposit was not funded.');
+          }
+          if (update.phase === 'awaiting-source-deposit') fundingStarted = true;
+          if (!this.isCurrent(guard)) return;
+          this.setView({ nearIntentOp: { ...this.view.nearIntentOp, phase: update.phase,
+            status: update.status ?? this.view.nearIntentOp.status,
+            transactionHash: update.transactionHash ?? this.view.nearIntentOp.transactionHash } });
+        },
+      });
+      if (!this.isCurrent(guard)) return receipt;
+      this.setView({ nearIntentOp: { ...this.view.nearIntentOp, phase: hubPhase(receipt.phase),
+        transactionHash: receipt.transactionHash, amountOut: receipt.amountOut,
+        destinationTxHashes: receipt.destinationTxHashes, refundedAmount: receipt.refundedAmount,
+        refundReason: receipt.refundReason, message: receipt.phase === 'refunded'
+          ? 'Refund returned to the Shadow Account. Recovery is required; it is not back in your private balance.' : receipt.message ?? null },
+        recentTransactions: [{ hash: receipt.transactionHash, at: Date.now(), kind: 'privateTransfer' as const },
+          ...this.view.recentTransactions].slice(0, 20) });
+      return receipt;
+    } catch (err) {
+      if (this.isCurrent(guard)) this.setView({ nearIntentOp: { ...this.view.nearIntentOp,
+        phase: fundingStarted ? 'unknown' : /expired/i.test(String(err)) ? 'expired' : 'failed',
+        message: err instanceof Error ? err.message : 'Cross-chain execution could not be completed.' } });
+      throw err;
+    } finally {
+      this.crossChainExecuting = false;
+    }
   }
 
   async getPrivacyHubStatus(reference: string, providerId?: string): Promise<PrivacyHubStatus> {
-    const hub = this.requirePrivacyHub();
-    return hub.status(reference, providerId);
+    const guard = this.captureGuard();
+    const hub = await this.requirePrivacyHub();
+    const status = await hub.status(reference, providerId);
+    if (this.isCurrent(guard) && this.view.nearIntentOp.depositAddress === reference) {
+      this.setView({ nearIntentOp: { ...this.view.nearIntentOp, phase: hubPhase(status.phase),
+        amountOut: status.amountOut, destinationTxHashes: status.destinationTxHashes,
+        refundedAmount: status.refundedAmount, refundReason: status.refundReason,
+        message: status.phase === 'refunded' ? 'Refund returned to the Shadow Account; private-balance recovery is required.' : status.message ?? null } });
+    }
+    return status;
   }
 
   /**
@@ -1336,6 +1428,7 @@ export class WalletRuntime {
             nearIntentOp: {
               ...this.view.nearIntentOp,
               phase: update.phase,
+              transactionHash: update.transactionHash ?? this.view.nearIntentOp.transactionHash,
               status: update.status ?? this.view.nearIntentOp.status,
               amountOut: update.amountOut ?? this.view.nearIntentOp.amountOut,
               message: null,
@@ -1356,7 +1449,7 @@ export class WalletRuntime {
           transactionHash: receipt.transactionHash,
           status: receipt.status,
           destinationTxHashes: receipt.destinationChainTxHashes,
-          refundedAmount: refunded ? (receipt.refundedAmount > 0n ? receipt.refundedAmount : receipt.sourceAmount) : null,
+          refundedAmount: refunded ? receipt.refundedAmount : null,
           refundReason: receipt.refundReason,
           message:
             receipt.status === "REFUNDED"
@@ -1373,7 +1466,7 @@ export class WalletRuntime {
       return receipt;
     } catch (err) {
       if (!this.isCurrent(guard)) throw err;
-      const unknown = err instanceof Error && /reconcile|settle within|could not reconcile/i.test(err.message);
+      const unknown = !!this.view.nearIntentOp.transactionHash || (err instanceof Error && /reconcile|settle within|could not reconcile/i.test(err.message));
       this.setView({
         nearIntentOp: {
           ...this.view.nearIntentOp,

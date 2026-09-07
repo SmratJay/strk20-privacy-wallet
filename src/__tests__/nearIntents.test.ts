@@ -58,7 +58,7 @@ const nearState = vi.hoisted(() => ({
   refundedAmount: "0",
   refundReason: null as string | null,
   nearTxHashes: [] as string[],
-  destinationTxHashes: [] as string[],
+  destinationTxHashes: [] as (string | { hash: string; explorerUrl?: string })[],
   reset() {
     this.amountOut = 1_000_000n;
     this.depositAddress = "0x00999ae4dce7c80dd630d49ffd005912672af71cac81b20e790df4d741fc1b58";
@@ -158,7 +158,7 @@ vi.mock("@starkware-libs/starknet-privacy-sdk", () => {
 
 import { WalletRuntime } from "../wallet/runtime";
 import { createMemoryStorage } from "../wallet/storage";
-import { deriveWalletViewingKey } from "../wallet/privacy";
+import { deriveWalletViewingKey, WalletPrivacySession, resolveWalletPrivacyConfig } from "../wallet/privacy";
 import { READY_V0_4_0_CLASS_HASH } from "../wallet/account";
 import {
   validateCrossChainIntent,
@@ -253,15 +253,20 @@ function stubNetwork() {
     vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
       const u = String(url);
       if (u.includes("1click.chaindefuser.com")) {
+        if (u.includes('/v0/tokens')) return jsonResponse(200, [
+          { blockchain: 'starknet', symbol: 'STRK', decimals: 18, assetId: NEAR_INTENT_STRK_ASSET_ID },
+          { blockchain: 'base', symbol: 'USDC', decimals: 6, assetId: NEAR_INTENT_BASE_USDC_ASSET_ID },
+          { blockchain: 'sol', symbol: 'SOL', decimals: 9, assetId: 'nep141:sol.omft.near' },
+        ]);
         if (u.includes("/v0/quote")) {
           nearState.quoteCount++;
-          const body = JSON.parse(init?.body ?? "{}") as { dry?: boolean; amount?: string };
+          const body = JSON.parse(init?.body ?? "{}") as { dry?: boolean; amount?: string; slippageTolerance: number };
           const dry = body.dry === true;
           return jsonResponse(201, {
             quote: {
               amountIn: body.amount,
               amountOut: nearState.amountOut.toString(),
-              minAmountOut: "0",
+              minAmountOut: ((nearState.amountOut * BigInt(10_000 - body.slippageTolerance)) / 10_000n).toString(),
               refundFee: "0",
               withdrawFee: "0",
               timeEstimate: 29,
@@ -413,6 +418,10 @@ describe("quote + publish (deposit-address reservation)", () => {
     expect(quote.minAmountOut).toBe(990_000n);
     expect(quote.destinationAddress).toBe(DEST);
     expect(quote.route).toContain("STRK");
+    const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/v0/quote'));
+    const body = JSON.parse(String(request?.[1]?.body));
+    expect(body.refundTo).not.toBe(runtime.getState().account?.address);
+    expect(body.refundTo).toBe(runtime.listPrivateIdentities()[0].shadowAddress);
   });
 
   it("reserves a deposit address when creating the intent (publish)", async () => {
@@ -451,7 +460,7 @@ describe("quote + publish (deposit-address reservation)", () => {
   it("rejects an unsupported route", async () => {
     const { runtime } = makeRuntime();
     await createdWallet(runtime);
-    await expect(runtime.quoteCrossChain(validIntent({ destinationChain: "solana" as never }))).rejects.toThrow(
+    await expect(runtime.quoteCrossChain(validIntent({ destinationChain: "polygon" as never }))).rejects.toThrow(
       /unsupported/i,
     );
   });
@@ -557,6 +566,7 @@ describe("execution + status reconciliation", () => {
       runtime.executeCrossChainIntent(validIntent(), prepared, { pollMs: 1, trackTimeoutMs: 30 }),
     ).rejects.toThrow(NearIntentUnknownError);
     expect(runtime.getState().nearIntentOp.phase).toBe("unknown");
+    expect(runtime.getState().nearIntentOp.transactionHash).toBe('0x1234');
   });
 
   it("rejects a mutated prepared intent (wrong amount) before funding", async () => {
@@ -569,6 +579,55 @@ describe("execution + status reconciliation", () => {
       runtime.executeCrossChainIntent(validIntent({ sourceAmount: 200n }), prepared, { pollMs: 1 }),
     ).rejects.toThrow(/does not match/i);
     expect(sdkState.paymasterExecutions).toBe(before);
+  });
+});
+
+describe('PrivacyHub product execution', () => {
+  it('routes registry-backed SOL through the hub and existing shadow executor, retaining real status hashes', async () => {
+    const { runtime } = makeRuntime();
+    const wallet = await createdWallet(runtime);
+    await runtime.refreshDeployment();
+    const routes = await runtime.getCrossChainRoutes();
+    const route = routes.find(r => r.destinationToken.symbol === 'SOL')!;
+    const intent = { ...validIntent(), routeId: route.id, destinationChain: 'solana' as const,
+      destinationAsset: route.destinationAsset, destinationAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' };
+    const quote = await runtime.quotePrivacyHub(intent);
+    nearState.destinationTxHashes = [{ hash: 'test-solana-signature', explorerUrl: 'https://untrusted.example/' }];
+    const receipt = await runtime.executePrivacyHub(intent, quote);
+    expect(receipt.phase).toBe('success');
+    expect(runtime.getState().nearIntentOp).toMatchObject({ phase: 'success', destinationChain: 'solana',
+      destinationDecimals: 9, destinationSymbol: 'SOL', destinationTxHashes: ['test-solana-signature'] });
+    expect(wallet.account.execute).not.toHaveBeenCalled();
+    expect(sdkState.paymasterExecutions).toBe(1);
+  });
+
+  it('refuses an expired prepared deposit before private funding', async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    await runtime.createShadowIdentity('orrange', 0n);
+    const prepared = await runtime.createCrossChainIntent(validIntent());
+    await expect(runtime.executeCrossChainIntent(validIntent(), { ...prepared, depositAddressDeadline: '2020-01-01T00:00:00Z' })).rejects.toThrow(/expired/i);
+    expect(sdkState.paymasterExecutions).toBe(0);
+  });
+
+  it('rejects case-changed Solana recipient before reserving or funding a deposit', async () => {
+    const { runtime } = makeRuntime();
+    await createdWallet(runtime);
+    const intent = { ...validIntent(), destinationChain: 'solana' as const, destinationAsset: 'nep141:sol.omft.near',
+      destinationAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' };
+    const quote = await runtime.quoteCrossChain(intent);
+    const before = nearState.quoteCount;
+    await expect(runtime.createCrossChainIntent(intent, { ...quote, destinationAddress: intent.destinationAddress.toLowerCase() })).rejects.toThrow(/changed/i);
+    expect(nearState.quoteCount).toBe(before);
+  });
+
+  it('blocks the lower-level Mainnet private-paymaster fallback before proof or relay', async () => {
+    const { runtime, storage } = makeRuntime();
+    const wallet = await createdWallet(runtime);
+    const config = resolveWalletPrivacyConfig('sepolia')!;
+    const session = new WalletPrivacySession(wallet, 'mainnet', { ...config, paymasterUrl: undefined }, storage);
+    await expect(session.executeShadowApplication({ appName: 'orrange', nonce: 0n, token: STRK, amount: 100n, calls: [] })).rejects.toThrow(/Mainnet private execution requires/i);
+    expect(sdkState.paymasterExecutions).toBe(0);
   });
 });
 

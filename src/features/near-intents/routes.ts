@@ -1,8 +1,8 @@
 /**
  * Near Intents — typed route registry (REAL NEAR Intents 1Click route, verified live).
  *
- * The feature does NOT expose an arbitrary cross-chain route. It owns the ONE supported route via
- * this typed config: Starknet STRK (source) → USDC on Base (destination). Every field below maps
+ * This file preserves the canonical Base route; registry.ts extends it with Solana destinations
+ * confirmed by the current public token API. Every canonical field below maps
  * to the LIVE 1Click API (verified 2026-09-05 against https://1click.chaindefuser.com/v0/tokens
  * and /v0/quote):
  *
@@ -11,7 +11,7 @@
  *   deposit address      a 251-bit Starknet address (0x…66 hex chars)
  *   destination address  a 42-char EVM address on Base
  *
- * A cross-chain intent is only accepted when it matches this route exactly — never a silent route.
+ * A cross-chain intent must match a resolved route exactly — never a silent fallback.
  */
 import type { TokenInfo } from "@/config/networks";
 
@@ -45,14 +45,14 @@ export interface NearIntentRoute {
   sourceToken: TokenInfo;
   /** NEAR Intents origin asset id (what the 1Click quote `originAsset` field uses). */
   originAssetId: string;
-  destinationChain: "base";
-  destinationAsset: "usdc";
+  destinationChain: "base" | "solana";
+  destinationAsset: string;
   /** Human destination token info (decimals for formatting). */
-  destinationToken: { symbol: string; name: string; decimals: number; icon: string };
+  destinationToken: { symbol: string; name: string; decimals: number; icon: string; address?: string };
   /** NEAR Intents destination asset id (what the 1Click quote `destinationAsset` uses). */
   destinationAssetId: string;
-  /** Destination address validation kind (EVM). */
-  destinationAddressKind: "evm";
+  /** Chain-specific destination validation (EVM hex or Solana base58). */
+  destinationAddressKind: "evm" | "solana";
 }
 
 export const NEAR_INTENT_ROUTES: readonly NearIntentRoute[] = [
@@ -77,9 +77,10 @@ export function resolveNearIntentRoute(
   sourceAsset: string,
   destinationChain: string,
   destinationAsset: string,
+  routes: readonly NearIntentRoute[] = NEAR_INTENT_ROUTES,
 ): NearIntentRoute | null {
   return (
-    NEAR_INTENT_ROUTES.find(
+    routes.find(
       (r) =>
         r.sourceChain === sourceChain &&
         r.sourceAsset === sourceAsset &&

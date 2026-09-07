@@ -4,7 +4,7 @@
  * The ONLY place that knows the 1Click API endpoints. A minimal, typed, keyless client over the
  * public REST surface (the ORIGIN_CHAIN deposit flow needs no NEAR credentials):
  *
- *   GET  /v0/tokens                 → supported tokens (not used at runtime; kept for parity)
+ *   GET  /v0/tokens                 → live supported destination registry
  *   POST /v0/quote                  → dry (pricing) or live (reserve a deposit address) quote
  *   POST /v0/deposit/submit         → notify 1Click of the Starknet deposit tx hash (optional)
  *   GET  /v0/status?depositAddress= → poll settlement status
@@ -62,8 +62,8 @@ export interface OneClickStatusResponse {
   swapDetails?: {
     intentHashes?: string[];
     nearTxHashes?: string[];
-    originChainTxHashes?: string[];
-    destinationChainTxHashes?: string[];
+    originChainTxHashes?: (string | { hash: string; explorerUrl?: string })[];
+    destinationChainTxHashes?: (string | { hash: string; explorerUrl?: string })[];
     amountIn?: string | null;
     amountOut?: string | null;
     refundedAmount?: string | null;
@@ -78,7 +78,16 @@ export class NearIntentClient {
 
   constructor(options: NearIntentClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? NEAR_INTENTS_1CLICK_BASE_URL).replace(/\/+$/, "");
-    this.fetchImpl = options.fetch ?? fetch;
+    // A native browser fetch cannot be invoked with NearIntentClient as its receiver.
+    this.fetchImpl = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+  }
+
+  async getTokens(): Promise<unknown> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v0/tokens`, {
+      cache: 'no-store', signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new NearIntentError(`Destination registry unavailable (HTTP ${response.status}). Try again.`);
+    return response.json();
   }
 
   /** Request a quote (dry or live). Never parses solver internals — returns the raw public quote. */

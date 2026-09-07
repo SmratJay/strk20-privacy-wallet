@@ -32,11 +32,11 @@ export type NearIntentAction = "cross-chain.swap";
 /** Source chain of the single supported route (Starknet — the STRK20 privacy layer lives here). */
 export type NearIntentSourceChain = "starknet";
 /** Destination chain of the single supported route. */
-export type NearIntentDestinationChain = "base";
+export type NearIntentDestinationChain = "base" | "solana";
 /** Canonical source asset (Starknet STRK). */
 export type NearIntentSourceAsset = "strk";
 /** Canonical destination asset (Base USDC). */
-export type NearIntentDestinationAsset = "usdc";
+export type NearIntentDestinationAsset = string;
 
 export type NearIntentPhase =
   | "idle"
@@ -50,6 +50,7 @@ export type NearIntentPhase =
   | "success"
   | "failed"
   | "refunded"
+  | "expired"
   | "unknown";
 
 /** Status codes the NEAR Intents 1Click API reports (verbatim). */
@@ -101,9 +102,9 @@ export interface NearIntentQuote {
   /** Minimum acceptable output (amountOut adjusted by slippage). */
   minAmountOut: bigint;
   /** Bridge refund fee (source STRK base units) deducted on refund. */
-  refundFee: bigint;
+  refundFee: bigint | null;
   /** Withdrawal fee on the destination chain (destination base units). */
-  withdrawFee: bigint;
+  withdrawFee: bigint | null;
   /** Estimated solver time (seconds). */
   timeEstimate: number;
   /** Quote freshness deadline (ISO). */
@@ -131,6 +132,9 @@ export interface NearIntentPrepared extends NearIntentQuote {
 /** Safe lifecycle state of a cross-chain intent — never exposes secrets/notes/proofs. */
 export interface NearIntentOpState {
   phase: NearIntentPhase;
+  destinationChain?: NearIntentDestinationChain;
+  destinationDecimals?: number;
+  route?: string;
   sourceSymbol: string | null;
   destinationSymbol: string | null;
   sourceAmount: bigint | null;
@@ -186,6 +190,7 @@ export interface NearIntentStatus {
 
 /** Safe result of a cross-chain intent. Only public lifecycle data + amounts + status. */
 export interface NearIntentReceipt {
+  route?: string;
   intentId: string;
   depositAddress: string;
   status: NearIntentStatusCode;
@@ -253,7 +258,7 @@ export class NearIntentUnknownError extends NearIntentError {
 }
 
 const HEX_FELT = /^0x[0-9a-fA-F]{1,64}$/;
-const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+import { validateChainAddress } from './address';
 
 /** Valid slippage range: 0..10000 bps (0%..100%). */
 export function isValidSlippageBps(slippageBps: number): boolean {
@@ -266,10 +271,8 @@ export function isValidSlippageBps(slippageBps: number): boolean {
 }
 
 /** Validate a destination-chain (EVM) address. Returns an error string, or null when valid. */
-export function validateDestinationAddress(value: unknown): string | null {
-  if (typeof value !== "string") return "destination address must be a string";
-  if (!EVM_ADDRESS.test(value)) return "malformed destination address (expected an EVM 0x address)";
-  return null;
+export function validateDestinationAddress(value: unknown, chain: NearIntentDestinationChain = 'base'): string | null {
+  return validateChainAddress(value, chain === 'solana' ? 'solana' : 'evm');
 }
 
 /** Compute the minimum acceptable output for `amountOut` under `slippageBps`. Integer math only. */
@@ -293,9 +296,9 @@ export function validateCrossChainIntent(intent: unknown): string | null {
   if (typeof i.sourceAmount !== "bigint" || i.sourceAmount <= 0n) {
     return "sourceAmount must be a positive bigint";
   }
-  if (i.destinationChain !== "base") return `unsupported destination chain: ${String(i.destinationChain)}`;
-  if (i.destinationAsset !== "usdc") return `unsupported destination asset: ${String(i.destinationAsset)}`;
-  const dest = validateDestinationAddress(i.destinationAddress);
+  if (i.destinationChain !== "base" && i.destinationChain !== "solana") return `unsupported destination chain: ${String(i.destinationChain)}`;
+  if ((i.destinationChain === 'base' && i.destinationAsset !== 'usdc') || typeof i.destinationAsset !== 'string' || !i.destinationAsset) return `unsupported destination asset: ${String(i.destinationAsset)}`;
+  const dest = validateDestinationAddress(i.destinationAddress, i.destinationChain);
   if (dest) return dest;
   if (!isValidSlippageBps(i.slippageBps)) return "slippage must be an integer in basis points (0..10000)";
   if (typeof i.appName !== "string" || i.appName.trim().length === 0 || i.appName.length > 31) {
