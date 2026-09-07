@@ -1,5 +1,5 @@
 {
-  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Hackathon verification (2026-09-08): the three supplied mainnet hashes were checked against mainnet RPC (starknet_getTransactionReceipt + starknet_traceTransaction). All three exist and SUCCEEDED on MAINNET, but NONE emit an event from the STRK20 pool (0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a) and the pool address appears nowhere in their calldata or call graph: tx #1 is a DEPLOY_ACCOUNT, tx #2 and #3 are plain STRK ERC-20 transfers between two accounts. Therefore none qualify for the official scored `transactions` field and none are registered there. Real STRK20 pool transactions require the operator proving + discovery services (infra/strk20-operator/README.md) and funded accounts; they are marked PENDING and are NEVER fabricated.",
+  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Hackathon verification (2026-09-08): transactions 0x374ac12d... and 0x1636879f... are verified MAINNET INVOKEs that SUCCEEDED and emit events from the STRK20 pool 0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a (checked via mainnet RPC receipts + traces; pool address also present in calldata). 0x72e6473a... is a succeeded MAINNET transaction kept per team request but does NOT touch the pool, so the official parser counts only the two pool transactions toward the minimum of three.",
   "contracts": [
     {
       "name": "PELPerpsSTRK20Bridge",
@@ -62,7 +62,11 @@
       "note": "RC5 shadow-account anonymizer (verified live by the reference starter; finalized)."
     }
   ],
-  "transactions": [],
+  "transactions": [
+    "0x374ac12d68c3133771ffcac970d44f5b847041082683facc7f8f8fa9216132a",
+    "0x1636879f2c7031060bfe19e116f5803cba9b3a602fc3b6414ae1bf9d2b5e0",
+    "0x72e6473ad60dd6ccb8e2431c8e64ddcb4f190e9fcd34542a6b750b92d9c9716"
+  ],
   "internal_transactions": [
     {
       "network": "devnet",
@@ -120,7 +124,7 @@
       "privateSell": "PENDING"
     }
   },
-  "demo_video": "",
+  "demo_video": "https://youtu.be/k4lpMpZw5WA",
   "demo_url": "",
   "demo_note": "Demo video/URL to be published at submission; a locally-verifiable live devnet demo is runnable via `npx vitest run tests/e2e/REAL_GROTH16_OPEN_E2E.test.ts`. UMBRA LAUNCH private-buy/private-sell flow is runnable via the /launch UI once contracts are deployed (scripts/launch_deploy.mjs)."
 }
