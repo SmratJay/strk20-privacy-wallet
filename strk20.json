@@ -1,5 +1,5 @@
 {
-  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Mainnet/Sepolia STRK20 on-chain transactions require the operator proving + discovery services (infra/strk20-operator/README.md) and funded accounts; they are marked PENDING and are NEVER fabricated.",
+  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Hackathon verification (2026-09-08): the three supplied mainnet hashes were checked against mainnet RPC (starknet_getTransactionReceipt + starknet_traceTransaction). All three exist and SUCCEEDED on MAINNET, but NONE emit an event from the STRK20 pool (0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a) and the pool address appears nowhere in their calldata or call graph: tx #1 is a DEPLOY_ACCOUNT, tx #2 and #3 are plain STRK ERC-20 transfers between two accounts. Therefore none qualify for the official scored `transactions` field and none are registered there. Real STRK20 pool transactions require the operator proving + discovery services (infra/strk20-operator/README.md) and funded accounts; they are marked PENDING and are NEVER fabricated.",
   "contracts": [
     {
       "name": "PELPerpsSTRK20Bridge",
@@ -62,7 +62,8 @@
       "note": "RC5 shadow-account anonymizer (verified live by the reference starter; finalized)."
     }
   ],
-  "transactions": [
+  "transactions": [],
+  "internal_transactions": [
     {
       "network": "devnet",
       "type": "BRIDGE_DEPLOY",
@@ -91,7 +92,7 @@
       "appName": "orrange",
       "nonce": "0x0",
       "outerSender": "0x4ab1f891119bf79805a22318cbefca7aedaa442fff667074aa5dcf6bfe89e79",
-      "note": "REAL STRK20 shadow-account execution: private STRK \u2192 shadow account \u2192 ShadowExecutionProbe.record(0.2 STRK). The shadow account was the application caller; the outer tx sender was the private paymaster, not the root wallet. See docs/PRIVATE_EXECUTION.md."
+      "note": "REAL STRK20 shadow-account execution: private STRK \u2192 shadow account \u2192 ShadowExecutionProbe.record(0.2 STRK). The shadow account was the application caller; the outer tx sender was the private paymaster, not the root wallet. See docs/PRIVATE_EXECUTION.md. NOT a mainnet pool transaction (sepolia), so it is not scored."
     }
   ],
   "pending": {
