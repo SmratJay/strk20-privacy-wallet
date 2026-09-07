@@ -1,305 +1,125 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ArrowDown,
-  Loader2,
-  Shield,
-  Globe,
-  CheckCircle2,
-  X,
-  ShieldAlert,
-} from 'lucide-react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import type { Call } from 'starknet';
+import { useSearchParams } from 'next/navigation';
+import { ArrowDown, Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/wallet/AppShell';
 import { WalletCoreGate } from '@/components/wallet/WalletCoreGate';
+import { PrivateSwapPanel } from '@/components/wallet/PrivateSwapPanel';
+import { TransactionReview, TransactionStatus, WalletError, walletField } from '@/components/wallet/TransactionFeedback';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
-import {
-  getSwapQuote,
-  buildPublicSwapCalls,
-  publicSwapSupported,
-  privateSwapSupported,
-} from '@/services/swapService';
-import { SEPOLIA_TOKENS } from '@/config/networks';
-import { formatTokenAmount, parseTokenAmount } from '@/utils/formatters';
+import { getSwapQuote, buildPublicSwapCalls, type SwapQuoteResult } from '@/services/swapService';
+import { getNetworkConfig } from '@/config/networks';
+import { formatTokenAmount } from '@/utils/formatters';
+import { networkLabel, validateWalletAmount } from '@/utils/walletUx';
 
-const PUBLIC_SLIPPAGE = 0.01; // 1%
-
-type Step = 'QUOTING' | 'BUILDING' | 'SIGNING' | 'SUBMITTING' | 'DONE';
-
-/**
- * Swap — Wallet Core only. Public swaps are signed by the Wallet Core local signer
- * (`runtime.send`). Private STRK20 swaps are NOT supported by Wallet Core yet and are shown as
- * explicitly unavailable (never a silent fallback to another wallet).
- */
-export default function SwapPage() {
+function PublicSwap() {
   const { runtime, state } = useWalletRuntime();
-  const account = state.account;
-
-  const tokens = SEPOLIA_TOKENS;
-  const [sellAddr, setSellAddr] = useState<string>(() => tokens[0]?.address ?? '');
-  const [buyAddr, setBuyAddr] = useState<string>(() => tokens[1]?.address ?? tokens[0]?.address ?? '');
-  const [sellAmount, setSellAmount] = useState('');
-  const [quote, setQuote] = useState<{ buyAmount: string; routes: string[]; gasFeeStrk: string } | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const tokens = getNetworkConfig(state.network).tokens;
+  const [sellSymbol, setSellSymbol] = useState(tokens[0].symbol);
+  const [buySymbol, setBuySymbol] = useState(tokens[1].symbol);
+  const sell = tokens.find(t => t.symbol === sellSymbol) ?? tokens[0];
+  const buy = tokens.find(t => t.symbol === buySymbol) ?? tokens[1];
+  const [amount, setAmount] = useState('');
+  const [quoted, setQuoted] = useState<{ key: string; at: number; value: SwapQuoteResult; calls: Call[]; fee: bigint } | null>(null);
+  const [review, setReview] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [quoting, setQuoting] = useState(false);
-  const [step, setStep] = useState<Step | null>(null);
-  const [txHash, setTxHash] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [hash, setHash] = useState<string | null>(null);
+  const flight = useRef(false);
+  const row = state.publicBalances.find(r => r.token.address === sell.address);
+  const balance = row?.available ? row.balance : null;
+  const parsed = validateWalletAmount(amount, sell.decimals, balance);
+  const key = [state.account?.walletId, state.network, sell.address, buy.address, amount].join('|');
+  const current = useRef(key); current.current = key;
+  const quote = quoted?.key === key ? quoted.value : null;
+  const tx = state.recentTransactions.find(t => t.hash === hash);
+  const pending = !!hash && (!tx || tx.status === 'pending');
+  const valid = !parsed.error && sell.address !== buy.address && state.deploymentStatus === 'deployed';
+  const minimum = quote ? quote.quote.buyAmount * 9900n / 10000n : null;
 
-  const sellToken = tokens.find((t) => t.address.toLowerCase() === sellAddr.toLowerCase()) ?? tokens[0];
-  const buyToken = tokens.find((t) => t.address.toLowerCase() === buyAddr.toLowerCase()) ?? tokens[1];
-
-  const publicBalance = useMemo(() => {
-    const row = state.publicBalances.find((b) => b.token.address.toLowerCase() === sellAddr.toLowerCase());
-    return row?.available ? row.balance : 0n;
-  }, [state.publicBalances, sellAddr]);
-
-  const connected = Boolean(account);
-
-  const refreshQuote = useCallback(async () => {
-    if (!connected || !account || !sellAmount || parseFloat(sellAmount) <= 0) {
-      setQuote(null);
-      return;
-    }
-    setQuoting(true);
-    setQuoteError(null);
-    setQuote(null);
+  async function readQuote() {
+    if (!valid || !state.account || quoting) return;
+    setQuoting(true); setQuoted(null); setError(null); setReview(false);
     try {
-      const res = await getSwapQuote(state.network, sellToken, buyToken, sellAmount, account.address);
-      if (!res) {
-        setQuoteError(
-          state.network === 'sepolia'
-            ? 'No quote found — AVNU currently has no liquidity on Sepolia.'
-            : 'No quote found for this pair. Try a different token or amount.',
-        );
-        return;
-      }
-      setQuote({ buyAmount: res.buyAmount, routes: res.routes, gasFeeStrk: res.gasFeeStrk });
-    } catch (err: any) {
-      setQuoteError(err?.message || 'Could not fetch a quote.');
-    } finally {
-      setQuoting(false);
-    }
-  }, [connected, account, sellAmount, state.network, sellToken, buyToken]);
+      const at = Date.now();
+      const value = await getSwapQuote(state.network, sell, buy, amount, state.account.address);
+      if (key !== current.current) return;
+      if (!value) { setError('No route is available for this pair. Try another asset or amount.'); return; }
+      const calls = await buildPublicSwapCalls(state.network, value.quote, 0.01, state.account.address);
+      if (key !== current.current) return;
+      const fee = await runtime.estimateFee(calls);
+      if (key !== current.current) return;
+      const gasBalance = state.publicBalances.find(r => r.token.symbol === 'STRK');
+      if (!gasBalance?.available) throw new Error('STRK fee balance is unavailable. Refresh your balance.');
+      if (gasBalance.balance < fee + (sell.symbol === 'STRK' ? parsed.units : 0n)) throw new Error('Insufficient STRK for amount and network fee.');
+      if (Date.now() - at > 30_000) throw new Error('Quote expired. Get a fresh quote.');
+      setQuoted({ key, value, at, calls, fee });
+    } catch (err) { if (key === current.current) setError(err); }
+    finally { setQuoting(false); }
+  }
 
-  useEffect(() => {
-    void refreshQuote();
-  }, [refreshQuote]);
-
-  const execute = async () => {
-    if (!connected || !account) return;
-    setError(null);
-    setTxHash(null);
-
-    let currentQuote: Awaited<ReturnType<typeof getSwapQuote>> | null = null;
+  async function confirm() {
+    if (!valid || !state.account || !quote || !quoted || flight.current) return;
+    if (Date.now() - quoted.at > 30_000) { setError('Quote expired. Get a fresh quote.'); setReview(false); setQuoted(null); return; }
+    flight.current = true; setBusy(true); setError(null);
     try {
-      setStep('QUOTING');
-      currentQuote = await getSwapQuote(state.network, sellToken, buyToken, sellAmount, account.address);
-      if (!currentQuote) {
-        setError(
-          state.network === 'sepolia'
-            ? 'No quote found — AVNU currently has no liquidity on Sepolia.'
-            : 'No quote found for this pair.',
-        );
-        setStep(null);
-        return;
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Could not fetch a quote.');
-      setStep(null);
-      return;
-    }
+      if (key !== current.current || runtime.getState().account?.walletId !== state.account.walletId || runtime.getState().network !== state.network) return;
+      if (Date.now() - quoted.at > 30_000) throw new Error('Quote expired. Review again.');
+      const result = await runtime.send(quoted.calls, { kind: 'swap', symbol: sell.symbol, amount: parsed.units.toString() });
+      if (key === current.current) { setHash(result.transactionHash); setReview(false); setQuoted(null); }
+    } catch (err) { if (key === current.current) { setError(err); setReview(false); setQuoted(null); } }
+    finally { flight.current = false; setBusy(false); }
+  }
 
-    try {
-      setStep('BUILDING');
-      const calls = await buildPublicSwapCalls(state.network, currentQuote.quote, PUBLIC_SLIPPAGE, account.address);
-      setStep('SIGNING');
-      const res = await runtime.send(calls);
-      setStep('SUBMITTING');
-      setTxHash(res.transactionHash);
-      setStep('DONE');
-      void runtime.refreshPublicBalances();
-    } catch (err: any) {
-      setError(err?.message || 'Swap failed.');
-      setStep(null);
-    }
-  };
-
-  const setMax = () => {
-    if (publicBalance > 0n) setSellAmount(formatTokenAmount(publicBalance, sellToken.decimals, sellToken.decimals));
-  };
-
-  const insufficient = sellAmount.length > 0 && parseTokenAmount(sellAmount, sellToken.decimals) > publicBalance;
-
-  const switchTokens = () => {
-    setSellAddr(buyAddr);
-    setBuyAddr(sellAddr);
-  };
-
-  return (
-    <AppShell>
-      <div className="product-page">
-        <div className="product-page-intro">
-          <div>
-            <div className="product-eyebrow">ORRANGE / SWAP</div>
-            <h1 className="product-page-title">Swap quietly</h1>
-            <p className="product-page-description">
-              Public swap — Wallet Core balance → AVNU → Wallet Core balance.
-            </p>
-          </div>
-        </div>
-
-        {!connected ? (
-          <WalletCoreGate />
-        ) : (
-          <>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 mb-4 flex items-start gap-2 text-[12px] text-violet-200/80">
-              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-violet-300" />
-              <span>
-                Public swaps are signed by your Orrange wallet. STRK20 private swaps use a REAL
-                shadow account — head to <span className="font-mono">/wallet</span> → Private swap.
-              </span>
-            </div>
-
-            <div className="product-swap-card border border-zinc-800 bg-zinc-950/60 rounded-2xl p-4 space-y-4">
-              {/* Sell */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                  <span>You pay</span>
-                  <button onClick={setMax} className="hover:text-zinc-200">
-                    Max: {formatTokenAmount(publicBalance, sellToken.decimals, 4)} {sellToken.symbol}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={sellAmount}
-                    onChange={(e) => setSellAmount(e.target.value)}
-                    placeholder="0.0"
-                    className="product-swap-input flex-1 bg-transparent text-2xl font-semibold text-zinc-100 outline-none placeholder:text-zinc-700"
-                  />
-                  <select
-                    value={sellAddr}
-                    onChange={(e) => setSellAddr(e.target.value)}
-                    className="product-token-select bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
-                  >
-                    {tokens.map((t) => (
-                      <option key={t.address} value={t.address}>
-                        {t.icon} {t.symbol}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Switch */}
-              <div className="flex justify-center">
-                <button
-                  onClick={switchTokens}
-                  className="w-9 h-9 rounded-full border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-600 flex items-center justify-center"
-                >
-                  <ArrowDown className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Buy */}
-              <div className="space-y-2">
-                <div className="text-[11px] text-zinc-500">You receive</div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 text-2xl font-semibold text-zinc-100">
-                    {quote ? quote.buyAmount : '—'}
-                    <span className="ml-2 text-sm text-zinc-500">{buyToken.symbol}</span>
-                  </div>
-                  <select
-                    value={buyAddr}
-                    onChange={(e) => setBuyAddr(e.target.value)}
-                    className="product-token-select bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 outline-none"
-                  >
-                    {tokens.map((t) => (
-                      <option key={t.address} value={t.address}>
-                        {t.icon} {t.symbol}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {quoting && (
-                <div className="flex items-center gap-2 text-[12px] text-zinc-500">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching quote…
-                </div>
-              )}
-              {quote && !quoting && (
-                <div className="flex items-center gap-3 text-[11px] text-zinc-500">
-                  <span>{quote.routes.join(' → ')}</span>
-                  <span>·</span>
-                  <span>gas ~{quote.gasFeeStrk} STRK</span>
-                </div>
-              )}
-              {quoteError && (
-                <div className="flex items-start gap-2 text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-2">
-                  <X className="w-4 h-4 shrink-0 mt-0.5" />
-                  {quoteError}
-                </div>
-              )}
-              {insufficient && !error && (
-                <p className="text-[12px] text-rose-400">Insufficient public balance.</p>
-              )}
-            </div>
-
-            <button
-              onClick={() => void execute()}
-              disabled={!connected || quoting || step !== null || !sellAmount || parseFloat(sellAmount) <= 0 || insufficient}
-              className={`w-full mt-4 py-3.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                'bg-emerald-500 hover:bg-emerald-400 text-black'
-              }`}
-            >
-              {step === 'QUOTING' || step === 'BUILDING' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Building swap…
-                </span>
-              ) : step === 'SIGNING' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Signing with Orrange wallet…
-                </span>
-              ) : step === 'SUBMITTING' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Submitting…
-                </span>
-              ) : step === 'DONE' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-4 h-4" /> Submitted
-                </span>
-              ) : (
-                'Public swap'
-              )}
-            </button>
-
-            {txHash && (
-              <div className="flex items-center justify-between text-[12px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 rounded-lg p-3 break-all mt-3">
-                <span>{txHash}</span>
-              </div>
-            )}
-
-            {error && (
-              <div className="text-[12px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3 break-words mt-3">
-                {error}
-              </div>
-            )}
-
-            <p className="text-[11px] text-zinc-600 mt-3">
-              Public swaps use your on-chain balance and pay gas from your wallet.
-              {state.network === 'sepolia' && ' AVNU currently has no liquidity on Sepolia.'}
-            </p>
-          </>
-        )}
+  return <section className="product-swap-card rounded-2xl space-y-5">
+    <div><h2 className="text-lg font-semibold">Swap from public balance</h2><p className="text-sm text-zinc-500 mt-1">Exchange tokens on {networkLabel(state.network)}. Public swaps are visible on-chain.</p></div>
+    <WalletError error={error} />
+    {hash && <TransactionStatus phase={tx?.status ?? 'pending'} hash={hash} network={state.network} />}
+    {review && quote && quoted && minimum !== null ? <TransactionReview title="Review swap" rows={[
+      { label: 'You send', value: amount + ' ' + sell.symbol }, { label: 'You receive', value: '≈ ' + quote.buyAmount + ' ' + buy.symbol },
+      { label: 'Minimum received', value: formatTokenAmount(minimum, buy.decimals, 8) + ' ' + buy.symbol },
+      { label: 'Network', value: networkLabel(state.network) }, { label: 'Slippage', value: '1%' },
+      { label: 'Estimated network fee', value: formatTokenAmount(quoted.fee, 18, 8) + ' STRK' },
+      { label: 'Estimated total', value: sell.symbol === 'STRK' ? formatTokenAmount(parsed.units + quoted.fee, 18, 8) + ' STRK' : amount + ' ' + sell.symbol + ' + ' + formatTokenAmount(quoted.fee, 18, 8) + ' STRK' },
+      { label: 'Route', value: quote.routes.join(' → ') },
+    ]} note="Quotes expire after 30 seconds. The confirmed route is used with a 1% minimum-output protection. Keep STRK in your public balance for fees." onBack={() => setReview(false)} onConfirm={() => void confirm()} busy={busy} disabled={!valid || pending} confirmLabel="Confirm swap" /> : <>
+      <fieldset className="space-y-4 min-w-0" disabled={busy || quoting || pending}>
+        <label className="block text-sm">You pay<input className={walletField + ' mt-2 !text-2xl'} aria-label="Swap amount" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></label>
+        <label className="block text-sm">From asset<select className={walletField + ' mt-2'} value={sell.symbol} onChange={e => setSellSymbol(e.target.value)}>{tokens.map(t => <option key={t.address} value={t.symbol}>{t.symbol} · {t.name}</option>)}</select></label>
+        <p className="text-xs text-zinc-500">Available: {balance === null ? 'Checking balance…' : formatTokenAmount(balance, sell.decimals, 8) + ' ' + sell.symbol}</p>
+        <div className="flex justify-center"><button className="wallet-secondary-button" aria-label="Switch swap assets" onClick={() => { setSellSymbol(buySymbol); setBuySymbol(sellSymbol); }}><ArrowDown className="w-4 h-4" /></button></div>
+        <label className="block text-sm">To asset<select className={walletField + ' mt-2'} value={buy.symbol} onChange={e => setBuySymbol(e.target.value)}>{tokens.map(t => <option key={t.address} value={t.symbol}>{t.symbol} · {t.name}</option>)}</select></label>
+        <div><span className="text-xs text-zinc-500">You receive</span><p className="text-2xl mt-1">{quote ? '≈ ' + quote.buyAmount : '—'} <span className="text-sm">{buy.symbol}</span></p></div>
+        {amount && parsed.error && <p className="text-xs" role="status">{parsed.error}</p>}
+        {sell.address === buy.address && <p className="text-xs">Choose two different assets.</p>}
+      </fieldset>
+      {state.deploymentStatus !== 'deployed' && <p className="text-sm">Activate your account from Wallet before swapping.</p>}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <button className="wallet-secondary-button" disabled={!valid || busy || quoting || pending} onClick={() => void readQuote()}>{quoting && <Loader2 className="w-4 h-4 animate-spin" />}{quoting ? 'Getting best route…' : quote ? 'Refresh quote' : 'Get quote'}</button>
+        <button className="product-primary-button disabled:opacity-50" disabled={!quote || !valid || busy || quoting || pending} onClick={() => setReview(true)}>Review swap</button>
       </div>
-    </AppShell>
-  );
+    </>}
+  </section>;
 }
 
-void publicSwapSupported;
-void privateSwapSupported;
-void Globe;
-void Shield;
+function SwapContent() {
+  const params = useSearchParams();
+  const { state } = useWalletRuntime();
+  const [mode, setMode] = useState(params.get('mode') === 'private' ? 'private' : 'public');
+  const requestedMode = params.get('mode');
+  useEffect(() => { setMode(requestedMode === 'private' ? 'private' : 'public'); }, [requestedMode]);
+  return <div className="product-page wallet-flow-page">
+    <div className="product-page-intro"><div><div className="product-eyebrow">ORRANGE / SWAP</div><h1 className="product-page-title">Swap</h1><p className="product-page-description">Choose the balance you want to swap from.</p></div></div>
+    {!state.account ? <WalletCoreGate /> : <>
+      <div className="wallet-tabs" role="group" aria-label="Swap balance">{['public', 'private'].map(m => <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === 'public' ? 'Public' : 'Private'}</button>)}</div>
+      {mode === 'public' ? <PublicSwap /> : <PrivateSwapPanel />}
+    </>}
+  </div>;
+}
+
+export default function SwapPage() {
+  return <AppShell><Suspense fallback={<p role="status">Preparing swap…</p>}><SwapContent /></Suspense></AppShell>;
+}

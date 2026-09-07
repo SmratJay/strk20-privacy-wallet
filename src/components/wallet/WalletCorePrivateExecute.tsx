@@ -6,6 +6,8 @@ import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { parseAmountToBase } from '@/wallet';
 import { getNetworkConfig } from '@/config/networks';
 import type { PrivateExecutionOpState } from '@/privacy/execution';
+import { TransactionReview, WalletError } from './TransactionFeedback';
+import { validateWalletAmount, networkLabel } from '@/utils/walletUx';
 
 const PHASE_LABEL: Record<PrivateExecutionOpState['phase'], string> = {
   idle: 'Idle',
@@ -42,11 +44,13 @@ export const WalletCorePrivateExecute: React.FC = () => {
   const [target, setTarget] = useState(defaultTarget);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [review, setReview] = useState(false);
   const [identities, setIdentities] = useState<{ appName: string; nonce: string; shadowAddress: string }[]>([]);
 
   const activePhase = ACTIVE_PHASES.includes(state.executionOp.phase);
   const disabled = busy || activePhase;
   const privateBalance = state.privateBalances.find((r) => r.token.symbol === strk?.symbol)?.balance ?? 0n;
+  const parsed = validateWalletAmount(amount, strk.decimals, privateBalance);
 
   useEffect(() => {
     if (!state.account) return;
@@ -55,9 +59,6 @@ export const WalletCorePrivateExecute: React.FC = () => {
       .filter((i) => i.status === 'active')
       .map((i) => ({ appName: i.appName, nonce: i.nonce, shadowAddress: i.shadowAddress }));
     setIdentities(safe);
-    if (!safe.some((i) => i.appName === appName.trim() && BigInt(i.nonce) === BigInt(nonce || '0'))) {
-      // keep the current form values; do not overwrite the user's in-progress entry
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.account?.walletId, state.network]);
 
@@ -91,7 +92,8 @@ export const WalletCorePrivateExecute: React.FC = () => {
 
   const handleExecute = useCallback(async () => {
     setError(null);
-    const amountBase = parseAmountToBase(amount, strk.decimals);
+    if (busy || !review || parsed.error) return;
+    const amountBase = parsed.units;
     if (amountBase <= 0n) {
       setError('Amount must be greater than zero.');
       return;
@@ -128,8 +130,9 @@ export const WalletCorePrivateExecute: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Private execution failed.');
     } finally {
       setBusy(false);
+      setReview(false);
     }
-  }, [runtime, strk, amount, target, appName, nonce]);
+  }, [runtime, strk, target, appName, nonce, busy, review, parsed.units, parsed.error]);
 
   if (!state.privacy.available) {
     return (
@@ -166,7 +169,8 @@ export const WalletCorePrivateExecute: React.FC = () => {
         </span>
       </div>
 
-      {error && <div className="rounded-md border border-red-900 bg-red-950/40 text-red-300 text-sm p-3 mb-4">{error}</div>}
+      <WalletError error={error} />
+      {review && <TransactionReview title="Review private execution" rows={[{ label: 'Amount', value: amount + ' STRK' }, { label: 'Target contract', value: target }, { label: 'Network', value: networkLabel(state.network) }, { label: 'Private account', value: appName + ' · ' + nonce }, { label: 'Fee', value: 'Checked during execution' }]} onBack={() => setReview(false)} onConfirm={() => void handleExecute()} busy={busy} disabled={disabled || !!parsed.error} note="Developer action: invokes the configured record entrypoint. Confirm the contract and amount before continuing." />}
 
       {state.executionOp.phase !== 'idle' && (
         <div className="rounded-md border border-violet-900 bg-violet-950/30 text-violet-200 text-xs p-3 mb-4 flex items-start gap-2">
@@ -190,6 +194,7 @@ export const WalletCorePrivateExecute: React.FC = () => {
         </div>
       )}
 
+      <fieldset disabled={review || disabled} className="min-w-0">
       <label className="block text-sm text-zinc-400 mb-1">Shadow identity (appName · nonce)</label>
       {identities.length > 0 ? (
         <div className="flex gap-2 mb-2">
@@ -216,7 +221,7 @@ export const WalletCorePrivateExecute: React.FC = () => {
       ) : (
         <p className="text-xs text-zinc-500 mb-2">No shadow identity yet — create one below.</p>
       )}
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         <input
           value={appName}
           onChange={(e) => setAppName(e.target.value)}
@@ -262,13 +267,15 @@ export const WalletCorePrivateExecute: React.FC = () => {
       />
 
       <button
-        onClick={handleExecute}
-        disabled={disabled || !amount || !appName.trim() || !target?.trim()}
+        onClick={() => setReview(true)}
+        disabled={disabled || !!parsed.error || !appName.trim() || !target?.trim()}
         className="inline-flex items-center gap-2 rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
       >
         {disabled ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-        Execute through shadow account
+        Review private execution
       </button>
+      {amount && parsed.error && <p className="text-xs mt-2">{parsed.error}</p>}
+      </fieldset>
 
       <p className="text-[11px] text-zinc-600 mt-3 flex items-center gap-1">
         <Lock className="w-3 h-3" />

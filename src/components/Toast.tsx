@@ -35,7 +35,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ showToast }}>
       {children}
       {/* Toast Overlay */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+      <div aria-live="polite" className="fixed bottom-20 sm:bottom-5 right-3 sm:right-5 z-50 flex flex-col gap-2 max-w-sm w-[calc(100%-1.5rem)] pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
@@ -57,6 +57,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               {toast.description && <div className="text-[11px] opacity-80 mt-0.5">{toast.description}</div>}
             </div>
             <button
+              aria-label="Dismiss notification"
               onClick={() => removeToast(toast.id)}
               className="text-zinc-400 hover:text-white shrink-0"
             >

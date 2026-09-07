@@ -10,11 +10,13 @@ import { crossChainConfigFor, type NearIntentOpState } from '@/features/near-int
 import type { NearIntentRoute } from '@/features/near-intents/routes';
 import { validateChainAddress } from '@/features/near-intents/address';
 import type { PrivacyHubIntent, PrivacyHubQuote } from '@/features/privacy-hub';
+import { TransactionReview, WalletError } from './TransactionFeedback';
+import { networkLabel, transactionUrl, walletOperationPending } from '@/utils/walletUx';
 
 const LABELS: Record<NearIntentOpState['phase'], string> = {
-  idle: 'Ready', quoting: 'Reading quote', preparing: 'Checking readiness', 'intent-created': 'Deposit reserved',
+  idle: 'Ready', quoting: 'Getting best route…', preparing: 'Preparing your transfer…', 'intent-created': 'Route reserved',
   'awaiting-source-deposit': 'Preparing private deposit', 'source-confirming': 'Awaiting deposit confirmation',
-  'solver-executing': 'Solver executing', 'destination-pending': 'Destination pending', success: 'Settled',
+  'solver-executing': 'Processing destination transfer…', 'destination-pending': 'Waiting for destination confirmation…', success: 'Funds delivered',
   failed: 'Transfer not completed', refunded: 'Refund recovery required', expired: 'Quote expired',
   unknown: 'Settlement unconfirmed — check status before retrying',
 };
@@ -40,6 +42,8 @@ export function PrivateCrossChainPanel() {
   const [quoted, setQuoted] = useState<{ key: string; intent: PrivacyHubIntent; value: PrivacyHubQuote } | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [reviewKey, setReviewKey] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -68,19 +72,22 @@ export function PrivateCrossChainPanel() {
   const visibleRoutes = chainRoutes.filter(r => !search || (r.destinationToken.symbol + ' ' + (r.destinationToken.address ?? '') + ' ' + r.destinationAssetId).toLowerCase().includes(search.toLowerCase()));
   const op = state.nearIntentOp;
   const pending = !TERMINAL.includes(op.phase);
-  const disabled = busy || pending;
+  const disabled = busy || pending || walletOperationPending(state);
   const config = crossChainConfigFor(state.network);
   const balanceRow = state.privateBalances.find(row => row.token.symbol === 'STRK');
   const balance = balanceRow?.available ? balanceRow.balance : null;
   const addressError = validateChainAddress(destination.trim(), chain === 'solana' ? 'solana' : 'evm');
   let units = 0n;
-  try { units = parseAmountToBase(amount, 18); } catch { /* Invalid input is never submitted. */ }
+  let amountError = '';
+  try { units = parseAmountToBase(amount, 18); if (units <= 0n) amountError = 'Enter an amount greater than zero.'; }
+  catch { amountError = 'Enter a valid amount with up to 18 decimal places.'; }
   const key = [state.account?.walletId, state.network, route?.id, amount, destination.trim(), slippageBps].join('|');
   const currentKey = useRef(key);
   currentKey.current = key;
   const quote = quoted?.key === key ? quoted.value : null;
   const expires = quote ? Date.parse(quote.deadline) : 0;
   const fresh = !!quote && Number.isFinite(expires) && expires > now;
+  const reviewing = reviewKey === key && !!quote;
   const canQuote = !!state.account && !!route && visibleRoutes.includes(route) && !registryLoading
     && units > 0n && !addressError && state.privacy.available && !disabled;
   const canSend = canQuote && fresh && config.settlementEnabled && state.deploymentStatus === 'deployed'
@@ -107,7 +114,8 @@ export function PrivateCrossChainPanel() {
   }
 
   async function send() {
-    if (!canSend || !quoted || quoted.key !== currentKey.current || Date.parse(quoted.value.deadline) <= Date.now()) return;
+    if (!canSend || !reviewing || inFlight.current || !quoted || quoted.key !== currentKey.current || Date.parse(quoted.value.deadline) <= Date.now()) return;
+    inFlight.current = true;
     const requestKey = key;
     setBusy(true); setError(null);
     try {
@@ -115,10 +123,11 @@ export function PrivateCrossChainPanel() {
       if (!identity) await runtime.createShadowIdentity('orrange', 0n);
       if (requestKey !== currentKey.current || !mounted.current) return;
       await runtime.executePrivacyHub(quoted.intent, quoted.value);
+      if (mounted.current) { setReviewKey(null); setQuoted(null); }
       void runtime.refreshPrivateBalances();
     } catch (err) {
       if (mounted.current && requestKey === currentKey.current) setError(err instanceof Error ? err.message : 'Transfer could not be completed.');
-    } finally { if (mounted.current) setBusy(false); }
+    } finally { inFlight.current = false; if (mounted.current) { setBusy(false); setReviewKey(null); } }
   }
 
   async function checkStatus() {
@@ -141,24 +150,24 @@ export function PrivateCrossChainPanel() {
 
   return <section className="product-card p-5 sm:p-7" aria-labelledby="cross-chain-title">
     <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-      <div><div className="product-eyebrow">STRK20 × NEAR INTENTS</div><h2 id="cross-chain-title" className="text-2xl font-semibold mt-2">Private source. New destination.</h2></div>
+      <div><div className="product-eyebrow">CROSS-CHAIN</div><h2 id="cross-chain-title" className="text-2xl font-semibold mt-2">Send to another chain</h2></div>
       <span className="text-xs rounded-full border border-[var(--app-border)] px-3 py-1.5">Starknet {state.network === 'mainnet' ? 'Mainnet' : 'Sepolia · test network'}</span>
     </div>
-    <p className="text-sm text-[var(--app-text-secondary)] mb-5">Spend private STRK through your Shadow Account. NEAR routes the funds; the destination transfer is public.</p>
+    <p className="text-sm text-[var(--app-text-secondary)] mb-5">Send from your private STRK balance to Base or Solana. Transfers on the destination chain are public.</p>
     {!config.settlementEnabled && <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 p-4 mb-5" role="status">
-      <p className="text-sm font-semibold">Cross-chain settlement is not enabled yet</p><p className="text-xs mt-1">{config.reason}</p>
+      <p className="text-sm font-semibold">Cross-chain transfers aren’t available on this network yet</p><p className="text-xs mt-1">Browse destinations below. Nothing will be sent until this network is ready.</p><details className="text-xs mt-2"><summary>Service details</summary>{config.reason}</details>
       <Link className="underline text-xs inline-block mt-2" href="/settings">Network & wallet settings</Link>
     </div>}
-    {!state.privacy.available && <p className="text-sm mb-4">Awaiting configuration: {state.privacy.reason ?? 'STRK20 privacy is unavailable.'} Supported destinations can still be browsed below.</p>}
+    {!state.privacy.available && <p className="text-sm mb-4">Private balance is unavailable on this network. You can still browse supported destinations.</p>}
     {state.account && state.deploymentStatus !== 'deployed' && <p className="text-sm mb-4">Fund your Starknet address first, then <Link className="underline" href="/wallet">deploy your account</Link>. This is required before private execution.</p>}
 
-    <fieldset disabled={disabled} className="min-w-0 space-y-4">
+    <fieldset disabled={disabled || quoting} hidden={reviewing} className="min-w-0 space-y-4">
       <legend className="text-sm font-semibold mb-2">Choose destination</legend>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {(['base', 'solana'] as const).map(next => <button type="button" key={next} onClick={() => chooseChain(next)} aria-pressed={chain === next && !robinhood} className={field + (chain === next && !robinhood ? ' !border-orange-500' : '')}>{next === 'base' ? 'Base' : 'Solana destination'}</button>)}
         <button type="button" onClick={() => chooseChain('solana', true)} aria-pressed={robinhood} className={field + ' col-span-2 sm:col-span-1' + (robinhood ? ' !border-orange-500' : '')}>Send to Robinhood</button>
       </div>
-      {registryLoading ? <p className="text-sm flex gap-2 items-center" role="status"><Loader2 className="w-4 h-4 animate-spin" /> Loading supported assets…</p> : registryError ? <div role="alert" className="text-sm"><p>{registryError}</p><button type="button" className="underline mt-2" onClick={() => setRegistryVersion(v => v + 1)}>Retry destination registry</button></div> : chainRoutes.length === 0 ? <p className="text-sm">No destinations currently confirmed for this chain.</p> : <>
+      {registryLoading ? <p className="text-sm flex gap-2 items-center" role="status"><Loader2 className="w-4 h-4 animate-spin" /> Loading supported assets…</p> : registryError ? <div className="text-sm"><WalletError error={registryError} /><button type="button" className="underline mt-2" onClick={() => setRegistryVersion(v => v + 1)}>Retry destination registry</button></div> : chainRoutes.length === 0 ? <p className="text-sm">No destinations currently confirmed for this chain.</p> : <>
         {chain === 'solana' && <label className="block text-xs">Find an asset<input className={field + ' mt-1'} placeholder="Search ticker or mint address" value={search} onChange={e => setSearch(e.target.value)} /></label>}
         <label className="block text-xs">Destination asset
           <select className={field + ' mt-1'} value={route?.id ?? ''} onChange={e => { setRouteId(e.target.value); setAcknowledged(false); }}>
@@ -187,6 +196,7 @@ export function PrivateCrossChainPanel() {
         <label className="block text-xs">Slippage<select className={field + ' mt-1'} value={slippageBps} onChange={e => setSlippageBps(Number(e.target.value))}>{[50, 100, 200, 500].map(bps => <option key={bps} value={bps}>{bps / 100}%</option>)}</select></label>
       </div>
       <p className="text-xs text-[var(--app-text-secondary)]">Private balance: {balance === null ? 'Unavailable' : fmt(balance, 18) + ' STRK'}. Allow extra STRK for the private relay fee, checked before submission.{balance !== null && units > balance ? ' Insufficient private STRK.' : ''}</p>
+      {amount && amountError && <p role="status" className="text-xs text-[var(--app-accent)]">{amountError}</p>}
     </fieldset>
 
     {quote && route && <div className="rounded-xl border border-[var(--app-border)] p-4 mt-5 space-y-2 text-sm" aria-live="polite">
@@ -196,29 +206,38 @@ export function PrivateCrossChainPanel() {
       <p className="text-xs break-words">{quote.route}{quote.timeEstimate > 0 ? ' · ~' + quote.timeEstimate + 's' : ''}</p>
       <p className="text-xs">Refund fee: {quote.refundFee === null ? 'Not provided' : fmt(quote.refundFee, 18) + ' STRK'} · Withdrawal fee: {quote.withdrawFee === null ? 'Not provided' : fmt(quote.withdrawFee, route.destinationToken.decimals) + ' ' + route.destinationToken.symbol}</p>
     </div>}
-    {error && <p role="alert" className="text-sm border border-red-500/30 rounded-xl p-3 mt-4">{error}</p>}
-    <div className="grid sm:grid-cols-2 gap-3 mt-5">
-      <button type="button" className={field + ' flex items-center justify-center gap-2'} disabled={!canQuote || quoting} onClick={() => void readQuote()}>{quoting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {quote ? 'Refresh quote' : 'Get live quote'}</button>
-      <button type="button" className="product-primary-button px-4 disabled:opacity-40 disabled:cursor-not-allowed" disabled={!canSend || quoting} onClick={() => void send()}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} {disabled ? 'Transfer in progress' : 'Confirm private transfer'}</button>
-    </div>
+    <WalletError error={error} />
+    {reviewing && route && quote ? <div className="mt-5"><TransactionReview title={'Send to ' + (chain === 'solana' ? 'Solana' : 'Base')} rows={[
+      { label: 'You send', value: fmt(units, 18) + ' STRK' }, { label: 'From', value: 'Private balance · ' + networkLabel(state.network) },
+      { label: 'You receive', value: '≈ ' + fmt(quote.amountOut, route.destinationToken.decimals) + ' ' + route.destinationToken.symbol },
+      { label: 'Minimum received', value: fmt(quote.minAmountOut, route.destinationToken.decimals) + ' ' + route.destinationToken.symbol },
+      { label: 'Destination network', value: chain === 'solana' ? 'Solana Mainnet' : 'Base Mainnet' },
+      { label: 'Recipient', value: destination.trim() }, { label: 'Slippage', value: slippageBps / 100 + '%' },
+      { label: 'Destination fee', value: quote.withdrawFee === null ? 'Not provided by route' : fmt(quote.withdrawFee, route.destinationToken.decimals) + ' ' + route.destinationToken.symbol },
+      { label: 'Private execution fee', value: 'Checked before submission · keep extra STRK' },
+    ]} note={fresh ? 'Verify the full destination address and asset. Your Private Account is prepared automatically. Destination funds are public; transfers cannot be reversed.' : 'This quote expired. Go back and get a fresh quote before confirming.'} onBack={() => setReviewKey(null)} onConfirm={() => void send()} busy={busy} disabled={!canSend || quoting} confirmLabel="Confirm cross-chain transfer" /></div> : <div className="grid sm:grid-cols-2 gap-3 mt-5">
+      <button type="button" className={field + ' flex items-center justify-center gap-2'} disabled={!canQuote || quoting} onClick={() => void readQuote()}>{quoting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {quoting ? 'Getting best route…' : quote ? 'Refresh quote' : 'Get live quote'}</button>
+      <button type="button" className="product-primary-button px-4 disabled:opacity-40 disabled:cursor-not-allowed" disabled={!canSend || quoting} onClick={() => setReviewKey(key)}><Lock className="w-4 h-4" />{disabled ? 'Transfer in progress' : 'Review transfer'}</button>
+    </div>}
 
     {op.phase !== 'idle' && <div className="border border-[var(--app-border)] rounded-xl p-4 mt-5 space-y-3">
       <p role="status" className="font-semibold text-sm flex items-center gap-2">{op.phase === 'success' ? <Check className="w-4 h-4" /> : pending && op.phase !== 'unknown' ? <Loader2 className="w-4 h-4 animate-spin" /> : null}{LABELS[op.phase]}</p>
-      <ol className="grid grid-cols-3 gap-2 text-xs" aria-label="Transfer progress">{['Private deposit', 'Solver execution', 'Destination settlement'].map((label, index) => <li key={label} className="border-t-2 pt-2" style={{ borderColor: op.phase === 'success' || (index === 0 && !!op.transactionHash) || (index === 1 && ['solver-executing', 'destination-pending'].includes(op.phase)) ? 'var(--app-accent)' : 'var(--app-border)' }}>{index + 1}. {label}</li>)}</ol>
+      <ol className="grid grid-cols-3 gap-2 text-xs" aria-label="Transfer progress">{['Private deposit', 'Processing', 'Destination settlement'].map((label, index) => <li key={label} className="border-t-2 pt-2" style={{ borderColor: op.phase === 'success' || (index === 0 && !!op.transactionHash) || (index === 1 && ['solver-executing', 'destination-pending'].includes(op.phase)) ? 'var(--app-accent)' : 'var(--app-border)' }}>{index + 1}. {label}</li>)}</ol>
       {op.route && <p className="text-xs">{op.route}</p>}
-      {op.shadowAddress && <p className="text-xs break-all">Shadow Account / refund target: {op.shadowAddress}</p>}
+      {op.shadowAddress && <details className="text-xs"><summary>Private Account / refund address</summary><p className="break-all mt-2">{op.shadowAddress}</p></details>}
       {op.destinationAddress && <p className="text-xs break-all">Destination: {op.destinationAddress}</p>}
       {op.depositAddress && <div className="text-xs break-all">Deposit reference: {op.depositAddress}<button type="button" className="inline-flex gap-1 items-center ml-2 underline" onClick={() => void copy(op.depositAddress!, 'deposit')}><Copy className="w-3 h-3" />{copied === 'deposit' ? 'Copied' : 'Copy'}</button></div>}
-      {op.message && <p className="text-xs">{op.message}</p>}
+      {op.message && <details className="text-xs"><summary>Transfer details</summary><p className="break-words mt-2">{op.message}</p></details>}
       {op.phase === 'success' && op.amountOut !== null && op.destinationDecimals !== undefined && <p className="font-semibold">Received {fmt(op.amountOut, op.destinationDecimals)} {op.destinationSymbol}</p>}
       {op.refundedAmount !== null && op.refundedAmount > 0n && <p className="text-xs">Reported refund: {fmt(op.refundedAmount, 18)} STRK to the Shadow Account. {op.refundReason}</p>}
       <div className="flex flex-wrap gap-4 text-xs">
-        {op.transactionHash && <a href={'https://starkscan.co/tx/' + encodeURIComponent(op.transactionHash)} target="_blank" rel="noopener noreferrer" className="underline inline-flex gap-1">Source transaction <ArrowUpRight className="w-3 h-3" /></a>}
+        {op.transactionHash && <a href={transactionUrl(state.network, op.transactionHash)} target="_blank" rel="noopener noreferrer" className="underline inline-flex gap-1">Source transaction <ArrowUpRight className="w-3 h-3" /></a>}
+        <Link href="/activity" className="underline">View activity</Link>
         {op.destinationTxHashes.map((hash, index) => <a key={hash} href={(op.destinationChain === 'solana' ? 'https://solscan.io/tx/' : 'https://basescan.org/tx/') + encodeURIComponent(hash)} target="_blank" rel="noopener noreferrer" className="underline">Destination transaction {index + 1}</a>)}
         {op.depositAddress && <button type="button" disabled={checking || busy} className="underline disabled:opacity-50" onClick={() => void checkStatus()}>{checking ? 'Checking…' : 'Refresh settlement status'}</button>}
       </div>
       {pending && <p className="text-xs text-[var(--app-text-secondary)]">Keep this wallet open while the deposit is tracked. Save the deposit reference before leaving. Do not send a second deposit to resolve a delayed status.</p>}
     </div>}
-    <p className="text-xs text-[var(--app-text-secondary)] mt-5 leading-relaxed">Private STRK → STRK20 Shadow Account → NEAR deposit → destination. Your root wallet is not the depositor. The deposit and destination settlement are public; NEAR does not make the destination private.</p>
+    <details className="text-xs text-[var(--app-text-secondary)] mt-5 leading-relaxed"><summary>Privacy and route details</summary><p className="mt-2">STRK20 uses your Private Account to fund the NEAR Intents route, without your root wallet being the depositor. The deposit and destination settlement are public. Reusing a destination can link transfers.</p></details>
   </section>;
 }

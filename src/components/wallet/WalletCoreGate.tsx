@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { KeyRound, Lock, Loader2, Plus, ArrowRightLeft } from 'lucide-react';
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { isReadyAccountSupported, isBraavosAccountSupported, type WalletAccountType } from '@/wallet';
 import { shortenAddress } from '@/utils/formatters';
+import { WalletError } from './TransactionFeedback';
 
 /**
  * The primary Orrange wallet entry gate. Replaces the legacy connect modal / gate as
@@ -20,12 +21,16 @@ export const WalletCoreGate: React.FC = () => {
   const [existingAddress, setExistingAddress] = useState('');
   const [importType, setImportType] = useState<WalletAccountType>('ready-v0.4.0');
   const [busy, setBusy] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const flight = useRef(false);
 
   const readySupported = isReadyAccountSupported(state.network);
   const braavosSupported = isBraavosAccountSupported(state.network);
   const hasWallets = state.wallets.length > 0;
 
   const handleCreate = useCallback(async () => {
+    if (flight.current || password !== confirmPassword || password.length < 8) return;
+    flight.current = true;
     setBusy(true);
     try {
       await runtime.create(password);
@@ -33,10 +38,13 @@ export const WalletCoreGate: React.FC = () => {
       // WalletRuntime exposes the actionable error above; avoid an unhandled event rejection.
     } finally {
       setBusy(false);
+      flight.current = false;
     }
-  }, [runtime, password]);
+  }, [runtime, password, confirmPassword]);
 
   const handleImport = useCallback(async () => {
+    if (flight.current || password !== confirmPassword || password.length < 8) return;
+    flight.current = true;
     setBusy(true);
     try {
       await runtime.import({
@@ -49,10 +57,13 @@ export const WalletCoreGate: React.FC = () => {
       // WalletRuntime owns the error state.
     } finally {
       setBusy(false);
+      flight.current = false;
     }
-  }, [runtime, importType, secret, password, existingAddress]);
+  }, [runtime, importType, secret, password, existingAddress, confirmPassword]);
 
   const handleUnlock = useCallback(async () => {
+    if (flight.current) return;
+    flight.current = true;
     setBusy(true);
     try {
       await runtime.unlock(password);
@@ -60,23 +71,21 @@ export const WalletCoreGate: React.FC = () => {
       // WalletRuntime owns the error state.
     } finally {
       setBusy(false);
+      flight.current = false;
     }
   }, [runtime, password]);
 
   const importReady = importType === 'ready-v0.4.0';
 
   return (
-    <div className="space-y-4">
-      {state.error && (
-        <div className="rounded-md border border-red-900 bg-red-950/40 text-red-300 text-sm p-3">
-          {state.error}
-        </div>
-      )}
+    <fieldset disabled={busy} className="wallet-onboarding space-y-4 min-w-0" aria-busy={busy}>
+      <WalletError error={state.error} />
 
       {/* Returning user: stored wallets → select + unlock */}
       {hasWallets && (
         <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
-          <h2 className="text-sm font-semibold text-zinc-200 mb-3">Your wallets</h2>
+          <h2 className="text-lg font-semibold text-zinc-200 mb-1">Welcome back</h2>
+          <p className="text-sm text-zinc-500 mb-4">Unlock a wallet on {state.network === 'mainnet' ? 'Mainnet' : 'Sepolia testnet'} to continue.</p>
           <ul className="space-y-2">
             {state.wallets.map((entry) => {
               const selected = state.selectedWalletId === entry.walletId;
@@ -92,7 +101,7 @@ export const WalletCoreGate: React.FC = () => {
                     className="text-left flex-1"
                   >
                     <div className="text-sm">
-                      {entry.accountType} <span className="text-zinc-500">· {entry.source}</span>
+                      {entry.accountType.startsWith('ready') ? 'Ready' : 'Braavos'} wallet <span className="text-zinc-500">{selected ? '· Selected' : ''}</span>
                     </div>
                     <div className="font-mono text-xs text-zinc-400">{shortenAddress(entry.address, 6)}</div>
                   </button>
@@ -100,9 +109,12 @@ export const WalletCoreGate: React.FC = () => {
               );
             })}
           </ul>
-          <label className="block text-sm text-zinc-400 mt-4 mb-1">Password</label>
+          <label htmlFor="wallet-unlock-password" className="block text-sm text-zinc-400 mt-4 mb-1">Password</label>
           <input
             type="password"
+            id="wallet-unlock-password"
+            autoComplete="current-password"
+            onKeyDown={event => { if (event.key === 'Enter' && password) void handleUnlock(); }}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Unlock password"
@@ -114,18 +126,20 @@ export const WalletCoreGate: React.FC = () => {
             className="inline-flex items-center gap-2 rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-            Unlock
+            {busy ? 'Unlocking your wallet…' : 'Unlock wallet'}
           </button>
         </section>
       )}
 
       {/* New wallet: Create | Import */}
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
+      <details open={!hasWallets} className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
+        <summary className="text-sm font-medium mb-4">{hasWallets ? 'Add another wallet' : 'Get started with Orrange'}</summary>
         <h2 className="text-lg font-semibold mb-1">Create your private wallet</h2>
         <p className="text-xs text-zinc-400 mb-4">Self-custodial Starknet wallet · {state.network === 'mainnet' ? 'Mainnet' : 'Sepolia test network'}. Keep your recovery backup safe; Orrange cannot recover a lost password or key.</p>
-        <div className="flex items-center gap-3 mb-4">
+        <div className="wallet-tabs mb-4">
           <button
             onClick={() => setMode('create')}
+            aria-pressed={mode === 'create'}
             className={`px-3 py-1 rounded-md text-sm border ${
               mode === 'create' ? 'border-orange-500 text-orange-400' : 'border-zinc-800 text-zinc-400'
             }`}
@@ -134,6 +148,7 @@ export const WalletCoreGate: React.FC = () => {
           </button>
           <button
             onClick={() => setMode('import')}
+            aria-pressed={mode === 'import'}
             className={`px-3 py-1 rounded-md text-sm border ${
               mode === 'import' ? 'border-orange-500 text-orange-400' : 'border-zinc-800 text-zinc-400'
             }`}
@@ -154,25 +169,27 @@ export const WalletCoreGate: React.FC = () => {
               placeholder="At least 8 characters"
               className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
             />
+            <label className="block text-sm text-zinc-400 mb-3">Confirm password<input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 mt-1" /></label>
+            {confirmPassword && password !== confirmPassword && <p className="text-xs mb-3" role="status">Passwords don’t match yet.</p>}
             <button
               onClick={handleCreate}
-              disabled={busy || password.length < 8}
+              disabled={busy || password.length < 8 || password !== confirmPassword}
               className="inline-flex items-center gap-2 rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Create wallet
+              {busy ? 'Creating your wallet…' : 'Create wallet'}
             </button>
             <p className="text-xs text-zinc-500 mt-3">
-              Generates a local STARK key, derives your Ready account, and encrypts it with your
-              password (AES-GCM + PBKDF2). Nothing leaves your device.
+              Your keys are encrypted on this device. Remember your password and keep a recovery backup before funding your wallet.
             </p>
           </>
         ) : (
           <>
-            <div className="flex items-center gap-3 mb-3">
+            <div className="flex flex-wrap items-center gap-3 mb-3">
               <span className="text-sm text-zinc-400">Account type</span>
               <button
                 onClick={() => setImportType('ready-v0.4.0')}
+                aria-pressed={importReady}
                 disabled={!readySupported}
                 className={`px-3 py-1 rounded-md text-sm border ${
                   importReady ? 'border-orange-500 text-orange-400' : 'border-zinc-800 text-zinc-400'
@@ -182,6 +199,7 @@ export const WalletCoreGate: React.FC = () => {
               </button>
               <button
                 onClick={() => setImportType('braavos-v1.2.0')}
+                aria-pressed={!importReady}
                 disabled={!braavosSupported}
                 className={`px-3 py-1 rounded-md text-sm border ${
                   !importReady ? 'border-orange-500 text-orange-400' : 'border-zinc-800 text-zinc-400'
@@ -190,64 +208,72 @@ export const WalletCoreGate: React.FC = () => {
                 Braavos
               </button>
             </div>
+            {!braavosSupported && <p className="text-xs text-zinc-500 mb-3">Braavos import is not supported on this network yet. Use a supported Ready account.</p>}
 
-            <label className="block text-sm text-zinc-400 mb-1">Private key / recovery secret</label>
+            <label htmlFor="wallet-import-secret" className="block text-sm text-zinc-400 mb-1">Private key</label>
             <input
               type="password"
+              id="wallet-import-secret"
+              autoComplete="off"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               placeholder="0x…"
               className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
             />
 
-            <label className="block text-sm text-zinc-400 mb-1">
+            <label htmlFor="wallet-import-address" className="block text-sm text-zinc-400 mb-1">
               Existing account address
               {importReady
                 ? ' (optional — verified against the derived address)'
                 : ' (required — Braavos addresses are not derivable from a key)'}
             </label>
             <input
+              id="wallet-import-address"
               value={existingAddress}
               onChange={(e) => setExistingAddress(e.target.value)}
               placeholder="0x…"
               className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
             />
 
-            <label className="block text-sm text-zinc-400 mb-1">New wallet password</label>
+            <label htmlFor="wallet-import-password" className="block text-sm text-zinc-400 mb-1">New wallet password</label>
             <input
               type="password"
+              id="wallet-import-password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
               className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm mb-3"
             />
 
+            <label className="block text-sm text-zinc-400 mb-3">Confirm password<input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 mt-1" /></label>
+            {confirmPassword && password !== confirmPassword && <p className="text-xs mb-3" role="status">Passwords don’t match yet.</p>}
+            <p className="text-xs text-zinc-500 mb-3">Use an exported Starknet private key, not a seed phrase. Never share it with anyone.</p>
             <button
               onClick={handleImport}
               disabled={
                 busy ||
                 !secret ||
                 password.length < 8 ||
+                password !== confirmPassword ||
                 (!importReady && !existingAddress.trim())
               }
               className="inline-flex items-center gap-2 rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
-              Verify & import
+              {busy ? 'Verifying your wallet…' : 'Import wallet'}
             </button>
             <p className="text-xs text-zinc-500 mt-3">
-              Ownership is verified on-chain (derivation for Ready; get_public_key / SRC-5 for
-              Braavos). Your address is preserved — importing never creates a new account.
+              We verify that your key controls this account. Your existing address is preserved.
             </p>
           </>
         )}
-      </section>
+      </details>
 
       <p className="text-[11px] text-zinc-600 flex items-center gap-1.5">
         <KeyRound className="w-3 h-3" />
-        Self-custodial: your keys are encrypted locally with your password. No Google sign-in, no
-        extension required.
+        Only you control your wallet. Orrange cannot reset a lost password or recover your keys.
       </p>
-    </div>
+    </fieldset>
   );
 };

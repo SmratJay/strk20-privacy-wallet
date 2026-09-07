@@ -15,14 +15,13 @@ import {
 import type { Call } from 'starknet';
 import type { NetworkId } from '@/config/networks';
 import type { TokenInfo } from '@/config/tokens';
-import { parseTokenAmount } from '@/utils/formatters';
+import { formatTokenAmount } from '@/utils/formatters';
+import { parseAmountToBase } from '@/wallet/amount';
 
 export interface SwapQuoteResult {
   quote: Quote;
   /** Human-readable estimated buy amount (token units). */
   buyAmount: string;
-  /** Human-readable estimated gas fee in STRK. */
-  gasFeeStrk: string;
   routes: string[];
   sellAmount: bigint;
 }
@@ -42,8 +41,9 @@ export async function getSwapQuote(
   amountStr: string,
   takerAddress: string,
 ): Promise<SwapQuoteResult | null> {
-  if (!amountStr || parseFloat(amountStr) <= 0) return null;
-  const sellAmount = parseTokenAmount(amountStr, sellToken.decimals);
+  if (!amountStr) return null;
+  const sellAmount = parseAmountToBase(amountStr, sellToken.decimals);
+  if (sellAmount <= 0n) return null;
   const quotes = await getQuotes(
     {
       sellTokenAddress: sellToken.address,
@@ -56,11 +56,9 @@ export async function getSwapQuote(
   );
   const quote = quotes?.[0];
   if (!quote) return null;
-  const buyAmountNum = Number(quote.buyAmount) / 10 ** buyToken.decimals;
   return {
     quote,
-    buyAmount: buyAmountNum.toFixed(buyToken.decimals >= 8 ? 6 : 4),
-    gasFeeStrk: (Number(quote.gasFees ?? 0n) / 1e18).toFixed(4),
+    buyAmount: formatTokenAmount(quote.buyAmount, buyToken.decimals, 8),
     routes: quote.routes.map((r) => r.name || 'DEX'),
     sellAmount,
   };

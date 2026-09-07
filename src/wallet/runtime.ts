@@ -124,7 +124,12 @@ export interface RecentTransaction {
   hash: string;
   at: number;
   /** Kind of activity, for UI labeling. Never contains secrets. */
-  kind?: 'public' | 'shield' | 'privateTransfer' | 'withdraw' | 'register';
+  kind?: 'public' | 'shield' | 'privateTransfer' | 'withdraw' | 'register' | 'swap' | 'privateSwap' | 'crossChain';
+  network?: WalletNetworkId;
+  status?: string;
+  amount?: string;
+  symbol?: string;
+  recipient?: string;
 }
 
 /** Safe privacy-capability status — never exposes the viewing key or any secret material. */
@@ -358,6 +363,27 @@ export class WalletRuntime {
 
   private setView(patch: Partial<WalletRuntimeView>): void {
     this.view = { ...this.view, ...patch };
+    // Enrich the existing session activity from actual lifecycle updates, never inferred success.
+    const updates = [
+      patch.privacyOp && { op: patch.privacyOp, kind: patch.privacyOp.operation ?? undefined },
+      patch.executionOp && { op: patch.executionOp, kind: 'privateTransfer' as const },
+      patch.swapOp && { op: patch.swapOp, kind: 'privateSwap' as const },
+      patch.nearIntentOp && { op: patch.nearIntentOp, kind: 'crossChain' as const },
+    ];
+    for (const update of updates) {
+      if (!update || !update.op.transactionHash) continue;
+      const hash = update.op.transactionHash;
+      const existing = this.view.recentTransactions.find(tx => tx.hash === hash);
+      const tx: RecentTransaction = { ...existing, hash, at: existing?.at ?? Date.now(),
+        network: this.view.network, kind: update.kind, status: update.op.phase };
+      if (update.kind === 'crossChain') {
+        tx.amount = this.view.nearIntentOp.sourceAmount?.toString(); tx.symbol = 'STRK';
+        tx.recipient = this.view.nearIntentOp.destinationAddress ?? undefined;
+      } else if (update.kind === 'privateSwap') {
+        tx.amount = this.view.swapOp.sellAmount?.toString(); tx.symbol = this.view.swapOp.sellTokenSymbol ?? undefined;
+      }
+      this.view = { ...this.view, recentTransactions: [tx, ...this.view.recentTransactions.filter(row => row.hash !== hash)].slice(0, 20) };
+    }
     this.emit();
   }
 
@@ -448,6 +474,7 @@ export class WalletRuntime {
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
       nearIntentOp: IDLE_NEAR_INTENT,
+      recentTransactions: [],
       error: null,
     });
   }
@@ -483,6 +510,7 @@ export class WalletRuntime {
       executionOp: IDLE_PRIVATE_EXECUTION,
       swapOp: IDLE_PRIVATE_SWAP,
       nearIntentOp: IDLE_NEAR_INTENT,
+      recentTransactions: [],
       error: null,
     });
   }
@@ -670,7 +698,7 @@ export class WalletRuntime {
   }
 
   /** Sign + submit an ordinary public transaction with the Wallet Core local signer. */
-  async send(call: Call | Call[]): Promise<{ transactionHash: string }> {
+  async send(call: Call | Call[], details: Pick<RecentTransaction, 'kind' | 'amount' | 'symbol' | 'recipient'> = {}): Promise<{ transactionHash: string }> {
     const session = this.session;
     if (!session) throw new Error("Wallet is locked. Unlock it to send transactions.");
     const guard = this.captureGuard();
@@ -678,11 +706,38 @@ export class WalletRuntime {
     if (!this.isCurrent(guard)) return result;
     this.setView({
       recentTransactions: [
-        { hash: result.transactionHash, at: Date.now(), kind: "public" as const },
+        { ...details, hash: result.transactionHash, at: Date.now(), kind: details.kind ?? "public", network: guard.network, status: 'pending' },
         ...this.view.recentTransactions,
       ].slice(0, 20),
     });
+    void this.refreshTransaction(result.transactionHash);
     return result;
+  }
+
+  /** Estimate through the existing local account; no signing material reaches the UI. */
+  async estimateFee(call: Call | Call[]): Promise<bigint> {
+    const session = this.session;
+    if (!session) throw new Error('Unlock your wallet first.');
+    const guard = this.captureGuard();
+    const estimate = await session.account.estimateInvokeFee(call);
+    if (!this.isCurrent(guard)) throw new Error('Wallet changed. Review again.');
+    if (estimate.unit !== 'FRI') throw new Error('Network fee estimate is unavailable in STRK. Try again.');
+    return BigInt(estimate.overall_fee);
+  }
+
+  /** Read-only reconciliation of an existing submitted transaction; never resubmits. */
+  async refreshTransaction(hash: string): Promise<void> {
+    const session = this.session;
+    if (!session || !this.view.recentTransactions.some(tx => tx.hash === hash)) return;
+    if (this.view.recentTransactions.find(tx => tx.hash === hash)?.kind === 'crossChain') return;
+    const guard = this.captureGuard();
+    const result = await this.pollTransactionPhase(hash, guard, session.provider);
+    if (!result || !this.isCurrent(guard)) return;
+    this.setView({ recentTransactions: this.view.recentTransactions.map(tx => tx.hash === hash ? { ...tx, status: result.phase } : tx),
+      ...(this.view.privacyOp.transactionHash === hash ? { privacyOp: { ...this.view.privacyOp, phase: result.phase, message: result.message } } : {}),
+      ...(this.view.swapOp.transactionHash === hash ? { swapOp: { ...this.view.swapOp, phase: result.phase, message: result.message } } : {}),
+      ...(this.view.executionOp.transactionHash === hash ? { executionOp: { ...this.view.executionOp, phase: result.phase, message: result.message } } : {}) });
+    if (result.phase === 'success') { void this.refreshPublicBalances(); void this.refreshPrivateBalances(); }
   }
 
   // ─────────────────────────── STRK20 privacy (wallet-native) ───────────────────────────
@@ -858,6 +913,7 @@ export class WalletRuntime {
   private async runPrivacyOp(
     operation: PrivacyOpState["operation"],
     run: (privacy: WalletPrivacySession) => Promise<PrivacyOperationResult>,
+    details: Pick<RecentTransaction, 'amount' | 'symbol' | 'recipient'> = {},
   ): Promise<PrivacyOperationResult> {
     const privacy = this.requirePrivacySession();
     const guard = this.captureGuard();
@@ -869,11 +925,12 @@ export class WalletRuntime {
         privacy: { ...this.view.privacy, status: "available", reason: null },
         privacyOp: { operation, phase: "submitted", transactionHash: result.transactionHash, message: null },
         recentTransactions: [
-          { hash: result.transactionHash, at: Date.now(), kind: operation ?? undefined },
+          { ...details, hash: result.transactionHash, at: Date.now(), kind: operation ?? undefined, network: guard.network, status: 'pending' },
           ...this.view.recentTransactions,
         ].slice(0, 20),
       });
       await this.waitForPrivacyFinality(result.transactionHash, guard, operation);
+      if (this.isCurrent(guard)) { void this.refreshPublicBalances(); void this.refreshPrivateBalances(); }
       return result;
     } catch (err) {
       if (!this.isCurrent(guard)) throw err;
@@ -921,11 +978,12 @@ export class WalletRuntime {
     guard: RuntimeGuard,
     provider: Pick<RpcProvider, "waitForTransaction">,
   ): Promise<{ phase: "pending" | "success" | "reverted" | "rejected"; message: string | null } | null> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const receipt = (await Promise.race([
         provider.waitForTransaction(transactionHash, { retryInterval: 4000 }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Finality timeout")), PRIVACY_FINALITY_TIMEOUT_MS),
+          { timeout = setTimeout(() => reject(new Error("Finality timeout")), PRIVACY_FINALITY_TIMEOUT_MS); },
         ),
       ])) as { execution_status?: unknown; status?: unknown; revert_reason?: unknown };
       if (!this.isCurrent(guard)) return null;
@@ -935,7 +993,7 @@ export class WalletRuntime {
           ? "reverted"
           : exec === "REJECTED"
             ? "rejected"
-            : exec === "SUCCEEDED" || exec === "ACCEPTED_ON_L2"
+            : exec === "SUCCEEDED"
               ? "success"
               : "pending";
       return { phase, message: null };
@@ -948,11 +1006,13 @@ export class WalletRuntime {
           ? "Submitted — finality not yet confirmed on-chain."
           : "Could not confirm on-chain finality.",
       };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   async shield(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
-    return this.runPrivacyOp("shield", (privacy) => privacy.shield(token, amountBase));
+    return this.runPrivacyOp("shield", (privacy) => privacy.shield(token, amountBase), { amount: amountBase.toString(), symbol: this.tokenSymbolFor(token) ?? undefined });
   }
 
   /** Explicit STRK20 registration of the wallet's viewing key (serialized with other pool ops). */
@@ -961,11 +1021,11 @@ export class WalletRuntime {
   }
 
   async privateTransfer(token: string, amountBase: bigint, recipient: string): Promise<PrivacyOperationResult> {
-    return this.runPrivacyOp("privateTransfer", (privacy) => privacy.privateTransfer(token, amountBase, recipient));
+    return this.runPrivacyOp("privateTransfer", (privacy) => privacy.privateTransfer(token, amountBase, recipient), { amount: amountBase.toString(), symbol: this.tokenSymbolFor(token) ?? undefined, recipient });
   }
 
   async withdraw(token: string, amountBase: bigint): Promise<PrivacyOperationResult> {
-    return this.runPrivacyOp("withdraw", (privacy) => privacy.withdraw(token, amountBase));
+    return this.runPrivacyOp("withdraw", (privacy) => privacy.withdraw(token, amountBase), { amount: amountBase.toString(), symbol: this.tokenSymbolFor(token) ?? undefined });
   }
 
   /** Create a REAL STRK20 shadow identity for the active wallet. Requires the shadow anonymizer

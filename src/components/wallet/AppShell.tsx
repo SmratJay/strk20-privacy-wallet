@@ -26,10 +26,12 @@ import {
 import { useWalletRuntime } from '@/context/WalletRuntimeContext';
 import { useToast } from '@/components/Toast';
 import { shortenAddress, copyToClipboard } from '@/utils/formatters';
+import { useNetwork } from '@/context/NetworkContext';
+import { walletOperationPending } from '@/utils/walletUx';
 
 const PRIMARY_NAV = [
   { href: '/wallet', label: 'Wallet', icon: ShieldCheck },
-  { href: '/treasury', label: 'Treasury', icon: Sparkles },
+  { href: '/swap', label: 'Swap', icon: Repeat },
   { href: '/activity', label: 'Activity', icon: Activity },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -37,11 +39,12 @@ const PRIMARY_NAV = [
 const ACTION_NAV = [
   { href: '/send', label: 'Send', icon: ArrowUpRight },
   { href: '/receive', label: 'Receive', icon: ArrowDownLeft },
-  { href: '/swap', label: 'Swap', icon: Repeat },
+  { href: '/send?mode=deposit', label: 'Private', icon: ShieldCheck },
   { href: '/cross-chain', label: 'Cross-chain', icon: Globe },
   { href: '/explore', label: 'Explore', icon: Flame },
   { href: '/launch', label: 'Launch', icon: Rocket },
   { href: '/extended', label: 'Trade', icon: TrendingUp },
+  { href: '/treasury', label: 'Treasury', icon: Sparkles },
 ];
 
 type AppTheme = 'light' | 'dark';
@@ -53,12 +56,34 @@ type AppTheme = 'light' | 'dark';
  */
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
-  const { state: runtimeState } = useWalletRuntime();
+  const { runtime, state: runtimeState } = useWalletRuntime();
+  const { networkId, setNetworkId } = useNetwork();
   const runtimeAccount = runtimeState.account;
   const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<AppTheme>('light');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const transactionPending = walletOperationPending(runtimeState) || runtimeState.recentTransactions.some(tx => tx.status === 'pending');
+
+  useEffect(() => {
+    if (!runtimeAccount) return;
+    const refresh = () => {
+      void runtime.refreshPublicBalances().catch(() => undefined);
+      void runtime.refreshPrivateBalances().catch(() => undefined);
+      void runtime.refreshDeployment().catch(() => undefined);
+      void runtime.refreshPrivacyRegistration().catch(() => undefined);
+    };
+    refresh();
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
+  }, [runtime, runtimeAccount?.walletId, runtimeState.network]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenuOpen(false); };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [pathname]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem('orrange-product-theme');
@@ -129,6 +154,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </nav>
 
           <div className="product-header-tools">
+            <label className="wallet-network-select" title={transactionPending ? 'Check the pending transaction in Activity before switching networks.' : 'Changing networks locks your wallet for safety.'}>
+              <span className="sr-only">Wallet network</span>
+              <select aria-label="Wallet network" value={networkId} disabled={transactionPending} onChange={event => {
+                const next = event.target.value as 'mainnet' | 'sepolia';
+                runtime.setNetwork(next); setNetworkId(next);
+                showToast({ type: 'info', title: next === 'mainnet' ? 'Switched to Mainnet' : 'Switched to Sepolia testnet', description: 'Unlock a wallet on this network to continue.' });
+              }}><option value="mainnet">Mainnet</option><option value="sepolia">Sepolia testnet</option></select>
+            </label>
             <button type="button" className="product-mobile-menu-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-expanded={mobileMenuOpen} aria-controls="product-mobile-menu" aria-label={mobileMenuOpen ? 'Close app menu' : 'Open app menu'}>
               {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
             </button>
@@ -144,7 +177,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 </span>
               </Link>
             ) : (
-              <Link href="/wallet" className="product-primary-button product-connect-button">Create wallet</Link>
+              <Link href="/wallet" className="product-primary-button product-connect-button">{runtimeState.wallets.length ? 'Unlock wallet' : 'Create wallet'}</Link>
             )}
           </div>
         </div>
@@ -160,7 +193,11 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       </nav>}
 
       <main className="product-main">
-        <div className="product-content">{children}</div>
+        <div className="product-content">
+          {pathname !== '/wallet' && <Link href="/wallet" className="wallet-back-link">← Back to wallet</Link>}
+          {transactionPending && <Link href="/activity" className="wallet-pending-banner">A transaction is in progress. View activity →</Link>}
+          <div key={`${runtimeState.network}:${runtimeAccount?.walletId ?? 'locked'}`}>{networkId !== runtimeState.network ? <p role="status">Switching network…</p> : children}</div>
+        </div>
       </main>
 
       <nav className="product-mobile-nav" aria-label="Mobile navigation">
@@ -168,7 +205,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           PRIMARY_NAV[0],
           ACTION_NAV[0],
           ACTION_NAV[1],
-          PRIMARY_NAV[1],
+          PRIMARY_NAV[2],
         ].map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} className={`product-mobile-nav-link ${isActive(href) ? 'is-active' : ''}`}>
             <Icon aria-hidden="true" />
