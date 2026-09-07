@@ -1,5 +1,5 @@
 {
-  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Hackathon verification (2026-09-08): transactions 0x374ac12d... and 0x1636879f... are verified MAINNET INVOKEs that SUCCEEDED and emit events from the STRK20 pool 0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a (checked via mainnet RPC receipts + traces; pool address also present in calldata). 0x72e6473a... is a succeeded MAINNET transaction kept per team request but does NOT touch the pool, so the official parser counts only the two pool transactions toward the minimum of three.",
+  "note": "PEL Private Perpetuals x STRK20. Contains only REAL, verified data. Hackathon verification (2026-09-08): transactions 0x374ac12d..., 0x1636879f... and 0x1bfdb600... are verified MAINNET INVOKEs that SUCCEEDED and emit events from the STRK20 pool 0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a (checked via mainnet RPC receipts; pool address also present in calldata).",
   "contracts": [
     {
       "name": "PELPerpsSTRK20Bridge",
@@ -65,7 +65,7 @@
   "transactions": [
     "0x374ac12d68c3133771ffcac970d44f5b847041082683facc7f8f8fa9216132a",
     "0x1636879f2c7031060bfe19e116f5803cba9b3a602fc3b6414ae1bf9d2b5e0",
-    "0x72e6473ad60dd6ccb8e2431c8e64ddcb4f190e9fcd34542a6b750b92d9c9716"
+    "0x1bfdb600b86afb6d40e7ccf78cb7533e5d88d02efd5863b3ac29fae40298264"
   ],
   "internal_transactions": [
     {
