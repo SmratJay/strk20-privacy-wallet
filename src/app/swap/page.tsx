@@ -1,4 +1,5 @@
 'use client';
+import { PublicCrossChainPanel } from '@/components/wallet/PublicCrossChainPanel';
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import type { Call } from 'starknet';
@@ -108,14 +109,14 @@ function PublicSwap() {
 function SwapContent() {
   const params = useSearchParams();
   const { state } = useWalletRuntime();
-  const [mode, setMode] = useState(params.get('mode') === 'private' ? 'private' : 'public');
+  const [mode, setMode] = useState(params.get('mode') === 'cross-chain' ? 'cross-chain' : params.get('mode') === 'private' ? 'private' : 'public');
   const requestedMode = params.get('mode');
-  useEffect(() => { setMode(requestedMode === 'private' ? 'private' : 'public'); }, [requestedMode]);
+  useEffect(() => { setMode(requestedMode === 'cross-chain' ? 'cross-chain' : requestedMode === 'private' ? 'private' : 'public'); }, [requestedMode]);
   return <div className="product-page wallet-flow-page">
     <div className="product-page-intro"><div><div className="product-eyebrow">ORRANGE / SWAP</div><h1 className="product-page-title">Swap</h1><p className="product-page-description">Choose the balance you want to swap from.</p></div></div>
     {!state.account ? <WalletCoreGate /> : <>
-      <div className="wallet-tabs" role="group" aria-label="Swap balance">{['public', 'private'].map(m => <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === 'public' ? 'Public' : 'Private'}</button>)}</div>
-      {mode === 'public' ? <PublicSwap /> : <PrivateSwapPanel />}
+      <div className="wallet-tabs" role="group" aria-label="Swap balance">{['public', 'private', 'cross-chain'].map(m => <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === 'public' ? 'Public' : m === 'private' ? 'Private' : 'Cross-chain'}</button>)}</div>
+      {mode === 'public' ? <PublicSwap /> : mode === 'private' ? <PrivateSwapPanel /> : <PublicCrossChainPanel key={state.network + state.account.walletId} />}
     </>}
   </div>;
 }

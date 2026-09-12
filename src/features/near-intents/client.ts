@@ -40,6 +40,7 @@ export interface OneClickQuoteRequest {
 
 /** The exact fields the 1Click quote endpoint returns (subset we read). */
 export interface OneClickQuoteResponse {
+  quoteRequest?: OneClickQuoteRequest;
   quote?: {
     amountIn?: string;
     amountOut?: string;

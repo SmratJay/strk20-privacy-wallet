@@ -1,3 +1,4 @@
+import { PublicCrossChainService } from '@/features/public-cross-chain/service';
 import type { Call } from "starknet";
 import { RpcProvider } from "starknet";
 import { DEFAULT_NETWORK_ID, getNetworkConfig } from "@/config/networks";
@@ -1338,6 +1339,33 @@ export class WalletRuntime {
    * bridge is thin and headless: it returns plain results and owns no route/provider/destination
    * logic (all of that lives in `src/features/privacy-hub`). Reuses the near-intents adapter.
    */
+  private publicCrossService?: { guard: RuntimeGuard; service: PublicCrossChainService };
+
+  getPublicCrossChainService(): PublicCrossChainService {
+    const session = this.session;
+    if (!session) throw new Error('Unlock your wallet first.');
+    if (this.publicCrossService && this.isCurrent(this.publicCrossService.guard)) return this.publicCrossService.service;
+    const guard = this.captureGuard();
+    const assertActive = () => {
+      if (!this.isCurrent(guard) || !this.session) throw new Error('Wallet or network changed. Review again.');
+    };
+    const service = new PublicCrossChainService({
+      walletId: session.walletId, address: session.address, network: guard.network, storage: this.storage,
+      assertActive,
+      balance: async () => {
+        assertActive();
+        const rows = await this.refreshPublicBalances(); assertActive();
+        const row = rows.find(r => r.token.symbol === 'STRK');
+        if (!row?.available) throw new Error('Public STRK balance is unavailable.');
+        return row.balance;
+      },
+      estimate: calls => { assertActive(); return this.estimateFee(calls); },
+      send: calls => { assertActive(); return this.send(calls, { kind: 'public', symbol: 'STRK' }); },
+    });
+    this.publicCrossService = { guard, service };
+    return service;
+  }
+
   getCrossChainRoutes(force = false) {
     return loadNearIntentRoutes(force);
   }
